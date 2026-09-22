@@ -244,18 +244,27 @@ class Pipeline:
         if time.time() < self._refractory_until:
             return False
 
-        if level_db < self.threshold_db:
-            self._loud_frames = 0
-            return False
-        self._loud_frames += 1
-
-        # openWakeWord needs no grammar, no confidence gate and no
-        # loud-frame patience: its score is already a usable signal.
+        # openWakeWord is fed EVERY frame, gate or no gate. It scores
+        # acoustically and rejects unrelated speech on its own -- measured at
+        # 0.000 -- so it needs no energy gate, and applying one actively
+        # breaks it: the model builds embeddings over a sliding window of
+        # contiguous audio, and a gate at -36 dBFS discarded 70% of the frames
+        # in a recorded "hey jarvis", fragmenting the phrase. Measured on the
+        # same twelve clips: 9/12 detected through the gate, 12/12 without it,
+        # and every peak rose to 1.00.
+        #
+        # The gate below still guards the Vosk grammar, which does need it --
+        # a grammar will happily match the phrase against room noise.
         if self._oww is not None:
             if self._oww.feed(pcm):
                 self._refractory_until = time.time() + self.refractory_ms / 1000.0
                 return True
             return False
+
+        if level_db < self.threshold_db:
+            self._loud_frames = 0
+            return False
+        self._loud_frames += 1
 
         final = self._wake.AcceptWaveform(pcm)
         if final:
