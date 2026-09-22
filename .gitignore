@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+
+# Everything the installer fetches lives outside the repo, in XDG dirs.
+# These are only here for a development checkout.
+bench/.venv/
+bench/models/
+bench/corpus/wav/
+bench/results/

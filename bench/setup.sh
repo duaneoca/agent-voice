@@ -7,7 +7,9 @@ MODELS="$BENCH/models"
 mkdir -p "$MODELS"
 
 # --- system packages (official repos only: extra + omarchy) ---
-PKGS=(uv vosk-api python-vosk espeak-ng sox python-sounddevice)
+# vosk now comes from PyPI with everything else; only espeak-ng (the TTS
+# fallback the benchmark compares against) still needs to be a system package.
+PKGS=(uv espeak-ng)
 MISSING=()
 for p in "${PKGS[@]}"; do pacman -Qq "$p" &>/dev/null || MISSING+=("$p"); done
 
@@ -21,16 +23,17 @@ else
   echo "==> System packages already present"
 fi
 
-# --- python venv for the whisper/piper tier ---
-# Built on the SYSTEM interpreter with site-packages visible, so the
-# pacman-installed python-vosk and the wheel-installed faster-whisper are
-# importable from one process.
+# --- python venv ---
+# Same pinned set the product installs, on a uv-managed interpreter rather
+# than the system one -- so a benchmark result describes the stack that
+# actually ships, and neither breaks when Arch bumps Python.
 if [[ ! -d "$BENCH/.venv" ]]; then
-  echo "==> Creating venv (system python + site-packages)"
-  uv venv --python "$(command -v python3)" --system-site-packages "$BENCH/.venv"
+  echo "==> Creating venv (uv-managed CPython 3.13)"
+  uv venv --python 3.13 "$BENCH/.venv"
 fi
-echo "==> Installing wheels (faster-whisper, piper-tts)"
-VIRTUAL_ENV="$BENCH/.venv" uv pip install --quiet faster-whisper piper-tts sounddevice numpy
+echo "==> Installing the pinned runtime"
+VIRTUAL_ENV="$BENCH/.venv" uv pip install --quiet \
+  -r "$BENCH/../requirements.txt" -r "$BENCH/../requirements-openwakeword.txt"
 
 # --- vosk model ---
 VOSK_SMALL="$MODELS/vosk-model-small-en-us-0.15"

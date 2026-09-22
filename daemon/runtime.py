@@ -16,12 +16,10 @@ import threading
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from paths import RUNTIME_DIR, ROOT, config_toml, piper_voices  # noqa: F401
+
 PLUGIN_ID = "duaneoca.agentvoice"
 SHELL_JSON = Path.home() / ".config/omarchy/shell.json"
-LOCAL_TOML = ROOT / "prototype/agentvoice.toml"
-
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")) / "agentvoice"
 
 # Mirrors manifest.json's barWidget.defaults. Duplicated deliberately: the
 # daemon has to run with no plugin installed and no config file present.
@@ -92,7 +90,7 @@ class Config:
 
     def _from_toml(self) -> dict:
         try:
-            raw = tomllib.loads(LOCAL_TOML.read_text())
+            raw = tomllib.loads(config_toml().read_text())
         except Exception:
             return {}
         out = {}
@@ -104,7 +102,7 @@ class Config:
 
     def reload(self) -> bool:
         """True if anything on disk changed since the last read."""
-        stamps = (self._stamp(SHELL_JSON), self._stamp(LOCAL_TOML))
+        stamps = (self._stamp(SHELL_JSON), self._stamp(config_toml()))
         if stamps == self._stamps:
             return False
         self._stamps = stamps
@@ -116,7 +114,7 @@ class Config:
         changed = merged != self._values
         self._values = merged
         self.source = f"shell.json[{PLUGIN_ID}]" if widget else (
-            "agentvoice.toml" if LOCAL_TOML.exists() else "defaults")
+            "agentvoice.toml" if config_toml().exists() else "defaults")
         return changed
 
     def __getitem__(self, key: str):
@@ -170,11 +168,9 @@ class Speaker:
     otherwise sit silent while the entire thing renders.
     """
 
-    VOICES = ROOT / "bench/models/piper"
-
     def __init__(self, voice: str = "lessac-medium") -> None:
         from piper import PiperVoice
-        path = self.VOICES / f"en_US-{voice}.onnx"
+        path = piper_voices() / f"en_US-{voice}.onnx"
         if not path.exists():
             raise FileNotFoundError(f"no piper voice at {path}")
         self._voice = PiperVoice.load(str(path))

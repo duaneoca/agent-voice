@@ -94,7 +94,7 @@ SPOKEN_STYLE = (
 )
 
 def speech_safe(text: str) -> str:
-    """Flatten markdown for TTS. See prototype/speech_text.make_speakable."""
+    """Flatten markdown for TTS. See daemon/speech_text.make_speakable."""
     from speech_text import make_speakable
     return make_speakable(text)
 

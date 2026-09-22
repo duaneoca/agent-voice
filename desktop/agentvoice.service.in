@@ -1,3 +1,6 @@
+# Template. install.sh substitutes @ROOT@ and @VENV@ and writes the result to
+# ~/.config/systemd/user/agentvoice.service, so the unit carries the real path
+# of whichever checkout or plugin directory it was installed from.
 [Unit]
 Description=Agent Voice — wake word, transcription, spoken replies
 Documentation=https://github.com/duaneoca/agent-voice
@@ -6,13 +9,11 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-# The prototype runs out of the checkout. A packaged install would point at
-# /usr/lib/agentvoice instead.
-WorkingDirectory=%h/git/duaneoca/agent-voice
-ExecStart=%h/git/duaneoca/agent-voice/bench/.venv/bin/python -u prototype/wake_listen.py
+WorkingDirectory=@ROOT@
+ExecStart=@VENV@/bin/python -u @ROOT@/daemon/wake_listen.py
 Restart=on-failure
 RestartSec=2
-# Whisper on four Haswell cores is the whole budget; niceness keeps a long
+# Whisper on four older cores is the whole budget; niceness keeps a long
 # transcription from making the desktop stutter.
 Nice=5
 # The state file the bar widget watches lives here.

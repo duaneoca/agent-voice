@@ -24,7 +24,7 @@ faster-whisper's int8, so absolute numbers differ, conclusion does not):
 tiny.en 11.0% -> 6.5% with the prompt; base.en + vocab lands at 6.9%.
 
 Custom vocabulary is therefore a first-class component, not a tuning detail.
-It lives in `corpus/vocab.txt` here and belongs in user config in the product.
+It ships as `daemon/vocab.txt`, overridable at `~/.config/agentvoice/vocab.txt`.
 
 ## 2. Ordinary speech is already solved; jargon is the whole problem
 

@@ -24,8 +24,8 @@ import shutil
 import wave
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "agentvoice"
-VERIFIER_DIR = DATA_DIR / "verifiers"
+from paths import DATA_DIR, VERIFIERS as VERIFIER_DIR, piper_voices  # noqa: F401
+
 RATE = 16_000
 
 #: openWakeWord ships these; a verifier is trained against one of them by name.
@@ -255,8 +255,7 @@ def main() -> int:
                        help="synthesize other voices saying the wake phrase")
     p.add_argument("phrase")
     p.add_argument("into", type=Path)
-    p.add_argument("--voices", type=Path,
-                   default=Path(__file__).resolve().parent.parent / "bench/models/piper")
+    p.add_argument("--voices", type=Path, default=None)
     p.add_argument("--per-voice", type=int, default=4)
 
     p = sub.add_parser("train", help="fit the verifier")
@@ -286,7 +285,8 @@ def main() -> int:
         return 0
 
     if args.cmd == "synth-negatives":
-        print(synth_other_speakers(args.phrase, args.into, args.voices, args.per_voice))
+        print(synth_other_speakers(args.phrase, args.into,
+                                   args.voices or piper_voices(), args.per_voice))
         return 0
 
     if args.cmd == "train":

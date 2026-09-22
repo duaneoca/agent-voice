@@ -1,0 +1,15 @@
+# Optional second wake-word engine. Adds ~154MB, almost none of it the
+# detector: scipy (~112MB) and scikit-learn (~31MB) are hard imports of
+# openwakeword's package __init__, and sklearn exists only to fit the
+# personal verifier's logistic regression.
+#
+# Worth it for the rejection it buys. Measured on this hardware:
+#
+#   Vosk grammar    "hey claude" 1.00  vs  "hey cloud"  1.00   (no separation)
+#   openWakeWord    "hey jarvis" 0.996 vs  near-miss    0.898  (separable at 0.90)
+#
+# THE VERSION PIN IS LOAD-BEARING. openwakeword 0.5.0 and later depend on
+# tflite-runtime on Linux, which publishes no wheel past cp311 -- so they
+# cannot be installed on any current Python at all. 0.4.0 is the last release
+# that is onnx-only, and it still has the custom-verifier API.
+openwakeword==0.4.0

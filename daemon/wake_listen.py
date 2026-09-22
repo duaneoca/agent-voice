@@ -16,10 +16,10 @@ Two recognisers, because they are good at different things:
   so it never runs while you are still talking.
 
 Knobs come from shell.json (written by the bar widget), falling back to
-prototype/agentvoice.toml. Both are re-read between utterances.
+daemon/agentvoice.toml. Both are re-read between utterances.
 
-    python prototype/wake_listen.py
-    python prototype/wake_listen.py --simulate bench/corpus/wav/11.wav
+    python daemon/wake_listen.py
+    python daemon/wake_listen.py --simulate bench/corpus/wav/11.wav
     agentvoice toggle          # or: kill -USR1 $(cat $XDG_RUNTIME_DIR/agentvoice/pid)
 """
 from __future__ import annotations
@@ -39,9 +39,8 @@ from adapters import load as load_adapter, omarchy_default, sentences  # noqa: E
 from adapters.base import speech_safe  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-VOSK_MODEL = ROOT / "bench/models/vosk-model-small-en-us-0.15"
-VOCAB_FILE = ROOT / "bench/corpus/vocab.txt"
+from paths import ROOT, vocab_file, vosk_model  # noqa: F401
+
 RATE, CHUNK = 16_000, 3200          # 100ms frames
 
 DIM, RED, GRN, YEL, CYA, BLD, OFF = (
@@ -58,9 +57,10 @@ def frame_db(pcm: bytes) -> float:
 
 
 def load_vocab() -> str | None:
-    if not VOCAB_FILE.exists():
+    path = vocab_file()
+    if not path.exists():
         return None
-    terms = [l.strip() for l in VOCAB_FILE.read_text().splitlines()
+    terms = [l.strip() for l in path.read_text().splitlines()
              if l.strip() and not l.startswith("#")]
     return ", ".join(terms) + "." if terms else None
 
@@ -128,7 +128,12 @@ class Pipeline:
         vosk.SetLogLevel(-1)
 
         self._vosk = vosk
-        self._model = vosk.Model(str(VOSK_MODEL))
+        found = vosk_model()
+        if found is None:
+            raise FileNotFoundError(
+                "no Vosk model installed — run install.sh, or choose the "
+                "openWakeWord engine which needs no separate download")
+        self._model = vosk.Model(str(found))
         self._vocab = load_vocab()
         self.phrase = ""
         self.engine = "vosk"
