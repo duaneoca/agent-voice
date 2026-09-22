@@ -67,14 +67,21 @@ resume_daemon() {
   fi
 }
 
+# If gum is killed mid-prompt it can leave foot's kitty keyboard protocol
+# pushed, and every later keypress arrives as a literal escape sequence. Pop
+# it and turn bracketed paste back off on the way out. Popping an empty stack
+# is a no-op, so this is safe even when gum cleaned up after itself.
+kbd_restore() { { printf '\e[<u\e[?2004l' >/dev/tty; } 2>/dev/null || true; }
+
 cancelled() {
   echo
   resume_daemon
+  kbd_restore
   gum style --foreground 3 "  Cancelled. Nothing was saved."
   exit 130
 }
 trap cancelled INT TERM
-trap resume_daemon EXIT
+trap 'resume_daemon; kbd_restore' EXIT
 
 find_python() {
   local candidates=(
@@ -203,11 +210,16 @@ echo
 
 have=$(find "$POS" -name '*.wav' | wc -l)
 attempt=0
+# Everything that reads a key goes through gum. Mixing bubbletea prompts with
+# bash's `read` leaves foot's kitty keyboard protocol enabled for the read,
+# which then receives raw key reports and prints them as text -- the stray
+# ^[[99;133u and ^[[?1u around the output. One input library, no leakage.
 while (( have < CLIPS )); do
   (( attempt++ ))
-  printf '  [%2d/%2d] ' "$((have + 1))" "$CLIPS"
-  read -r -p "Enter to record, or 'q' to stop: " key || cancelled
-  [[ $key == q ]] && break
+  if ! gum confirm "  [$((have + 1))/$CLIPS]  ready?" \
+       --affirmative "Record" --negative "Stop here"; then
+    break
+  fi
 
   printf '   \033[31m● recording\033[0m %.1fs ... ' "$CLIP_SECONDS"
   out="$("$PY" "$VERIFIER" record "$POS/pos-$(printf '%03d' "$attempt").wav" \
