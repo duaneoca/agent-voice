@@ -41,6 +41,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--seconds", type=float, default=0.0, help="0 = until ctrl-c")
     ap.add_argument("--device", type=int, default=None)
+    ap.add_argument("--no-verifier", action="store_true",
+                    help="score with the base model only, ignoring any trained verifier")
     ap.add_argument("--all-frames", action="store_true",
                     help="show quiet frames too, not just ones past the gate")
     args = ap.parse_args()
@@ -57,7 +59,8 @@ def main() -> int:
         return 1
 
     threshold = cfg.int("owwThresholdPct") / 100.0
-    oww = OwwWake(cfg.str("owwModel"), threshold)
+    oww = OwwWake(cfg.str("owwModel"), threshold,
+                  use_verifier=not args.no_verifier)
 
     print(f"\n  {BLD}{oww.key}{OFF}  threshold {threshold:.2f}  "
           f"gate {gate:.0f} dBFS  "
