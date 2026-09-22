@@ -7,6 +7,8 @@
 #   agentvoice mic                 release or re-engage the mic, service left up
 #   agentvoice status              JSON, for scripts and the bar
 #   agentvoice monitor             live wake-word scores, for calibration
+#   agentvoice permit <id> allow|deny   answer a pending permission request
+#   agentvoice pending             the request waiting for an answer, as JSON
 set -euo pipefail
 
 UNIT=agentvoice.service
@@ -36,6 +38,24 @@ case "${1:-status}" in
       exit 1
     fi
     ;;
+  permit)
+    # Answer a pending permission request. The overlay calls this; so can you.
+    #   agentvoice permit <id> allow|deny
+    id="${2:-}"; verdict="${3:-deny}"
+    [[ -n $id ]] || { echo "usage: agentvoice permit <id> allow|deny" >&2; exit 2; }
+    D="$RUNDIR/permissions"
+    if [[ $verdict == allow ]]; then
+      printf '{"allow":true}' > "$D/$id.response"
+    else
+      printf '{"allow":false,"reason":"denied at the desktop"}' > "$D/$id.response"
+    fi
+    ;;
+  pending)
+    # Any permission request waiting for an answer, as JSON.
+    D="$RUNDIR/permissions"
+    f=$(ls -t "$D"/*.request 2>/dev/null | head -1)
+    [[ -n ${f:-} ]] && cat "$f" || echo '{}'
+    ;;
   monitor)
     # Live wake-word scores. Safe to run alongside the daemon: PipeWire allows
     # several readers on one microphone.
@@ -52,7 +72,7 @@ case "${1:-status}" in
     active && echo yes || echo no
     ;;
   *)
-    echo "usage: agentvoice [start|stop|toggle|mic|monitor|status|is-active]" >&2
+    echo "usage: agentvoice [start|stop|toggle|mic|monitor|permit|pending|status|is-active]" >&2
     exit 2
     ;;
 esac

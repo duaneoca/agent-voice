@@ -42,7 +42,8 @@
       "owwThresholdPct": 90,
       "conversationMode": true,
       "followUpMs": 7000,
-      "livePartials": "auto"
+      "livePartials": "auto",
+      "askPermission": true
     },
     "schema": [
       {
@@ -229,6 +230,13 @@
         ],
         "defaultValue": "auto",
         "description": "Rough text shown as you talk, before Whisper returns. It needs the Vosk model, which costs 156MB resident. 'auto' shows it only when Vosk is already loaded for the wake word, so it is never paid for twice."
+      },
+      {
+        "key": "askPermission",
+        "type": "bool",
+        "label": "Ask before the agent changes anything",
+        "defaultValue": true,
+        "description": "A spoken sentence can otherwise edit files and run commands with nothing able to stop it. Read-only tools are never asked about, and an unanswered prompt is denied."
       }
     ]
   },

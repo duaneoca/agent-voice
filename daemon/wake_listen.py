@@ -747,7 +747,7 @@ def main() -> int:
 
     agent = None
     if not args.no_agent:
-        agent = load_adapter()
+        agent = load_adapter(ask_permission=cfg.bool("askPermission"))
         if agent is None:
             which = omarchy_default()
             print(f"  {YEL}no adapter for agent "
