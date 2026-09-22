@@ -29,6 +29,16 @@ Column {
 
   property real shown: value
   onValueChanged: shown = value
+
+  // PanelSlider rounds to an integer when `integer` is set but does not snap
+  // to `step` -- that only governs its wheel handling -- so dragging produced
+  // values like 4035ms against a 500ms step. Quantise here, for the label and
+  // for what gets written.
+  function snap(v) {
+    var n = Math.round((v - knob.minimum) / knob.stepSize)
+    return Math.max(knob.minimum,
+                    Math.min(knob.maximum, knob.minimum + n * knob.stepSize))
+  }
   spacing: Style.space(2)
 
   Row {
@@ -59,8 +69,14 @@ Column {
     step: knob.stepSize
     integer: true
     value: knob.value
-    onMoved: function(v) { knob.shown = v }
-    onReleased: function(v) { knob.shown = v; knob.committed(Math.round(v)) }
+    onMoved: function(v) { knob.shown = knob.snap(v) }
+    onReleased: function(v) {
+      var snapped = knob.snap(v)
+      knob.shown = snapped
+      // Writing the snapped value feeds back through `value`, so the handle
+      // settles on the notch rather than wherever the pointer stopped.
+      knob.committed(snapped)
+    }
 
     // PanelSlider's own wheel handler steps the value and then fires
     // released(), which here means a write to shell.json -- so scrolling the
