@@ -83,3 +83,85 @@ pacman's `python-vosk` alongside wheel-installed `faster-whisper` and
 `piper-tts`, via a venv built with `--system-site-packages`. onnxruntime and
 ctranslate2 both publish cp314 wheels. No AUR package is required for the
 benchmark.
+
+---
+
+# Later findings (2026-09-22)
+
+Same machine. These supersede parts of the section above.
+
+## 7. The energy gate was destroying the wake word
+
+openWakeWord builds embeddings over a sliding window of *contiguous*
+audio. The daemon dropped every frame below the microphone gate before the
+detector saw it, which fragments the phrase. Measured over twelve recordings
+of the author saying "hey jarvis", one persistent detector, fed as the daemon
+feeds it:
+
+| gate | frames kept | detected |
+|---|---|---|
+| -36 dBFS | 30% | 9/12, two scoring ~0.07 |
+| -44 dBFS | 33% | 11/12 |
+| **none** | **100%** | **11/12, every peak 1.00** |
+
+openWakeWord is now fed every frame. The gate still guards the Vosk grammar,
+which genuinely needs it, and still decides when a turn has ended.
+
+## 8. A grammar cannot reject a phonetic neighbour
+
+Vosk's grammar must choose between the phrase and `[unk]`, so a near miss maps
+onto the phrase at full confidence. Measured:
+
+| grammar | attack | score |
+|---|---|---|
+| "hey claude" | "hey cloud" | **1.00** |
+| "hey codex" | "hey kodak" | **1.00** |
+| "hey pi" | "apple pie" | 0.89 |
+| "hey hermes" | "hey herbie" | **1.00** |
+
+No confidence threshold can fix this; there is nothing to threshold.
+openWakeWord scores the same class of attack at 0.898 against 0.996 for the
+real phrase, which *is* separable — at 0.90.
+
+## 9. The personal verifier earns its place
+
+Both detectors fed identical live audio, eleven utterances:
+
+| | fired | mean peak |
+|---|---|---|
+| with verifier | 11/11 | 0.963 |
+| base model | 11/11 | 0.987 |
+
+Then twelve held-out other-speaker clips — six Piper voices at synthesis
+parameters outside the training range:
+
+| | accepted | mean peak |
+|---|---|---|
+| with verifier | **0/12** | 0.134 |
+| base model | 8/12 | 0.718 |
+
+So it costs 0.024 of headroom on the owner's voice and rejects every
+other-speaker clip the base model would have let through. That is the whole
+argument for openWakeWord's extra 154MB.
+
+Caveat: the other speakers are synthetic, and the verifier was trained on
+synthetic negatives from the same voices at different parameters. A real
+stranger at the microphone is still untested.
+
+## 10. Memory, and what it costs to hold
+
+| component | RSS |
+|---|---|
+| whisper `tiny.en` | 323 MB (indifferent to `cpu_threads`) |
+| openWakeWord + scipy + sklearn | 179 MB |
+| Vosk model | 114 MB |
+| Piper voice | 48 MB |
+
+The daemon idles near 594 MB with only the models in use. Releasing a model
+needs `malloc_trim(0)` as well as dropping the reference — glibc otherwise
+keeps the arenas and RSS barely moves (Vosk: 67MB freed on the drop, 117MB
+after the trim).
+
+CPU is not a concern: openWakeWord inference is 2.97ms per 80ms frame, 3.7%
+of one core, and the whole daemon idles at 5.3%. `vad_threshold` does not
+reduce that — it runs Silero VAD *after* the predictions and adds ~22%.
