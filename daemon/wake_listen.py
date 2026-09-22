@@ -102,6 +102,8 @@ class OwwWake:
         self._model = Model(wakeword_model_paths=[str(path)], **kwargs)
         self._tail = np.empty(0, dtype=np.int16)
         self.phrase = model.replace("_", " ")
+        #: Highest score seen in the most recent feed(), for the monitor.
+        self.last_score = 0.0
 
     def reset(self) -> None:
         self._tail = self._np.empty(0, dtype=self._np.int16)
@@ -112,10 +114,12 @@ class OwwWake:
         x = self._np.frombuffer(pcm, dtype=self._np.int16)
         self._tail = self._np.concatenate((self._tail, x))
         fired = False
+        self.last_score = 0.0
         while len(self._tail) >= self.FRAME:
             frame, self._tail = self._tail[:self.FRAME], self._tail[self.FRAME:]
-            scores = self._model.predict(frame)
-            if max(scores.values()) >= self.threshold:
+            best = max(self._model.predict(frame).values())
+            self.last_score = max(self.last_score, best)
+            if best >= self.threshold:
                 fired = True
         if fired:
             self.reset()
