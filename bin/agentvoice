@@ -6,6 +6,7 @@
 #   agentvoice start|stop|toggle   the service, i.e. the switch in the panel
 #   agentvoice mic                 release or re-engage the mic, service left up
 #   agentvoice status              JSON, for scripts and the bar
+#   agentvoice monitor             live wake-word scores, for calibration
 set -euo pipefail
 
 UNIT=agentvoice.service
@@ -35,6 +36,15 @@ case "${1:-status}" in
       exit 1
     fi
     ;;
+  monitor)
+    # Live wake-word scores. Safe to run alongside the daemon: PipeWire allows
+    # several readers on one microphone.
+    shift
+    REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+    PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
+    [[ -x $PY ]] || PY="$REPO/bench/.venv/bin/python"
+    exec "$PY" "$REPO/daemon/monitor.py" "$@"
+    ;;
   status)
     if [[ -r $STATE ]] && active; then cat "$STATE"; else echo '{"state":"off"}'; fi
     ;;
@@ -42,7 +52,7 @@ case "${1:-status}" in
     active && echo yes || echo no
     ;;
   *)
-    echo "usage: agentvoice [start|stop|toggle|mic|status|is-active]" >&2
+    echo "usage: agentvoice [start|stop|toggle|mic|monitor|status|is-active]" >&2
     exit 2
     ;;
 esac
