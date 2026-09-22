@@ -52,8 +52,14 @@ spin() {  # spin <title> <outfile> -- <cmd...>
   local title="$1" out="$2"
   shift 3
   SPIN_ERR="$(mktemp)"
+  tty_flush
+  echo_off
   gum spin --title "$title" -- \
     bash -c 'o=$1; e=$2; shift 2; exec "$@" >"$o" 2>"$e"' _ "$out" "$SPIN_ERR" "$@"
+  local rc=$?
+  echo_restore
+  tty_flush
+  return $rc
 }
 
 # The daemon is listening on the same microphone. Saying the wake phrase
@@ -81,6 +87,35 @@ resume_daemon() {
 # is a no-op, so this is safe even when gum cleaned up after itself.
 kbd_restore() { { printf '\e[<u\e[?2004l' >/dev/tty; } 2>/dev/null || true; }
 
+# Every gum invocation asks the terminal whether it speaks the kitty keyboard
+# protocol (CSI ? u). foot answers on the *input* stream with CSI ? 1 u. If gum
+# has already exited by the time that answer arrives -- which it has, for a
+# prompt the user dismissed quickly -- the reply sits in the input buffer and
+# the shell echoes it as text. That is the ^[[?1u appearing beside the spinner,
+# and the ^[[99;133u was a key report arriving the same way.
+#
+# Draining the reply after every gum call is the cure. Wrapping the name means
+# no call site has to remember.
+tty_flush() { { read -rsn 256 -t 0.06 </dev/tty; } >/dev/null 2>&1 || true; }
+gum() { command gum "$@"; local rc=$?; tty_flush; return $rc; }
+
+# Belt and braces, because the drain above depends on winning a race with the
+# terminal's reply. With echo off, a reply that arrives late is never printed
+# whether or not anything reads it. gum turns echo off for its own prompts and
+# restores it after, so this is reapplied around the slow phases rather than
+# set once.
+TTY_STATE=""
+echo_off() {
+  [[ -c /dev/tty ]] || return 0
+  TTY_STATE="$(stty -g </dev/tty 2>/dev/null)" || return 0
+  stty -echo </dev/tty 2>/dev/null || true
+}
+echo_restore() {
+  [[ -n ${TTY_STATE:-} ]] || return 0
+  stty "$TTY_STATE" </dev/tty 2>/dev/null || true
+  TTY_STATE=""
+}
+
 cancelled() {
   echo
   resume_daemon
@@ -89,7 +124,7 @@ cancelled() {
   exit 130
 }
 trap cancelled INT TERM
-trap 'resume_daemon; kbd_restore' EXIT
+trap 'resume_daemon; echo_restore; kbd_restore' EXIT
 
 find_python() {
   local candidates=(
