@@ -296,8 +296,20 @@ Next, roughly in order of how much they matter:
    permission posture is inferred from flags rather than tested.
 7. Echo cancel, and barge in on top of it. Today the microphone simply
    goes deaf while the machine talks, so it cannot be interrupted.
-8. Tests. `bin/agentvoice-check` catches syntax and settings that are
-   declared but never drawn; nothing exercises behaviour.
+8. Widen the tests. `bin/agentvoice-check` runs 78 of them, covering
+   the speakable-text rules, the permission hook, config precedence and
+   the adapter contract. The wake loop and the QML are still exercised
+   only by hand.
+
+## Development
+
+```bash
+VIRTUAL_ENV=~/.local/share/agentvoice/venv uv pip install -r requirements-dev.txt
+./bin/agentvoice-check          # static checks + tests, about two seconds
+```
+
+`CLAUDE.md` has the working rules: what earns a test, why a setting is three
+things rather than one, and how model reloading is reconciled.
 
 ## Layout
 
@@ -324,6 +336,7 @@ agent-voice/              <- also the plugin directory once installed
     vocab.txt             default custom vocabulary
   desktop/
     agentvoice.service.in systemd user unit template
+  tests/                  pytest suite, run by bin/agentvoice-check
   bench/                  hardware benchmark and findings
 ```
 

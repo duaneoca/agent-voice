@@ -51,4 +51,19 @@ for f in $(git -C "$ROOT" ls-files 'bin/*' 'install.sh' 'bench/*.sh'); do
 done
 if [[ -n ${bad// } ]]; then say "shell syntax" "FAIL:$bad"; fail=1; else say "shell syntax" "ok"; fi
 
+# 5. the behavioural tests, when pytest is available
+PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
+[[ -x $PY ]] || PY="$ROOT/bench/.venv/bin/python"
+if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
+  if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
+    say "tests" "$(tail -1 <<<"$out")"
+  else
+    say "tests" "FAIL"
+    echo "$out" | tail -20 | sed 's/^/    /'
+    fail=1
+  fi
+else
+  say "tests" "skipped (pip install -r requirements-dev.txt)"
+fi
+
 exit $fail
