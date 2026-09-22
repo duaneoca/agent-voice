@@ -23,8 +23,8 @@ trap cancelled INT TERM
 find_python() {
   local candidates=(
     "${AGENTVOICE_PYTHON:-}"
-    "$STATE/venv/bin/python"
-    "$REPO/bench/.venv/bin/python"
+    "$STATE/venv/bin/python"          # installed
+    "$REPO/bench/.venv/bin/python"    # development checkout
   )
   for p in "${candidates[@]}"; do
     [[ -n $p && -x $p ]] && { echo "$p"; return 0; }
@@ -37,7 +37,7 @@ PY="$(find_python)" || {
   echo "  Run the installer first, or set AGENTVOICE_PYTHON."
   exit 1
 }
-VERIFIER="$REPO/prototype/verifier.py"
+VERIFIER="$REPO/daemon/verifier.py"
 
 # --- why we are here ------------------------------------------------------
 gum style --border rounded --padding "1 2" --margin "1 0" --border-foreground 4 \
@@ -70,7 +70,7 @@ NEG="$WORK/$MODEL/negatives"
 mkdir -p "$POS" "$NEG"
 
 # --- negatives: reuse anything already recorded ---------------------------
-NEG_COUNT="$("$PY" "$VERIFIER" negatives "$NEG" --from "$REPO/bench/corpus/wav" 2>/dev/null || echo 0)"
+NEG_COUNT="$("$PY" "$VERIFIER" negatives "$NEG" --from "${AGENTVOICE_NEGATIVES:-$REPO/bench/corpus/wav}" 2>/dev/null || echo 0)"
 
 # The failure we actually care about is a phone or podcast saying the phrase in
 # someone else's voice. Negatives made only of miscellaneous speech teach

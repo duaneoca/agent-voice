@@ -170,13 +170,58 @@ That's this.
 7. Quickshell plugin, install script, systemd service
 8. Second adapter to prove the contract holds
 
-## Layout (proposed)
+## Install
 
-agentvoice/
-  daemon/        wake word, conversation state, TTS, control socket
-  adapters/      base.py, claude_code.py, openai_compat.py
-  permissions/   mcp server, overlay UI
-  desktop/       quickshell plugin, hyprland binds, systemd unit
-  bench/         hardware benchmark and findings
+The bar widget is an Omarchy shell plugin, so it arrives the usual way:
+
+```bash
+omarchy plugin add https://github.com/duaneoca/agent-voice.git --enable
+```
+
+That gets you the icon and the settings screen. The thing that listens is a
+Python daemon with a few hundred megabytes of models behind it, so it is a
+second, explicit step -- the way Omarchy installs Voxtype:
+
+```bash
+~/.config/omarchy/plugins/duaneoca.agentvoice/install.sh
+```
+
+It needs one system package, `uv` from the official `extra` repo, and then
+manages its own CPython. Nothing is installed against the system interpreter:
+Arch is a rolling release, and a venv built on `/usr/bin/python` stops
+importing the next time Arch bumps it, which would leave voice silently dead
+after an `omarchy update`.
+
+Roughly 750MB with the default engine, or 900MB with openWakeWord as well;
+the installer says what the second engine costs before installing it.
+
+## Layout
+
+```
+agent-voice/              <- also the plugin directory once installed
+  manifest.json           kinds: bar-widget + overlay
+  Panel.qml               bar icon, state, last exchange, switch
+  Settings.qml            the knobs, as a themed overlay
+  KnobRow.qml             shared slider row
   install.sh
-  config.toml
+  requirements.txt                   core: vosk, whisper, piper
+  requirements-openwakeword.txt      optional second wake engine
+  bin/
+    agentvoice                       start|stop|toggle|mic|status
+    agentvoice-train-verifier        guided personal-verifier training
+  daemon/
+    paths.py              one place that resolves every path
+    wake_listen.py        the loop: wake -> capture -> agent -> speech
+    runtime.py            config, state file, speech
+    speech_text.py        markdown -> speakable prose, sentence chunking
+    verifier.py           train and load a personal verifier
+    adapters/             base contract + claude_code, codex, gemini, ...
+    agentvoice.toml       fallback config for non-Omarchy machines
+    vocab.txt             default custom vocabulary
+  desktop/
+    agentvoice.service.in systemd user unit template
+  bench/                  hardware benchmark and findings
+```
+
+Everything the installer downloads -- interpreter, wheels, models, trained
+verifiers -- lives under `~/.local/share/agentvoice/`, never in the repo.

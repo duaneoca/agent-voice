@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "id": "duaneoca.agentvoice",
+  "name": "Agent Voice",
+  "version": "0.1.0",
+  "author": "duaneoca",
+  "license": "MIT",
+  "description": "Wake word, spoken replies, and the knobs that govern them, for whichever AI agent is on the box.",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml",
+    "overlay": "Settings.qml"
+  },
+  "barWidget": {
+    "displayName": "Agent Voice",
+    "description": "Hot-mic state at a glance, the last thing it heard, and live control over the timings that decide when it starts and stops listening.",
+    "category": "AI",
+    "aliases": [
+      "agentvoice",
+      "voice"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "phrase": "hey computer",
+      "leadInMs": 5000,
+      "trailingSilenceMs": 1200,
+      "minUtteranceMs": 400,
+      "maxUtteranceMs": 30000,
+      "model": "tiny.en",
+      "speakReplies": true,
+      "voice": "lessac-medium",
+      "micThresholdDb": -38,
+      "wakeConfidencePct": 70,
+      "echoTailMs": 350,
+      "engine": "vosk",
+      "owwModel": "hey_jarvis",
+      "owwThresholdPct": 90
+    },
+    "schema": [
+      {
+        "key": "phrase",
+        "type": "enum",
+        "label": "Wake phrase",
+        "options": [
+          "hey computer",
+          "okay computer",
+          "hey agent",
+          "hey claude",
+          "okay claude",
+          "hey assistant",
+          "hey jarvis",
+          "hey machine",
+          "computer"
+        ],
+        "defaultValue": "hey computer",
+        "description": "Pinned by a Vosk grammar. Every option here was measured on this machine: all detect reliably and none false-woke across 98 seconds of ordinary speech. \"hey omarchy\" is absent because Vosk's lexicon has no such word and it never fires."
+      },
+      {
+        "key": "micThresholdDb",
+        "type": "integer",
+        "label": "Microphone gate (dBFS)",
+        "min": -60,
+        "max": -20,
+        "step": 1,
+        "defaultValue": -38,
+        "description": "Audio quieter than this is ignored entirely. Measured on this machine: room tone near -45, speech near -24. Raise it toward -30 if something across the room keeps waking it."
+      },
+      {
+        "key": "wakeConfidencePct",
+        "type": "integer",
+        "label": "Wake word confidence (%)",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 70,
+        "description": "How sure the recogniser must be before the trigger counts. The grammar has to choose between the phrase and anything-else, so near misses score as matches; this rejects them."
+      },
+      {
+        "key": "leadInMs",
+        "type": "integer",
+        "label": "Time to start speaking (ms)",
+        "min": 1000,
+        "max": 15000,
+        "step": 500,
+        "defaultValue": 5000,
+        "description": "How long you get to begin after the wake word. Raise this if you feel rushed. It stops counting the moment you make a sound, so it never competes with the trailing pause."
+      },
+      {
+        "key": "trailingSilenceMs",
+        "type": "integer",
+        "label": "Pause that ends a turn (ms)",
+        "min": 400,
+        "max": 4000,
+        "step": 100,
+        "defaultValue": 1200,
+        "description": "Quiet time that means you have finished. Raise if it cuts you off mid-thought."
+      },
+      {
+        "key": "minUtteranceMs",
+        "type": "integer",
+        "label": "Discard shorter than (ms)",
+        "min": 0,
+        "max": 2000,
+        "step": 100,
+        "defaultValue": 400,
+        "description": "Anything briefer is treated as a false wake and thrown away."
+      },
+      {
+        "key": "maxUtteranceMs",
+        "type": "integer",
+        "label": "Hard ceiling (ms)",
+        "min": 5000,
+        "max": 120000,
+        "step": 5000,
+        "defaultValue": 30000,
+        "description": "A stuck open microphone stops here rather than recording forever."
+      },
+      {
+        "key": "model",
+        "type": "enum",
+        "label": "Transcription model",
+        "options": [
+          "tiny.en",
+          "base.en",
+          "small.en"
+        ],
+        "defaultValue": "tiny.en",
+        "description": "tiny.en is the measured default on 2014-era hardware: 4.9% WER with the vocabulary prompt at ~320ms. small.en costs nearly two seconds per turn."
+      },
+      {
+        "key": "speakReplies",
+        "type": "bool",
+        "label": "Speak replies aloud",
+        "defaultValue": true,
+        "description": "Piper text-to-speech. Off leaves replies as text only."
+      },
+      {
+        "key": "voice",
+        "type": "enum",
+        "label": "Voice",
+        "options": [
+          "lessac-medium",
+          "lessac-low",
+          "amy-medium",
+          "ryan-medium",
+          "joe-medium",
+          "hfc_male-medium"
+        ],
+        "defaultValue": "lessac-medium",
+        "description": "Piper voices, all measured around 22x realtime on this hardware. lessac and amy are female, ryan, joe and hfc_male are male; low is faster and thinner than medium."
+      },
+      {
+        "key": "echoTailMs",
+        "type": "integer",
+        "label": "Deaf period after speaking (ms)",
+        "min": 0,
+        "max": 1500,
+        "step": 50,
+        "defaultValue": 350,
+        "description": "The microphone ignores everything for this long after the voice stops, so room reverb and the audio buffer's tail cannot be mistaken for you talking. Raise it in a room with hard walls."
+      },
+      {
+        "key": "engine",
+        "type": "enum",
+        "label": "Wake word engine",
+        "options": [
+          "vosk",
+          "openwakeword"
+        ],
+        "defaultValue": "vosk",
+        "description": "vosk takes any phrase but scores phonetic neighbours as high as the real one; openwakeword has four phrases and real rejection."
+      },
+      {
+        "key": "owwModel",
+        "type": "enum",
+        "label": "openWakeWord phrase",
+        "options": [
+          "hey_jarvis",
+          "alexa",
+          "hey_mycroft",
+          "hey_marvin"
+        ],
+        "defaultValue": "hey_jarvis",
+        "description": "Only these four ship pretrained. Any other phrase has to be trained."
+      },
+      {
+        "key": "owwThresholdPct",
+        "type": "integer",
+        "label": "openWakeWord threshold (%)",
+        "min": 10,
+        "max": 99,
+        "step": 1,
+        "defaultValue": 90,
+        "description": "Measured here: real phrase ~99, phonetic near-miss ~90, unrelated speech ~0."
+      }
+    ]
+  },
+  "keepLoaded": true
+}

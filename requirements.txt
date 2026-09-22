@@ -1,0 +1,24 @@
+# Core runtime: wake word (Vosk), transcription (Whisper), speech (Piper).
+#
+# Installed into a uv-managed interpreter under ~/.local/share/agentvoice/venv,
+# deliberately NOT the system Python. Arch is a rolling release -- uv already
+# offers CPython 3.15 -- and a venv built on /usr/bin/python breaks the next
+# time Arch bumps the interpreter, which would leave voice silently dead after
+# an `omarchy update`.
+#
+# vosk on PyPI is a py3 wheel rather than a CPython-version-specific one, so
+# nothing here ties us to a particular interpreter release.
+
+vosk>=0.3.45,<0.4
+faster-whisper>=1.2,<2
+piper-tts>=1.8,<2
+sounddevice>=0.5,<1
+numpy>=2,<3
+
+# Pulled in by the above, listed for visibility: ctranslate2 (~140MB) is
+# faster-whisper's engine and av (~106MB) is its audio file decoder, which we
+# never call -- we hand it numpy arrays -- but it is a top-level import.
+
+# hf-xet (~12MB) arrives transitively via huggingface-hub. It is not needed --
+# downloads work without it -- but it cannot be excluded by listing it here,
+# and a post-install uninstall is not worth the step for 12MB of 646.
