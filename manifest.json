@@ -41,7 +41,8 @@
       "owwModel": "hey_jarvis",
       "owwThresholdPct": 90,
       "conversationMode": true,
-      "followUpMs": 7000
+      "followUpMs": 7000,
+      "livePartials": "auto"
     },
     "schema": [
       {
@@ -216,6 +217,18 @@
         "step": 500,
         "defaultValue": 7000,
         "description": "How long it keeps listening after speaking before it needs the wake word again."
+      },
+      {
+        "key": "livePartials",
+        "type": "enum",
+        "label": "Live transcript while you speak",
+        "options": [
+          "auto",
+          "on",
+          "off"
+        ],
+        "defaultValue": "auto",
+        "description": "Rough text shown as you talk, before Whisper returns. It needs the Vosk model, which costs 156MB resident. 'auto' shows it only when Vosk is already loaded for the wake word, so it is never paid for twice."
       }
     ]
   },
