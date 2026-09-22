@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adapters import load as load_adapter, omarchy_default, sentences  # noqa: E402
 from adapters.base import speech_safe  # noqa: E402
+from speech_text import is_stop_command  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
 from paths import ROOT, vocab_file, vosk_model  # noqa: F401
@@ -173,6 +174,8 @@ class Pipeline:
         self.threshold_db = float(cfg["micThresholdDb"])
         self.refractory_ms = int(cfg["refractoryMs"])
         self.wake_confidence = float(cfg["wakeConfidence"])
+        self.conversation = cfg.bool("conversationMode")
+        self.follow_up_ms = cfg.int("followUpMs")
         # 300ms of continuous speech-level audio before a partial may wake it.
         self.min_loud_frames = 3
 
@@ -328,6 +331,9 @@ class Daemon:
               f"   {DIM}lead-in {p.lead_in_ms}ms · trailing {p.trailing_ms}ms{OFF}")
         print(f"  {DIM}gate {p.threshold_db:.0f} dBFS · confidence "
               f"{p.wake_confidence:.2f} · {self.cfg.source}{OFF}")
+        print(f"  {DIM}conversation: "
+              f"{f'on, {p.follow_up_ms / 1000:.0f}s follow-up window' if p.conversation else 'off'}"
+              f"{OFF}")
         who = f"{self.agent.name}" if self.agent else "nobody (echo mode)"
         print(f"  {DIM}agent: {who} · voice: "
               f"{self.speaker.name if self.speaker else 'off'}"
@@ -461,6 +467,10 @@ class Daemon:
             cap = None
             woke_at = last_voice = 0.0
             heard = False
+            # A follow-up gets its own, shorter window: after a reply the
+            # machine keeps listening for a moment so the next thing you say
+            # does not need the wake word again.
+            active_lead_in = self.pipe.lead_in_ms
 
             level_shown = 0.0
             while True:
@@ -492,6 +502,7 @@ class Daemon:
                         phase, buf, cap = "capture", b"", self.pipe.new_capture()
                         woke_at = last_voice = time.time()
                         heard = False
+                        active_lead_in = self.pipe.lead_in_ms
                         self.state.publish("capture", **last)
                     continue
 
@@ -517,7 +528,7 @@ class Daemon:
                 # off before you have started is the most irritating failure
                 # this thing can have.
                 if not heard:
-                    if elapsed_ms > self.pipe.lead_in_ms:
+                    if elapsed_ms > active_lead_in:
                         print(f"\r  {DIM}(nothing heard){OFF}{' ' * 40}")
                         phase = "wake"
                         self._publish(**last)
@@ -530,6 +541,7 @@ class Daemon:
                     print(f"\r  {YEL}(hit max_utterance_ms){OFF}{' ' * 30}")
 
                 audio_ms = len(buf) / 32.0
+                follow_up = False
                 if audio_ms < self.pipe.min_utterance_ms:
                     print(f"\r  {DIM}(too short, discarded){OFF}{' ' * 40}")
                 else:
@@ -541,9 +553,31 @@ class Daemon:
                     last = {"transcript": text, "ms": round(ms),
                             "audio_s": round(audio_ms / 1000, 2)}
 
-                    if text:
+                    # "stop", "cancel that", "never mind" and friends end the
+                    # conversation without a round trip to the agent. Matched
+                    # against the whole transcript, so an ordinary sentence
+                    # that merely contains "stop" cannot trigger it.
+                    if text and is_stop_command(text):
+                        print(f"  {DIM}(stopping){OFF}")
+                        follow_up = False
+                    elif text:
                         self.answer(text, last)
+                        follow_up = self.pipe.conversation
+                    else:
+                        follow_up = False
                     print()
+
+                if follow_up and self.enabled:
+                    phase, buf, cap = "capture", b"", self.pipe.new_capture()
+                    woke_at = last_voice = time.time()
+                    heard = False
+                    active_lead_in = self.pipe.follow_up_ms
+                    print(f"  {CYA}● still listening{OFF}  {DIM}"
+                          f"({active_lead_in / 1000:.0f}s — or say the wake word again)"
+                          f"{OFF}", flush=True)
+                    self.state.publish("followup", **last)
+                    self.refresh()
+                    continue
 
                 phase = "wake"
                 self._publish(**last)

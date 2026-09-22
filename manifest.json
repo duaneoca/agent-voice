@@ -39,7 +39,9 @@
       "echoTailMs": 350,
       "engine": "vosk",
       "owwModel": "hey_jarvis",
-      "owwThresholdPct": 90
+      "owwThresholdPct": 90,
+      "conversationMode": true,
+      "followUpMs": 7000
     },
     "schema": [
       {
@@ -197,6 +199,23 @@
         "step": 1,
         "defaultValue": 90,
         "description": "Measured here: real phrase ~99, phonetic near-miss ~90, unrelated speech ~0."
+      },
+      {
+        "key": "conversationMode",
+        "type": "bool",
+        "label": "Keep listening after a reply",
+        "defaultValue": true,
+        "description": "Carry on without repeating the wake word. Say 'stop', 'cancel that' or 'never mind' to end the exchange, or just stay quiet."
+      },
+      {
+        "key": "followUpMs",
+        "type": "integer",
+        "label": "Follow-up window (ms)",
+        "min": 2000,
+        "max": 20000,
+        "step": 500,
+        "defaultValue": 7000,
+        "description": "How long it keeps listening after speaking before it needs the wake word again."
       }
     ]
   },

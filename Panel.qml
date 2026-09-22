@@ -46,7 +46,7 @@ Panel {
 
   readonly property string icon: {
     if (!serviceActive) return "󰍭"              // mic off
-    if (vState === "capture") return "󰑊"        // recording you now
+    if (vState === "capture" || vState === "followup") return "󰑊"  // recording you
     if (vState === "thinking") return "󰔟"
     if (vState === "speaking") return "󰕾"
     if (vState === "listening") return "󰍬"
@@ -54,7 +54,8 @@ Panel {
   }
 
   readonly property color barIconColor: {
-    if (vState === "capture" && serviceActive) return bar ? bar.urgent : Color.urgent
+    if ((vState === "capture" || vState === "followup") && serviceActive)
+      return bar ? bar.urgent : Color.urgent
     if (live) return barForeground
     return Qt.darker(barForeground, 1.55)
   }
@@ -62,6 +63,8 @@ Panel {
   readonly property string stateLabel: {
     if (!serviceActive) return "OFF"
     if (vState === "capture") return "LISTENING TO YOU"
+    // Still hot after a reply, waiting to see if you carry on.
+    if (vState === "followup") return "STILL LISTENING"
     if (vState === "thinking") return "TRANSCRIBING"
     if (vState === "speaking") return "SPEAKING"
     if (vState === "listening") return "WAITING FOR \"" + voice.activePhrase.toUpperCase() + "\""

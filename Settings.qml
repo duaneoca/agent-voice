@@ -72,6 +72,7 @@ Item {
   ]
   readonly property var modelOptions: ["tiny.en", "base.en", "small.en"]
 
+  readonly property bool conversation: setting("conversationMode", true)
   readonly property string engine: setting("engine", "vosk")
   readonly property bool usingOww: engine === "openwakeword"
 
@@ -486,6 +487,38 @@ Item {
               value: root.setting("minUtteranceMs", 400)
               minimum: 0; maximum: 2000; stepSize: 100
               onCommitted: function(v) { root.persist("minUtteranceMs", v, true) }
+            }
+
+            // --- conversation ---------------------------------------------
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+            PanelSectionHeader {
+              text: "CONVERSATION"; foreground: root.dim; fontFamily: root.fontFamily
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Keep listening after a reply"
+              description: "Carry on without repeating the wake word. Say " +
+                           "\"stop\", \"cancel that\" or \"never mind\" to end it, " +
+                           "or just stay quiet."
+              checked: root.conversation
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("conversationMode",
+                                      root.conversation ? "false" : "true", true)
+            }
+
+            KnobRow {
+              width: parent.width
+              visible: root.conversation
+              scrollTarget: formScroll
+              foreground: root.foreground; fontFamily: root.fontFamily
+              label: "Follow-up window"
+              description: "How long it keeps listening after speaking before " +
+                           "it needs the wake word again."
+              value: root.setting("followUpMs", 7000)
+              minimum: 2000; maximum: 20000; stepSize: 500
+              onCommitted: function(v) { root.persist("followUpMs", v, true) }
             }
 
             // --- speech ---------------------------------------------------
