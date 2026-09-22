@@ -349,6 +349,71 @@ Item {
             width: parent.width
             spacing: Style.spacing.md
 
+            // The four controls anyone actually reaches for. Everything below
+            // is calibration you set once and forget.
+            Toggle {
+              width: parent.width
+              label: "Speak replies aloud"
+              description: "Off leaves the reply as text in the panel."
+              checked: root.speakReplies
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("speakReplies",
+                                      root.speakReplies ? "false" : "true", true)
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Keep listening after a reply"
+              description: "Carry on without repeating the wake word. Say " +
+                           "\"stop\", \"cancel that\" or \"never mind\" to end it, " +
+                           "or just stay quiet."
+              checked: root.conversation
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("conversationMode",
+                                      root.conversation ? "false" : "true", true)
+            }
+
+            KnobRow {
+              width: parent.width
+              visible: root.conversation
+              scrollTarget: formScroll
+              foreground: root.foreground; fontFamily: root.fontFamily
+              label: "Follow-up window"
+              description: "How long it keeps listening after speaking before " +
+                           "it needs the wake word again."
+              value: root.setting("followUpMs", 7000)
+              minimum: 2000; maximum: 20000; stepSize: 500
+              onCommitted: function(v) { root.persist("followUpMs", v, true) }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Ask before it changes anything"
+              description: "A spoken sentence can otherwise edit files and run " +
+                           "commands unchallenged. Read-only tools are never " +
+                           "asked about, and an unanswered prompt is denied."
+              checked: root.askPermission
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("askPermission",
+                                      root.askPermission ? "false" : "true", true)
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              visible: !root.askPermission
+              text: "Turned off. The agent can edit files and run commands with " +
+                    "nothing able to stop it."
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
             // --- wake word ------------------------------------------------
             PanelSectionHeader {
               text: "WAKE WORD"; foreground: root.dim; fontFamily: root.fontFamily
@@ -623,83 +688,12 @@ Item {
               onCommitted: function(v) { root.persist("maxUtteranceMs", v, true) }
             }
 
-            // --- agent ----------------------------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "AGENT"; foreground: root.dim; fontFamily: root.fontFamily
-            }
 
-            Toggle {
-              width: parent.width
-              label: "Ask before it changes anything"
-              description: "A spoken sentence can otherwise edit files and run " +
-                           "commands unchallenged. Read-only tools are never " +
-                           "asked about, and an unanswered prompt is denied."
-              checked: root.askPermission
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("askPermission",
-                                      root.askPermission ? "false" : "true", true)
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: !root.askPermission
-              text: "Turned off. The agent can edit files and run commands with " +
-                    "nothing able to stop it."
-              color: Color.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            // --- conversation ---------------------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "CONVERSATION"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Toggle {
-              width: parent.width
-              label: "Keep listening after a reply"
-              description: "Carry on without repeating the wake word. Say " +
-                           "\"stop\", \"cancel that\" or \"never mind\" to end it, " +
-                           "or just stay quiet."
-              checked: root.conversation
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("conversationMode",
-                                      root.conversation ? "false" : "true", true)
-            }
-
-            KnobRow {
-              width: parent.width
-              visible: root.conversation
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Follow-up window"
-              description: "How long it keeps listening after speaking before " +
-                           "it needs the wake word again."
-              value: root.setting("followUpMs", 7000)
-              minimum: 2000; maximum: 20000; stepSize: 500
-              onCommitted: function(v) { root.persist("followUpMs", v, true) }
-            }
 
             // --- speech ---------------------------------------------------
             PanelSeparator { width: parent.width; foreground: root.foreground }
             PanelSectionHeader {
               text: "SPEECH"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Toggle {
-              width: parent.width
-              label: "Speak replies aloud"
-              description: "Off leaves the reply as text in the panel."
-              checked: root.speakReplies
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("speakReplies",
-                                      root.speakReplies ? "false" : "true", true)
             }
 
             Dropdown {
