@@ -42,10 +42,18 @@ screen() { clear 2>/dev/null || tput clear 2>/dev/null || true; }
 # the spinner and leaves a bare cursor for however long the work takes -- nine
 # seconds for the voice synthesis alone. Output goes to a file instead, and the
 # spinner keeps the terminal.
+# stderr has to go somewhere too. train_custom_verifier draws tqdm progress
+# bars -- several kilobytes of carriage returns and block characters -- and
+# they land on the same line the spinner is animating, which is what produced
+# the garbled escape sequences around the title. It is captured rather than
+# discarded so a real failure can still be shown.
+SPIN_ERR=""
 spin() {  # spin <title> <outfile> -- <cmd...>
   local title="$1" out="$2"
   shift 3
-  gum spin --title "$title" -- bash -c 'exec "$@" >"$0"' "$out" "$@"
+  SPIN_ERR="$(mktemp)"
+  gum spin --title "$title" -- \
+    bash -c 'o=$1; e=$2; shift 2; exec "$@" >"$o" 2>"$e"' _ "$out" "$SPIN_ERR" "$@"
 }
 
 # The daemon is listening on the same microphone. Saying the wake phrase
@@ -184,7 +192,7 @@ NEG_COUNT="$("$PY" "$VERIFIER" negatives "$NEG" --from "${AGENTVOICE_NEGATIVES:-
 OTHERS_FILE="$(mktemp)"
 spin "Synthesising other voices saying \"$SPOKEN\" — about 9s" "$OTHERS_FILE" -- \
   "$PY" "$VERIFIER" synth-negatives "$SPOKEN" "$NEG" || true
-OTHERS="$(tr -dc '0-9' < "$OTHERS_FILE")"; rm -f "$OTHERS_FILE"
+OTHERS="$(tr -dc '0-9' < "$OTHERS_FILE")"; rm -f "$OTHERS_FILE" "${SPIN_ERR:-}"
 OTHERS="${OTHERS:-0}"
 NEG_COUNT=$(( NEG_COUNT + OTHERS ))
 
@@ -251,9 +259,11 @@ if ! spin "Training on $have clips of your voice" "$OUT_FILE" -- \
      "$PY" "$VERIFIER" train "$MODEL" "$POS" "$NEG"; then
   rm -f "$OUT_FILE"
   gum style --foreground 1 "  Training failed."
+  [[ -s ${SPIN_ERR:-} ]] && tail -3 "$SPIN_ERR" | sed 's/^/  /'
+  rm -f "${SPIN_ERR:-}"
   exit 1
 fi
-OUT="$(tail -1 "$OUT_FILE")"; rm -f "$OUT_FILE"
+OUT="$(tail -1 "$OUT_FILE")"; rm -f "$OUT_FILE" "${SPIN_ERR:-}"
 
 resume_daemon
 
