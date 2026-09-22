@@ -81,7 +81,8 @@ class OwwWake:
 
     FRAME = 1280
 
-    def __init__(self, model: str, threshold: float, verifier: str | None = None):
+    def __init__(self, model: str, threshold: float, verifier: str | None = None,
+                 use_verifier: bool = True):
         import numpy as np
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from verifier import installed_verifiers, resolve_model
@@ -90,6 +91,8 @@ class OwwWake:
 
         path, self.key = resolve_model(model)
         kwargs = {}
+        if not use_verifier:
+            verifier = ""
         if verifier is None:
             found = installed_verifiers().get(self.key)
             verifier = str(found) if found else None
