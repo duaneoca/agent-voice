@@ -40,8 +40,11 @@ the installer says what the second engine costs before installing it.
 1. **Baseline, not bolted on.** Installs like any Omarchy extension:
    Quickshell plugin, Hyprland binds, systemd user service, config in
    ~/.config/agentvoice. Feels native to the desktop.
-2. **Agent agnostic.** Detects which agent CLIs are installed and uses
-   the one you pick. The voice layer never cares who's answering.
+2. **Agent agnostic.** Follows `omarchy default agent`, so switching
+   agents at the desktop switches the voice too. The voice layer never
+   cares who is answering -- though the guarantees are not yet even:
+   only Claude Code has been run end to end, and only Claude Code can
+   raise a permission prompt.
 3. **You own the mic.** Nothing listens unless you've enabled it, and
    the state is always visible. Linux has no OS level mic gate, so
    that guarantee is ours to build.
@@ -120,12 +123,23 @@ One contract: take text plus a session ID, stream text back.
 Autodetect on install; choose the active one in config.
 
 **Permissions**
-For Claude Code, `--permission-prompt-tool` points at a local MCP
-server run by the daemon. Tool requests pop a window; click or say
-"approve" / "deny", whichever comes first. Timeout defaults to deny.
-Other adapters map their own approval flow onto the same popup.
-An Omarchy `overlay` plugin, themed from the active theme, rather than
-a GTK4 window we style ourselves.
+A spoken sentence should not be able to edit files unchallenged. For
+Claude Code, a PreToolUse hook passed through `--settings` receives each
+tool call, writes it to the runtime directory, summons the overlay and
+waits. The overlay shows the tool and the command verbatim with Deny,
+Allow once, and a countdown; silence denies. Read-only tools are never
+asked about, because a prompt on every Read would train you to say yes.
+
+Not `--permission-prompt-tool`: that flag is accepted by the CLI and
+does load the MCP server, but is never consulted -- tested against
+2.1.278 in every permission mode. Hooks fire in all of them.
+
+No other agent can raise a prompt from here. Adapters say so with
+`guards_permissions`, and the ones that cannot are held in the safest
+mode their CLI offers instead of its unattended one -- Gemini in
+`--approval-mode plan`, the rest simply denied their bypass flag. That
+fails closed by stalling rather than acting, which is the right
+direction and a worse experience than asking.
 
 **Desktop integration**
 Quickshell plugin `duaneoca.agentvoice`, kinds `bar-widget` and
@@ -233,11 +247,11 @@ It is not nothing on a 4GB machine, and principle 5 says that matters.
 4. **Phonetic neighbours wake the Vosk engine.** Not a tuning problem: a
    grammar scores `"hey cloud"` exactly as high as `"hey claude"`. Use
    openWakeWord, and a verifier, if anything in the room talks.
-5. **Tools run unattended.** The Claude adapter passes
-   `--permission-mode auto`, matching what `omarchy agent` does for its
-   own launches. There is no approval surface yet, so a spoken sentence
-   can edit files with nothing able to stop it. This is the largest
-   outstanding gap.
+5. **The permission guard is uneven.** Claude Code prompts on screen
+   and has been tested end to end. Every other adapter is held in its
+   CLI's safest mode instead, which is reasoning from their documented
+   flags rather than something that has been run -- none of those CLIs
+   is installed and signed in here.
 6. Agent CLIs differ in headless and permission support. Only the Claude
    adapter has been run against a live agent; the Codex and Gemini
    adapters are written against observed flags and an unauthenticated
@@ -272,20 +286,18 @@ Done:
 2. Claude Code adapter: headless, streaming, session resume
 3. Replies written for the ear, spoken sentence by sentence
 4. Quickshell plugin, settings overlay, install script, user service
-5. Personal verifier training tool
+5. Personal verifier training tool, and a permission prompt for
+   Claude Code
 
 Next, roughly in order of how much they matter:
 
-6. Permission overlay, so tool calls are answerable rather than
-   automatic. The one real risk in shipping this as it stands.
-7. Validate the verifier on real speech, which decides whether
-   openWakeWord earns its install size.
-8. Echo cancel, and barge in on top of it. Today the microphone simply
+6. Run the other adapters against live agents. Codex, Gemini and the
+   nine sharing the CLI adapter have never answered a turn, and their
+   permission posture is inferred from flags rather than tested.
+7. Echo cancel, and barge in on top of it. Today the microphone simply
    goes deaf while the machine talks, so it cannot be interrupted.
-9. Tests. There are none, and this session introduced several bugs a
-   test would have caught in seconds.
-10. A second adapter run against a live agent, to prove the contract
-    holds rather than merely compiles.
+8. Tests. `bin/agentvoice-check` catches syntax and settings that are
+   declared but never drawn; nothing exercises behaviour.
 
 ## Layout
 
