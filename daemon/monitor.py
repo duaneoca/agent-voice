@@ -90,16 +90,13 @@ def main() -> int:
                 # The daemon drops sub-gate frames before the detector sees
                 # them, so the monitor does the same -- otherwise it would be
                 # measuring a different pipeline from the one that runs.
-                # Feed exactly as the daemon does -- same rebuffering from
-                # 100ms capture frames to openWakeWord's 80ms ones -- and read
-                # back the score it computed. Scoring a truncated frame here
-                # would measure a different pipeline from the one that runs.
-                score = 0.0
-                if not gated:
-                    oww.feed(pcm)
-                    score = oww.last_score
+                # Every frame, gate or no gate -- the daemon no longer gates
+                # this path, and the monitor has to match it or it measures a
+                # pipeline that does not run.
+                oww.feed(pcm)
+                score = oww.last_score
 
-                if not gated or args.all_frames:
+                if score > 0.001 or not gated or args.all_frames:
                     mark = ""
                     colour = DIM
                     if score >= threshold:

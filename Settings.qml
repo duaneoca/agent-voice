@@ -430,9 +430,13 @@ Item {
               foreground: root.foreground; fontFamily: root.fontFamily
               label: "Microphone gate"
               unit: " dBFS"
-              description: "Measured on this machine: room tone near -45, speech " +
-                           "near -24. Quieter frames are discarded before the wake " +
-                           "word sees them."
+              description: root.usingOww
+                ? "Does not affect openWakeWord, which scores every frame and " +
+                  "rejects noise on its own. It still decides when your turn " +
+                  "has ended."
+                : "Frames quieter than this never reach the Vosk grammar, " +
+                  "which would otherwise match the phrase against room noise. " +
+                  "Room tone here is near -45 and speech near -24."
               value: root.setting("micThresholdDb", -38)
               minimum: -60; maximum: -20; stepSize: 1
               onCommitted: function(v) { root.persist("micThresholdDb", v, true) }

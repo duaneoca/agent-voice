@@ -70,7 +70,7 @@
         "max": -20,
         "step": 1,
         "defaultValue": -38,
-        "description": "Audio quieter than this is ignored entirely. Measured on this machine: room tone near -45, speech near -24. Raise it toward -30 if something across the room keeps waking it."
+        "description": "Guards the Vosk grammar and decides when your turn has ended. It does NOT gate openWakeWord, which scores every frame -- gating that one discards most of the phrase."
       },
       {
         "key": "wakeConfidencePct",
