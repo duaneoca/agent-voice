@@ -20,6 +20,18 @@ model already learned rather than learning speech from scratch.
 from __future__ import annotations
 
 import os
+import warnings
+
+# openWakeWord asks onnxruntime for a CUDA provider it will not find on a CPU
+# box, and onnxruntime answers with a UserWarning that reads like a failure.
+# It is noise on every machine this is aimed at, and it lands in the middle of
+# a progress spinner, so it is filtered at the source rather than redirected
+# away -- redirecting would also hide real errors.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Specified provider 'CUDAExecutionProvider' is not in available provider names.*",
+    category=UserWarning,
+)
 import shutil
 import wave
 from pathlib import Path

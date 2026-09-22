@@ -13,6 +13,41 @@ STATE="${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice"
 WORK="$STATE/verifier-training"
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 
+# Omarchy floats this terminal at 875x600 -- roughly 90 columns by 30 rows --
+# so the copy has to fit a small box in both directions.
+#
+# `gum style --border` without an explicit --width measures the widest content
+# line INCLUDING its ANSI escapes, so nesting a `gum format` block inside one
+# produced a 298-column box: it wrapped, and the border's verticals ended up
+# scattered through the paragraph. Every bordered block below therefore passes
+# --width, and prose is wrapped here rather than by gum.
+COLS=$(tput cols 2>/dev/null || echo 80)
+[[ -n ${COLS//[!0-9]/} ]] || COLS=80
+W=$(( COLS - 6 ))
+(( W > 64 )) && W=64
+(( W < 36 )) && W=36
+# Prose inside a bordered block has to fit the INNER width: the box is $W
+# wide, minus two border columns and four of padding. Folding to $W and
+# letting gum re-wrap the overflow is what orphans single words.
+INNER=$(( W - 6 ))
+wrap()  { fold -s -w "$INNER"; }
+wrapw() { fold -s -w "$W"; }
+
+# The whole flow is about fifty rows of output in a thirty row window -- the
+# presentation wrapper's logo alone is thirteen. Rather than let it scroll,
+# each phase clears and owns the screen.
+screen() { clear 2>/dev/null || tput clear 2>/dev/null || true; }
+
+# `gum spin` draws its animation on stdout, so capturing it with $( ) swallows
+# the spinner and leaves a bare cursor for however long the work takes -- nine
+# seconds for the voice synthesis alone. Output goes to a file instead, and the
+# spinner keeps the terminal.
+spin() {  # spin <title> <outfile> -- <cmd...>
+  local title="$1" out="$2"
+  shift 3
+  gum spin --title "$title" -- bash -c 'exec "$@" >"$0"' "$out" "$@"
+}
+
 # The daemon is listening on the same microphone. Saying the wake phrase
 # twenty-five times at it would fire twenty-five wake events and twenty-five
 # agent calls, so it is paused for the duration and restored on every exit
@@ -104,6 +139,33 @@ POS="$WORK/$MODEL/positives"
 NEG="$WORK/$MODEL/negatives"
 mkdir -p "$POS" "$NEG"
 
+# --- is there already one? -------------------------------------------------
+# Running this a second time used to walk silently past both the existing
+# verifier and the clips already on disk, straight to retraining on the old
+# recordings -- which looks like nothing happened.
+EXISTING="$("$PY" "$VERIFIER" list 2>/dev/null | awk -v m="$MODEL" '$1 ~ "^"m {print $2; exit}')"
+if [[ -n ${EXISTING:-} && -f $EXISTING ]]; then
+  echo
+  gum style --foreground 3 \
+    "  A verifier for $MODEL already exists, trained $(date -r "$EXISTING" '+%-d %b at %H:%M')."
+  if ! gum confirm "Replace it?" --affirmative "Replace" --negative "Keep it"; then
+    gum style --foreground 4 "  Keeping the existing one. Nothing changed."
+    exit 130
+  fi
+fi
+
+HAVE_POS=$(find "$POS" -name '*.wav' 2>/dev/null | wc -l)
+REUSE=0
+if (( HAVE_POS >= 10 )); then
+  echo
+  printf '%s\n' "There are already $HAVE_POS recordings of you saying this phrase from a previous run." | wrapw
+  if gum confirm "Reuse them?" --affirmative "Reuse" --negative "Record fresh"; then
+    REUSE=1
+  else
+    rm -f "$POS"/*.wav
+  fi
+fi
+
 # --- negatives: reuse anything already recorded ---------------------------
 NEG_COUNT="$("$PY" "$VERIFIER" negatives "$NEG" --from "${AGENTVOICE_NEGATIVES:-$REPO/bench/corpus/wav}" 2>/dev/null || echo 0)"
 
@@ -112,8 +174,11 @@ NEG_COUNT="$("$PY" "$VERIFIER" negatives "$NEG" --from "${AGENTVOICE_NEGATIVES:-
 # "phrase versus no phrase", which the base model already knows. Other voices
 # saying the phrase teach "right words, wrong speaker" -- and the Piper voices
 # already on disk for TTS are exactly that, for free.
-OTHERS="$(gum spin --show-output --title "Synthesizing other voices saying \"$SPOKEN\"..." -- \
-         "$PY" "$VERIFIER" synth-negatives "$SPOKEN" "$NEG" 2>/dev/null || echo 0)"
+OTHERS_FILE="$(mktemp)"
+spin "Synthesising other voices saying \"$SPOKEN\" — about 9s" "$OTHERS_FILE" -- \
+  "$PY" "$VERIFIER" synth-negatives "$SPOKEN" "$NEG" || true
+OTHERS="$(tr -dc '0-9' < "$OTHERS_FILE")"; rm -f "$OTHERS_FILE"
+OTHERS="${OTHERS:-0}"
 NEG_COUNT=$(( NEG_COUNT + OTHERS ))
 
 if (( NEG_COUNT >= 5 )); then
@@ -126,6 +191,9 @@ else
 fi
 
 # --- positives -------------------------------------------------------------
+if (( REUSE )); then
+  have=$HAVE_POS
+else
 pause_daemon
 screen
 gum style --foreground 4 --bold "  Recording $CLIPS samples"
@@ -156,6 +224,8 @@ while (( have < CLIPS )); do
   have=$(find "$POS" -name '*.wav' | wc -l)
 done
 
+fi
+
 if (( have < 10 )); then
   gum style --foreground 1 "  Only $have clips. Need at least 10 to train anything useful."
   cancelled
@@ -164,11 +234,14 @@ fi
 # --- train -----------------------------------------------------------------
 screen
 echo
-OUT="$(gum spin --show-output --title "Training on $have clips of your voice..." -- \
-      "$PY" "$VERIFIER" train "$MODEL" "$POS" "$NEG")" || {
+OUT_FILE="$(mktemp)"
+if ! spin "Training on $have clips of your voice" "$OUT_FILE" -- \
+     "$PY" "$VERIFIER" train "$MODEL" "$POS" "$NEG"; then
+  rm -f "$OUT_FILE"
   gum style --foreground 1 "  Training failed."
   exit 1
-}
+fi
+OUT="$(tail -1 "$OUT_FILE")"; rm -f "$OUT_FILE"
 
 resume_daemon
 
