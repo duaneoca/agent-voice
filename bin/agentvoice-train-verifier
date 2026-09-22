@@ -13,12 +13,33 @@ STATE="${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice"
 WORK="$STATE/verifier-training"
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 
+# The daemon is listening on the same microphone. Saying the wake phrase
+# twenty-five times at it would fire twenty-five wake events and twenty-five
+# agent calls, so it is paused for the duration and restored on every exit
+# path, including Ctrl-C.
+DAEMON_WAS_RUNNING=0
+pause_daemon() {
+  if systemctl --user is-active --quiet agentvoice.service; then
+    DAEMON_WAS_RUNNING=1
+    gum style --foreground 4 "  Pausing the listener so it does not hear you practising."
+    systemctl --user stop agentvoice.service
+  fi
+}
+resume_daemon() {
+  if (( DAEMON_WAS_RUNNING )); then
+    systemctl --user start agentvoice.service 2>/dev/null || true
+    DAEMON_WAS_RUNNING=0
+  fi
+}
+
 cancelled() {
   echo
+  resume_daemon
   gum style --foreground 3 "  Cancelled. Nothing was saved."
   exit 130
 }
 trap cancelled INT TERM
+trap resume_daemon EXIT
 
 find_python() {
   local candidates=(
@@ -60,6 +81,26 @@ if ! gum confirm "Train a verifier now?" --affirmative "Let's go" --negative "No
   cancelled
 fi
 
+# --- the verifier is only consulted by the openWakeWord engine -------------
+SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+current_engine() {
+  [[ -r $SHELL_JSON ]] || { echo vosk; return; }
+  jq -r '[.bar.layout[]?[]? | select(.id=="duaneoca.agentvoice")][0].engine // "vosk"' \
+    "$SHELL_JSON" 2>/dev/null || echo vosk
+}
+
+if [[ "$(current_engine)" != "openwakeword" ]]; then
+  echo
+  gum style --foreground 3 \
+    "  The wake word engine is currently Vosk, which has no model to attach a" \
+    "  verifier to. Training will still work, but nothing will use the result" \
+    "  until you switch."
+  if gum confirm "Switch the engine to openWakeWord now?"; then
+    omarchy bar set duaneoca.agentvoice engine openwakeword >/dev/null
+    gum style --foreground 2 "  Switched."
+  fi
+fi
+
 # --- which wake model ------------------------------------------------------
 MODEL="$("$PY" "$VERIFIER" models | gum choose --header "Which wake word are you training for?")" || cancelled
 [[ -n $MODEL ]] || cancelled
@@ -92,6 +133,7 @@ phrase. Run \`python bench/record.py\` to build that corpus, then come back."
 fi
 
 # --- positives -------------------------------------------------------------
+pause_daemon
 echo
 gum format -- "Say **\"$SPOKEN\"** each time, the way you actually would --
 same distance, same room, ordinary voice. Vary it a little: some faster,
@@ -133,6 +175,8 @@ OUT="$(gum spin --show-output --title "Training on $have clips of your voice..."
   gum style --foreground 1 "  Training failed."
   exit 1
 }
+
+resume_daemon
 
 echo
 gum style --border rounded --padding "1 2" --border-foreground 2 \
