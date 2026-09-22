@@ -136,12 +136,7 @@ class Pipeline:
         vosk.SetLogLevel(-1)
 
         self._vosk = vosk
-        found = vosk_model()
-        if found is None:
-            raise FileNotFoundError(
-                "no Vosk model installed — run install.sh, or choose the "
-                "openWakeWord engine which needs no separate download")
-        self._model = vosk.Model(str(found))
+        self._model = None      # loaded on first use; see vosk_model_lazy()
         self._vocab = load_vocab()
         self.phrase = ""
         self.engine = "vosk"
@@ -181,6 +176,7 @@ class Pipeline:
         self.threshold_db = float(cfg["micThresholdDb"])
         self.refractory_ms = int(cfg["refractoryMs"])
         self.wake_confidence = float(cfg["wakeConfidence"])
+        self._partials = cfg.str("livePartials")
         self.conversation = cfg.bool("conversationMode")
         self.follow_up_ms = cfg.int("followUpMs")
         # 300ms of continuous speech-level audio before a partial may wake it.
@@ -219,9 +215,26 @@ class Pipeline:
         self.phrase = cfg.str("phrase").lower()
         self._reset_wake()
 
+    def vosk_model_lazy(self):
+        """The Vosk acoustic model, loaded the first time something needs it.
+
+        It costs 156MB resident -- a fifth of the daemon -- and on the
+        openWakeWord engine it buys only the live partial text shown while you
+        speak. Endpointing is energy-based and does not need it. So it is no
+        longer loaded just in case.
+        """
+        if self._model is None:
+            found = vosk_model()
+            if found is None:
+                raise FileNotFoundError(
+                    "no Vosk model installed — run install.sh, or use the "
+                    "openWakeWord engine, which needs no separate download")
+            self._model = self._vosk.Model(str(found))
+        return self._model
+
     def _reset_wake(self) -> None:
         self._wake = self._vosk.KaldiRecognizer(
-            self._model, RATE, json.dumps([self.phrase, "[unk]"]))
+            self.vosk_model_lazy(), RATE, json.dumps([self.phrase, "[unk]"]))
         # Word-level confidence is the second line of defence. A grammar has
         # to choose between the phrase and [unk], so anything phonetically
         # near the trigger scores as a match -- which is how a podcast on a
@@ -310,7 +323,22 @@ class Pipeline:
         return True
 
     def new_capture(self):
-        return self._vosk.KaldiRecognizer(self._model, RATE)
+        """A recogniser for the live partial text, or None when it is not worth
+        the memory. The caller must cope with None: the turn still works, it
+        just shows nothing until Whisper returns."""
+        if not self.want_partials:
+            return None
+        return self._vosk.KaldiRecognizer(self.vosk_model_lazy(), RATE)
+
+    @property
+    def want_partials(self) -> bool:
+        # "auto" means free-only: show partials when the Vosk model is already
+        # resident for the wake word, and do not load it purely for them.
+        if self._partials == "off":
+            return False
+        if self._partials == "on":
+            return True
+        return self.engine == "vosk"
 
     def transcribe(self, pcm: bytes) -> tuple[str, float]:
         import numpy as np
@@ -535,9 +563,12 @@ class Daemon:
                     continue
 
                 buf += pcm
-                done = cap.AcceptWaveform(pcm)
-                partial = "" if done else json.loads(
-                    cap.PartialResult()).get("partial", "")
+                # cap is None when live partials are off -- the turn runs
+                # exactly the same, it just shows nothing until Whisper
+                # returns. Endpointing below is energy-based either way.
+                partial = ""
+                if cap is not None and not cap.AcceptWaveform(pcm):
+                    partial = json.loads(cap.PartialResult()).get("partial", "")
                 # Energy decides when you stopped talking; Vosk's partials only
                 # say what it thinks you said. A pause between words produces no
                 # new partial but is not the end of a turn.
@@ -621,7 +652,7 @@ def run_simulated(pipe: Pipeline, speaker: Speaker | None, wav: Path,
           f" — no wake phrase, capturing the whole clip{OFF}\n")
     cap = pipe.new_capture()
     for off in range(0, len(pcm), CHUNK):
-        if not cap.AcceptWaveform(pcm[off:off + CHUNK]):
+        if cap is not None and not cap.AcceptWaveform(pcm[off:off + CHUNK]):
             p = json.loads(cap.PartialResult()).get("partial", "")
             if p:
                 print(f"\r  {DIM}{p[:100]}{OFF}", end="", flush=True)

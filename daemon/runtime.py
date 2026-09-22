@@ -38,6 +38,7 @@ DEFAULTS = {
     "wakeConfidence": 0.70,
     "model": "tiny.en",
     "speakReplies": True,
+    "livePartials": "auto",
     "conversationMode": True,
     "followUpMs": 7000,
     "voice": "lessac-medium",
@@ -59,6 +60,7 @@ TOML_ALIASES = {
     "echoTailMs": ("audio", "echo_tail_ms"),
     "refractoryMs": ("wake", "refractory_ms"),
     "wakeConfidence": ("audio", "wake_confidence"),
+    "livePartials": ("stt", "live_partials"),
     "conversationMode": ("wake", "conversation_mode"),
     "followUpMs": ("timing", "follow_up_ms"),
 }

@@ -545,6 +545,33 @@ Item {
             Dropdown {
               width: parent.width
               showLabel: true
+              label: "Live transcript while you speak"
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              options: [
+                { label: "auto — only when it is free", value: "auto" },
+                { label: "on — costs 114MB",            value: "on" },
+                { label: "off",                          value: "off" }
+              ]
+              value: root.setting("livePartials", "auto")
+              onChanged: function(v) { root.persist("livePartials", v, false) }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Rough text shown as you talk, before Whisper returns. It " +
+                    "needs the Vosk model resident. On the Vosk wake engine " +
+                    "that model is already loaded, so it is free; on " +
+                    "openWakeWord it is an extra 114MB."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Dropdown {
+              width: parent.width
+              showLabel: true
               label: "Transcription model"
               fontFamily: root.fontFamily
               foreground: root.foreground
