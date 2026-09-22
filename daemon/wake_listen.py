@@ -132,7 +132,6 @@ class OwwWake:
 class Pipeline:
     def __init__(self, cfg: Config, whisper_override: str | None = None):
         import vosk
-        from faster_whisper import WhisperModel
         vosk.SetLogLevel(-1)
 
         self._vosk = vosk
@@ -143,15 +142,10 @@ class Pipeline:
         self._oww = None
         self._loud_frames = 0
         self._refractory_until = 0.0
+        self._whisper = None
+        self._whisper_size = None
+        self._whisper_override = whisper_override
         self.apply(cfg)
-
-        size = whisper_override or cfg.str("model")
-        print(f"  {DIM}loading whisper {size}...{OFF}", end="", flush=True)
-        self._whisper = WhisperModel(size, device="cpu", compute_type="int8",
-                                     cpu_threads=4)
-        n = len(self._vocab.split(",")) if self._vocab else 0
-        print(f"\r  {DIM}whisper {size} ready"
-              f"{f', {n} vocab terms' if n else ''}{OFF}{' ' * 24}")
 
     def apply(self, cfg: Config) -> None:
         """Pick up the current knobs. Called between utterances only, so a
@@ -176,6 +170,13 @@ class Pipeline:
         self.threshold_db = float(cfg["micThresholdDb"])
         self.refractory_ms = int(cfg["refractoryMs"])
         self.wake_confidence = float(cfg["wakeConfidence"])
+        # Changing the transcription model used to be a silent no-op: it was
+        # built once in __init__ and never consulted again, so the setting
+        # appeared to do nothing until the service restarted.
+        wanted = self._whisper_override or cfg.str("model")
+        if wanted != self._whisper_size:
+            self._load_whisper(wanted)
+
         self._partials = cfg.str("livePartials")
         self.conversation = cfg.bool("conversationMode")
         self.follow_up_ms = cfg.int("followUpMs")
@@ -206,14 +207,60 @@ class Pipeline:
                 verifier = "with your verifier" if self._oww.verifier else "no verifier yet"
                 print(f"  {DIM}wake: openWakeWord {self._oww.key} "
                       f"@ {self._oww.threshold:.2f} ({verifier}){OFF}")
+                # Nothing needs Vosk on this engine unless partials are
+                # explicitly on. Give the memory back rather than hold it for
+                # an engine the user has just left.
+                if getattr(self, "_partials", "auto") != "on":
+                    self._drop_vosk()
                 return
             except Exception as e:
                 print(f"  {YEL}openWakeWord unavailable ({type(e).__name__}: {e});"
                       f" falling back to Vosk{OFF}")
                 self.engine = "vosk"
-        self._oww = None
+        if self._oww is not None:
+            self._oww = None
+            self._release()
         self.phrase = cfg.str("phrase").lower()
         self._reset_wake()
+
+    @staticmethod
+    def _release() -> None:
+        """Hand freed pages back to the OS.
+
+        Dropping the last reference to a model is not enough: glibc keeps the
+        freed arenas and RSS barely moves. Measured here -- releasing the Vosk
+        model returns 67MB on the drop alone and 117MB after malloc_trim;
+        openWakeWord 57MB and 71MB. Without the trim an engine swap looks
+        exactly like a leak.
+        """
+        import ctypes
+        import gc
+        gc.collect()
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass        # not glibc, or no malloc_trim; the gc still happened
+
+    def _drop_vosk(self) -> None:
+        if self._model is None:
+            return
+        self._wake = None
+        self._model = None
+        self._release()
+
+    def _load_whisper(self, size: str) -> None:
+        """(Re)build the transcription model, releasing the previous one."""
+        from faster_whisper import WhisperModel
+        if self._whisper is not None:
+            self._whisper = None
+            self._release()
+        print(f"  {DIM}loading whisper {size}...{OFF}", end="", flush=True)
+        self._whisper = WhisperModel(size, device="cpu",
+                                     compute_type="int8", cpu_threads=4)
+        self._whisper_size = size
+        n = len(self._vocab.split(",")) if self._vocab else 0
+        print(f"\r  {DIM}whisper {size} ready"
+              f"{f', {n} vocab terms' if n else ''}{OFF}{' ' * 24}")
 
     def vosk_model_lazy(self):
         """The Vosk acoustic model, loaded the first time something needs it.
@@ -529,6 +576,7 @@ class Daemon:
             active_lead_in = self.pipe.lead_in_ms
 
             level_shown = 0.0
+            last_poll = time.time()
             while True:
                 pcm = frames.get()
 
@@ -549,6 +597,16 @@ class Daemon:
                 if phase == "wake" and abs(level - level_shown) > 1.5:
                     level_shown = level
                     self._publish(level_db=round(level, 1), **last)
+
+                # Settings used to land only after the next turn, because the
+                # only refresh() was at a turn boundary -- so changing the
+                # engine or the model while idle appeared to do nothing until
+                # you spoke. Poll while waiting instead; rebuilding a model
+                # blocks for a second or two, which is harmless here and
+                # unacceptable mid-utterance.
+                if phase == "wake" and time.time() - last_poll > 2.0:
+                    last_poll = time.time()
+                    self.refresh()
 
                 if phase == "wake":
                     if self.pipe.feed_wake(pcm, level):
