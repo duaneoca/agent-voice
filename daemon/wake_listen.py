@@ -244,6 +244,18 @@ class Pipeline:
         if time.time() < self._refractory_until:
             return False
 
+        # Measured cost of doing this, on the 2014 dev machine: openWakeWord
+        # inference is 2.97ms of CPU per 80ms frame -- 3.7% of one core -- and
+        # the whole daemon idles at 5.3%. Cheap enough that gating it to save
+        # CPU was never worth the detection it cost.
+        #
+        # openWakeWord's own vad_threshold does NOT help here. It runs Silero
+        # VAD *after* the predictions are computed and zeroes them when the VAD
+        # disagrees, so it adds about 22% to the inference cost rather than
+        # saving any. It is a false-accept tool, and not even the right one for
+        # the case we care about: a podcast saying the wake phrase is speech,
+        # so a VAD passes it happily.
+        #
         # openWakeWord is fed EVERY frame, gate or no gate. It scores
         # acoustically and rejects unrelated speech on its own -- measured at
         # 0.000 -- so it needs no energy gate, and applying one actively
