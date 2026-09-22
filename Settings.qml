@@ -559,14 +559,36 @@ Item {
               wrapMode: Text.WordWrap
               text: "A verifier refines an existing model; it cannot create a new " +
                     "phrase. For a phrase openWakeWord was not shipped with, train " +
-                    "a model from synthetic speech — tens of thousands of Piper " +
-                    "clips with augmentation and adversarial negatives. Upstream's " +
-                    "Colab notebook does it in under an hour; the training code is " +
-                    "not in the package and needs several gigabytes of PyTorch, so " +
-                    "it is not practical on this laptop.\n\n" +
-                    "Drop the resulting .onnx into " +
+                    "one in a Colab notebook — about 2.5 hours on the free tier, " +
+                    "90 minutes on Colab Pro. You edit two lines: the phrase and " +
+                    "the output name.\n\n" +
+                    "Only the small classifier head is trained; the feature models " +
+                    "it sits on ship with openWakeWord and do not change. That is " +
+                    "why it is quick, and why training is network-bound rather " +
+                    "than GPU-bound."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Button {
+              text: "Open the training notebook…"
+              fontFamily: root.fontFamily
+              onClicked: Quickshell.execDetached(["omarchy-launch-browser",
+                "https://github.com/alfiedennen/openwakeword-colab-2026"])
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Upstream's own notebook has not been maintained since 2023; " +
+                    "this one is patched for current Python and torchaudio.\n\n" +
+                    "Save the .onnx it gives you into " +
                     "~/.local/share/agentvoice/wakewords/ and it appears in the " +
-                    "phrase list above, ready for its own verifier."
+                    "phrase list above, ready for its own verifier. Check it with " +
+                    "'agentvoice monitor' before trusting it: this ships " +
+                    "openwakeword 0.4.0, and a model built against a newer one " +
+                    "should load but has not been proven to."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
