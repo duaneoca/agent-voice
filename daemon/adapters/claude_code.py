@@ -17,6 +17,7 @@ GUARDED_TOOLS = "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|KillShell"
 
 class ClaudeCode(Adapter):
     name = "claude"
+    guards_permissions = True
 
     # `auto` is the mode Omarchy's own `omarchy agent` uses for unattended
     # launches. Until the permission overlay exists there is nothing to answer

@@ -52,11 +52,17 @@ class Codex(Adapter):
 
     # Codex's own spelling of "do not stop to ask", as used by omarchy-agent.
     def __init__(self, model: str | None = None, spoken: bool = True,
-                 cwd: str | None = None, full_auto: bool = True):
+                 cwd: str | None = None, full_auto: bool | None = None,
+                 ask_permission: bool = True):
         self.model = model
         self.spoken = spoken
         self.cwd = cwd
-        self.full_auto = full_auto
+        # --approve-for-me is Codex's unattended mode. Without it Codex uses
+        # its own default, which asks -- and with no terminal to ask in, a
+        # turn that needs approval stalls until the adapter is cancelled.
+        # That fails closed, which is the right direction, but it is a guess:
+        # this machine's Codex is not signed in and it has never been run.
+        self.full_auto = (not ask_permission) if full_auto is None else full_auto
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 

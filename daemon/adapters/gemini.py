@@ -31,11 +31,16 @@ class Gemini(Adapter):
     name = "gemini"
 
     def __init__(self, model: str | None = None, spoken: bool = True,
-                 cwd: str | None = None, approval_mode: str = "yolo"):
+                 cwd: str | None = None, approval_mode: str | None = None,
+                 ask_permission: bool = True):
         self.model = model
         self.spoken = spoken
         self.cwd = cwd
-        self.approval_mode = approval_mode
+        # There is no way to prompt from here, so asking for permission means
+        # choosing the mode that cannot act: `plan` is Gemini's documented
+        # read-only mode. `yolo` is the unattended one and is only used when
+        # the user has explicitly turned the guard off.
+        self.approval_mode = approval_mode or ("plan" if ask_permission else "yolo")
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
