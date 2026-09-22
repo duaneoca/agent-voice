@@ -21,6 +21,12 @@ Item {
   property var manifest: null
   property bool opened: false
 
+  // The plugin gets one overlay entry point, so this file is both the settings
+  // screen and the permission prompt. The summon payload picks.
+  property string mode: "settings"
+  property var request: ({})
+  property int secondsLeft: 0
+
   // Shares the [menu] surface tokens, so themes that style the menu style
   // this too.
   property color background: Color.menu.background
@@ -77,10 +83,55 @@ Item {
   readonly property bool usingOww: engine === "openwakeword"
 
   function open(payloadJson) {
+    mode = "settings"
+    try {
+      var p = JSON.parse(payloadJson || "{}")
+      if (p.mode === "permission") mode = "permission"
+    } catch (e) {}
+
     opened = true
-    cfgReload.running = true
-    scanCustom.running = true
-    stateFile.reload()
+    if (mode === "permission") {
+      pendingProbe.running = true
+    } else {
+      cfgReload.running = true
+      scanCustom.running = true
+      stateFile.reload()
+    }
+  }
+
+  function answer(verdict) {
+    if (!request || !request.id) { dismiss(); return }
+    permit.command = ["agentvoice", "permit", String(request.id), verdict]
+    permit.running = true
+    dismiss()
+  }
+
+  Process { id: permit }
+
+  // The hook writes the request file and only tells us its id; read the rest
+  // here so the two do not have to agree on a payload schema.
+  Process {
+    id: pendingProbe
+    command: ["agentvoice", "pending"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.request = JSON.parse(String(text).trim() || "{}") }
+        catch (e) { root.request = ({}) }
+        if (root.request && root.request.timeout)
+          root.secondsLeft = Math.round(root.request.timeout)
+      }
+    }
+  }
+
+  // Silence is a denial, so the countdown is the honest thing to show.
+  Timer {
+    interval: 1000
+    running: root.opened && root.mode === "permission"
+    repeat: true
+    onTriggered: {
+      root.secondsLeft = Math.max(0, root.secondsLeft - 1)
+      if (root.secondsLeft <= 0) root.dismiss()
+    }
   }
   function close() { opened = false }
   function dismiss() {
@@ -179,7 +230,9 @@ Item {
       id: card
       anchors.centerIn: parent
       width: Math.min(Style.space(560), parent.width - Style.gapsOut * 2)
-      height: Math.min(Style.space(660), parent.height - Style.gapsOut * 2)
+      height: root.mode === "permission"
+              ? Math.min(Style.space(300), parent.height - Style.gapsOut * 2)
+              : Math.min(Style.space(660), parent.height - Style.gapsOut * 2)
       radius: Style.cornerRadius
       color: root.background
       borderSpec: root.borderSpec
@@ -199,8 +252,8 @@ Item {
         Row {
           width: parent.width
           Text {
-            text: "Agent Voice"
-            color: root.foreground
+            text: root.mode === "permission" ? "Allow this?" : "Agent Voice"
+            color: root.mode === "permission" ? Color.urgent : root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
             font.bold: true
@@ -208,7 +261,9 @@ Item {
           }
           Text {
             id: hint
-            text: "esc to close"
+            text: root.mode === "permission"
+                  ? "denied in " + root.secondsLeft + "s"
+                  : "esc to close"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -217,8 +272,69 @@ Item {
 
         PanelSeparator { width: parent.width; foreground: root.foreground }
 
+        // --- permission prompt ----------------------------------------
+        Column {
+          width: parent.width
+          spacing: Style.spacing.md
+          visible: root.mode === "permission"
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "The agent wants to run " + (root.request.tool || "a tool") + "."
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          // The command itself, verbatim. Paraphrasing what is about to run
+          // would defeat the point of asking.
+          BorderSurface {
+            width: parent.width
+            height: Math.max(Style.space(44), cmd.implicitHeight + Style.space(16))
+            radius: Style.cornerRadius
+            color: Qt.darker(root.background, 1.25)
+            borderSpec: root.borderSpec
+            Text {
+              id: cmd
+              anchors.fill: parent
+              anchors.margins: Style.space(8)
+              wrapMode: Text.WrapAnywhere
+              text: root.request.summary || "(no detail)"
+              color: root.foreground
+              font.family: "monospace"
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.md
+            Button {
+              text: "Deny"
+              fontFamily: root.fontFamily
+              onClicked: root.answer("deny")
+            }
+            Button {
+              text: "Allow once"
+              fontFamily: root.fontFamily
+              onClicked: root.answer("allow")
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Doing nothing denies it. Read-only tools are never asked about."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
         Flickable {
           id: formScroll
+          visible: root.mode === "settings"
           width: parent.width
           height: body.height - y - Style.spacing.md
           contentWidth: width

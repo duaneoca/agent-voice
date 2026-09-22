@@ -10,6 +10,10 @@ from typing import Iterator
 
 from .base import SPOKEN_STYLE, Adapter, Chunk, installed
 
+#: Tools that can change something or reach the network. Read-only tools are
+#: not listed: asking about every Read would train you to say yes.
+GUARDED_TOOLS = "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|KillShell"
+
 
 class ClaudeCode(Adapter):
     name = "claude"
@@ -20,13 +24,39 @@ class ClaudeCode(Adapter):
     def __init__(self, model: str | None = None,
                  permission_mode: str = "auto",
                  cwd: str | None = None,
-                 spoken: bool = True):
+                 spoken: bool = True,
+                 ask_permission: bool = True):
         self.model = model
         self.spoken = spoken
+        self.ask_permission = ask_permission
         self.permission_mode = permission_mode
         self.cwd = cwd or os.getcwd()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _hook_settings() -> str:
+        """A PreToolUse hook, passed inline as JSON.
+
+        `--settings` takes a JSON string and loads it *in addition to* the
+        user's own settings, so this adds the hook without disturbing anything
+        they have configured.
+
+        A hook rather than `--permission-prompt-tool`: that flag is accepted
+        by the CLI and loads the MCP server, but is never consulted -- tested
+        against 2.1.278 across every permission mode. Hooks fire in all of
+        them, including `auto`.
+        """
+        import json
+        import sys
+        from pathlib import Path
+
+        hook = Path(__file__).resolve().parent.parent / "permission_hook.py"
+        return json.dumps({"hooks": {"PreToolUse": [{
+            "matcher": GUARDED_TOOLS,
+            "hooks": [{"type": "command",
+                       "command": f"{sys.executable} {hook}"}],
+        }]}})
 
     def available(self) -> bool:
         return installed("claude")
@@ -41,6 +71,8 @@ class ClaudeCode(Adapter):
         ]
         if self.spoken:
             argv += ["--append-system-prompt", SPOKEN_STYLE]
+        if self.ask_permission:
+            argv += ["--settings", self._hook_settings()]
         if session_id:
             argv += ["--resume", session_id]
         if self.model:

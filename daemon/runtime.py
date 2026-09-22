@@ -39,6 +39,7 @@ DEFAULTS = {
     "model": "tiny.en",
     "speakReplies": True,
     "livePartials": "auto",
+    "askPermission": True,
     "conversationMode": True,
     "followUpMs": 7000,
     "voice": "lessac-medium",
@@ -61,6 +62,7 @@ TOML_ALIASES = {
     "refractoryMs": ("wake", "refractory_ms"),
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
+    "askPermission": ("agent", "ask_permission"),
     "conversationMode": ("wake", "conversation_mode"),
     "followUpMs": ("timing", "follow_up_ms"),
 }
