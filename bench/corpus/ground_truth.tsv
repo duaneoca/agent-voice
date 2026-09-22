@@ -1,0 +1,18 @@
+id	category	text
+02	short	Cancel that
+03	short	Read the last file again
+04	plain	What does this function actually return when the list is empty
+05	plain	Add a test that covers the case where the connection drops halfway through
+06	plain	I think the bug is in the retry loop but I am not certain
+07	plain	Walk me through what changed in the last commit before we go any further
+08	plain	Can you explain why that approach is better than the one we tried yesterday
+09	domain	Restart the omarchy shell and check whether the waybar module reloaded
+10	domain	The hyprland config lives in bindings dot lua under dot config
+11	domain	Run kubectl get pods in the staging namespace and show me the ones that are failing
+12	domain	Check whether pipewire loaded the echo cancel module
+13	domain	Open the systemd user service and tail the journal for the last ten minutes
+14	domain	Install faster whisper and ctranslate2 into the virtual environment with uv
+15	domain	The quickshell plugin manifest needs a bar widget entry point
+16	long	I want you to look at the authentication middleware and tell me whether the token refresh logic can race with a concurrent request, and if it can, sketch out what a fix would look like without writing any code yet
+17	long	Before we start on the next feature let us go back and clean up the error handling in the adapter layer, because right now every failure path returns the same generic message and it makes debugging really painful
+18	plain	No that is not what I meant, try it the other way around

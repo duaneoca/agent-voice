@@ -1,0 +1,44 @@
+# Live-tunable knobs. Saved changes apply on the next utterance - no restart.
+
+[wake]
+# Trigger phrase. Must be ordinary English words; Vosk pins it with a
+# grammar, so obscure spellings will not resolve.
+# Tested clean: "hey computer", "hey claude", "hey agent", "hey jarvis".
+phrase = "hey computer"
+
+[timing]
+# How long you get to START speaking after the wake word fires. This is the
+# one that made you feel rushed - it used to share a value with the pause
+# that ENDS an utterance, so raising one cramped the other.
+lead_in_ms = 5000
+
+# How long a pause inside your speech before the utterance is considered
+# finished. Raise if it cuts you off mid-thought.
+trailing_silence_ms = 1200
+
+# Utterances shorter than this are discarded as a false wake.
+min_utterance_ms = 400
+
+# Hard ceiling, so a stuck open mic cannot record forever.
+max_utterance_ms = 30000
+
+[audio]
+# Frames quieter than this are ignored entirely: not fed to the wake word, and
+# not counted as speech. Measured on the dev machine: room tone sits near
+# -45 dBFS and speech near -24, so -38 clears the floor with room to spare.
+# Raise it (toward -30) if something across the room keeps waking it.
+mic_threshold_db = -38
+
+# Minimum recogniser confidence in the wake phrase. A grammar must choose
+# between the phrase and [unk], so phonetically near misses score as matches;
+# this is what rejects them.
+wake_confidence = 0.70
+
+[stt]
+# tiny.en is the measured default: 4.9% WER with the vocabulary prompt,
+# ~320ms. base.en is ~2x slower for a small gain on jargon.
+model = "tiny.en"
+
+# Terms the model has never seen. The single highest-leverage knob here:
+# it cut domain errors 41% for 41ms. Add your own project and tool names.
+vocab_file = "bench/corpus/vocab.txt"

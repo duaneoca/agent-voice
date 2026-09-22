@@ -1,0 +1,146 @@
+#!/bin/bash
+# Train a personal wake-word verifier.
+#
+# Designed to run inside omarchy-launch-floating-terminal-with-presentation,
+# which wraps it in the Omarchy logo/done screens and suppresses the "done"
+# screen on exit 130. So every cancel path here exits 130 deliberately.
+
+set -uo pipefail
+
+CLIPS=25
+CLIP_SECONDS=2.0
+STATE="${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice"
+WORK="$STATE/verifier-training"
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+
+cancelled() {
+  echo
+  gum style --foreground 3 "  Cancelled. Nothing was saved."
+  exit 130
+}
+trap cancelled INT TERM
+
+find_python() {
+  local candidates=(
+    "${AGENTVOICE_PYTHON:-}"
+    "$STATE/venv/bin/python"
+    "$REPO/bench/.venv/bin/python"
+  )
+  for p in "${candidates[@]}"; do
+    [[ -n $p && -x $p ]] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+PY="$(find_python)" || {
+  gum style --foreground 1 "  No agentvoice Python environment found."
+  echo "  Run the installer first, or set AGENTVOICE_PYTHON."
+  exit 1
+}
+VERIFIER="$REPO/prototype/verifier.py"
+
+# --- why we are here ------------------------------------------------------
+gum style --border rounded --padding "1 2" --margin "1 0" --border-foreground 4 \
+  "$(gum style --bold 'Train a personal wake word verifier')" \
+  "" \
+  "$(gum format -- \
+"The stock wake word models are **speaker independent** on purpose. That is
+right for a general detector and wrong for a microphone in your room: a
+podcast or a phone saying the wake phrase produces the correct sounds in
+the wrong voice, and nothing else in the pipeline can tell the difference.
+
+This trains a small classifier on **your** voice. It runs only after the
+wake word already fired, and replaces that score with its own. It is the
+only layer in the stack that knows *who* is talking.
+
+You will say the wake phrase ${CLIPS} times. It takes about two minutes.
+Recordings stay on this machine and are used for nothing else.")"
+
+if ! gum confirm "Train a verifier now?" --affirmative "Let's go" --negative "Not now"; then
+  cancelled
+fi
+
+# --- which wake model ------------------------------------------------------
+MODEL="$("$PY" "$VERIFIER" models | gum choose --header "Which wake word are you training for?")" || cancelled
+[[ -n $MODEL ]] || cancelled
+SPOKEN="${MODEL//_/ }"
+
+POS="$WORK/$MODEL/positives"
+NEG="$WORK/$MODEL/negatives"
+mkdir -p "$POS" "$NEG"
+
+# --- negatives: reuse anything already recorded ---------------------------
+NEG_COUNT="$("$PY" "$VERIFIER" negatives "$NEG" --from "$REPO/bench/corpus/wav" 2>/dev/null || echo 0)"
+
+# The failure we actually care about is a phone or podcast saying the phrase in
+# someone else's voice. Negatives made only of miscellaneous speech teach
+# "phrase versus no phrase", which the base model already knows. Other voices
+# saying the phrase teach "right words, wrong speaker" -- and the Piper voices
+# already on disk for TTS are exactly that, for free.
+OTHERS="$(gum spin --show-output --title "Synthesizing other voices saying \"$SPOKEN\"..." -- \
+         "$PY" "$VERIFIER" synth-negatives "$SPOKEN" "$NEG" 2>/dev/null || echo 0)"
+NEG_COUNT=$(( NEG_COUNT + OTHERS ))
+
+if (( NEG_COUNT >= 5 )); then
+  gum style --foreground 2 \
+    "  Contrast set: $NEG_COUNT clips ($OTHERS of other voices saying the phrase)."
+else
+  gum style --foreground 3 "  Only $NEG_COUNT contrast clips found."
+  gum format -- "Training needs recordings of you talking **without** the wake
+phrase. Run \`python bench/record.py\` to build that corpus, then come back."
+  exit 1
+fi
+
+# --- positives -------------------------------------------------------------
+echo
+gum format -- "Say **\"$SPOKEN\"** each time, the way you actually would --
+same distance, same room, ordinary voice. Vary it a little: some faster,
+some quieter, some mid-sentence. Press Enter when you are ready."
+echo
+
+have=$(find "$POS" -name '*.wav' | wc -l)
+attempt=0
+while (( have < CLIPS )); do
+  (( attempt++ ))
+  printf '  [%2d/%2d] ' "$((have + 1))" "$CLIPS"
+  read -r -p "Enter to record, or 'q' to stop: " key || cancelled
+  [[ $key == q ]] && break
+
+  printf '   \033[31m● recording\033[0m %.1fs ... ' "$CLIP_SECONDS"
+  out="$("$PY" "$VERIFIER" record "$POS/pos-$(printf '%03d' "$attempt").wav" \
+        --seconds "$CLIP_SECONDS" 2>/dev/null)"
+  status=$?
+  level="$(head -1 <<<"$out")"
+  problem="$(tail -n +2 <<<"$out")"
+
+  if (( status != 0 )); then
+    printf '\033[33m%s\033[0m\n' "$problem"
+    continue
+  fi
+  printf '\033[32mok\033[0m  (%s dBFS)\n' "$level"
+  have=$(find "$POS" -name '*.wav' | wc -l)
+done
+
+if (( have < 10 )); then
+  gum style --foreground 1 "  Only $have clips. Need at least 10 to train anything useful."
+  cancelled
+fi
+
+# --- train -----------------------------------------------------------------
+echo
+OUT="$(gum spin --show-output --title "Training on $have clips of your voice..." -- \
+      "$PY" "$VERIFIER" train "$MODEL" "$POS" "$NEG")" || {
+  gum style --foreground 1 "  Training failed."
+  exit 1
+}
+
+echo
+gum style --border rounded --padding "1 2" --border-foreground 2 \
+  "$(gum style --bold 'Verifier trained')" \
+  "" \
+  "  model    $MODEL" \
+  "  clips    $have yours / $NEG_COUNT contrast" \
+  "  saved    $OUT"
+echo
+gum format -- "Turn it on in **Agent Voice → Settings → Wake word**, and raise
+the verifier threshold if a phone still gets through."

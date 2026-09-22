@@ -5,39 +5,70 @@ installed on the box a natural voice interface: wake word or push to
 talk in, spoken replies out. Claude Code is the first target, not the
 only one.
 
+Omarchy already ships the input half. Voxtype gives it push to talk
+dictation on F9, running whisper.cpp locally, with a Dictation
+indicator in the bar. agentvoice does not rebuild any of that. It
+builds the half that is missing: the agent hears you, and answers out
+loud.
+
 ## Principles
 
 1. **Baseline, not bolted on.** Installs like any Omarchy extension:
-   Waybar module, Hyprland binds, systemd user service, config in
+   Quickshell plugin, Hyprland binds, systemd user service, config in
    ~/.config/agentvoice. Feels native to the desktop.
 2. **Agent agnostic.** Detects which agent CLIs are installed and uses
    the one you pick. The voice layer never cares who's answering.
 3. **You own the mic.** Nothing listens unless you've enabled it, and
-   the state is always visible.
-4. **Local first.** Wake word, VAD, STT, and TTS run on device. Only
-   the agent call leaves the machine, if your agent does.
+   the state is always visible. Linux has no OS level mic gate, so
+   that guarantee is ours to build.
+4. **Local first.** Wake word, STT, and TTS run on device. Only the
+   agent call leaves the machine, if your agent does.
+5. **Old hardware is the target, not the edge case.** Benchmarked on a
+   2014 MacBook Pro, CPU only. If it needs a GPU it does not ship.
+
+## What we own, and what we don't
+
+**Voxtype owns input.** Microphone capture, whisper.cpp inference,
+model management, push to talk binds, the bar indicator. It exposes
+everything we need: `record start|stop|toggle|cancel`, a JSON status
+command, a state file, a unix socket, `whisper.initial_prompt` for
+custom vocabulary, and `whisper.mode = remote` for machines too slow
+to run a model at all.
+
+**agentvoice owns the conversation.** Wake word, conversation state,
+the agent adapters, spoken replies, barge in, and tool permission
+prompts. Voxtype types a transcript into whatever window has focus; it
+has no idea an agent exists. That gap is the project.
 
 ## Input modes
 
 1. **Wake word.** Say the trigger phrase, talk, get a spoken answer.
    Stays in conversation mode for a few seconds after each reply.
-2. **Push to talk.** Hold a key to record, release to send. Uses
-   Hyprland's press and release binds. Works even when the wake
-   word is off.
-3. **Mic toggle.** One key and one Waybar click to grab or release
-   the microphone entirely.
+   Ours to build: Voxtype is push to talk only.
+2. **Push to talk.** Voxtype's F9, unchanged. We read the transcript
+   rather than reimplementing the capture path.
+3. **Mic toggle.** One key and one bar click to grab or release the
+   microphone entirely.
 
 Default binds (configurable):
-  Super+Space (hold)   push to talk
-  Super+Shift+Space    toggle mic on/off
+  F9 (hold)            push to talk, Voxtype's existing bind
+  Super+Alt+Space      toggle wake word listening on/off
   Super+Ctrl+Space     cancel current response
+
+Super+Space is Omarchy's application launcher and stays that way.
 
 ## Architecture
 
 **Voice daemon** (Python, systemd user service)
-Owns all audio: wake word, VAD endpointing, STT, TTS, echo cancel,
-conversation state. Exposes a small local socket so binds and Waybar
-can send it commands (ptt_start, ptt_stop, toggle, cancel, status).
+Owns wake word detection, conversation state, TTS playback, and echo
+cancel. Drives Voxtype for transcription rather than opening the mic
+itself. Exposes a small local socket so binds and the bar can send it
+commands (wake_on, wake_off, cancel, status).
+
+**Transcript handoff**
+Voxtype hands text back through `output.post_process.command`, which
+receives the transcription on stdin, or `output.mode = file`. Either
+way agentvoice gets text, not keystrokes.
 
 **Backend adapters**
 One contract: take text plus a session ID, stream text back.
@@ -51,57 +82,101 @@ For Claude Code, `--permission-prompt-tool` points at a local MCP
 server run by the daemon. Tool requests pop a window; click or say
 "approve" / "deny", whichever comes first. Timeout defaults to deny.
 Other adapters map their own approval flow onto the same popup.
-Prototype with zenity or mako actions; real version is a GTK4 layer
-shell window styled from the active Omarchy theme.
+An Omarchy `overlay` plugin, themed from the active theme, rather than
+a GTK4 window we style ourselves.
 
 **Desktop integration**
-Waybar module: state icon (off, idle, listening, thinking, speaking),
-click to toggle. Doubles as the hot mic indicator.
-Hyprland binds as above. Install script drops both in place.
+Quickshell plugin `duaneoca.agentvoice`, kinds `bar-widget` and
+`overlay`. State icon (off, idle, listening, thinking, speaking),
+click to toggle, and the hot mic indicator. The bar talks to the
+daemon over IPC the way the Dictation indicator talks to Voxtype.
+Omarchy 4 has no Waybar.
 
-## Initial stack
+## Stack
 
-openWakeWord, Silero VAD, faster-whisper (small or base.en),
-Piper or Kokoro TTS, PipeWire echo cancel module.
-STT custom vocabulary (Omarchy, Hyprland, kubectl, project names)
-via Whisper's initial prompt.
+Measured on the target hardware. See `bench/FINDINGS.md`.
+
+**STT** whisper `tiny.en` through Voxtype, with a custom vocabulary
+prompt. 6.5% WER against 6.9% for `base.en` with the same prompt, at
+roughly half the latency. `small.en` is disqualified: nearly two
+seconds of dead air after every utterance.
+
+**Custom vocabulary** is a first class component, not a tuning knob. A
+fourteen word `initial_prompt` cut domain errors by 41% for 41ms.
+That beat jumping two model sizes, which cost 1.8 seconds. Users edit
+the term list; project names and tool names go in it.
+
+**TTS** Piper `lessac-medium`. 22ms to first audio, RTF 0.045, which
+is 22x realtime. espeak-ng is the fallback for machines that cannot
+manage even that; it is robotic and costs 6ms.
+
+**Wake word** undecided, pending the `eager_processing` test below.
+Vosk is the candidate: pacman installable from `extra`, 30ms, and its
+grammar restriction pins the trigger phrase far harder than a generic
+model. It does not need to be accurate, only to notice a phrase.
+
+**Echo cancel** PipeWire `module-echo-cancel`. Capture from the
+cancelled source node, not raw ALSA, or the speakers feed straight
+back into the mic.
+
+## Open questions
+
+1. `whisper.eager_processing` transcribes overlapping chunks while you
+   are still speaking. If it delivers, Whisper gets Vosk's streaming
+   latency and the wake word component may not need Vosk at all.
+   Untested. Highest value experiment remaining.
+2. Voxtype's ONNX build carries Moonshine and Parakeet, both built for
+   low latency. The AVX2 build we run has whisper only. Worth a look.
+3. Whether the transcript handoff should be `post_process.command` or
+   the unix socket. The socket carries live audio levels and may carry
+   more.
 
 ## Known risks
 
-1. Laptop speakers into laptop mic: false wakes, broken barge in
-2. Endpointing and time to first token dominate latency
-3. Per turn CLI startup cost; prefer a long lived session
-4. Agent CLIs differ in headless and permission support
+1. Laptop speakers into laptop mic: false wakes, broken barge in.
+   Worst case on the dev machine, which has one mic and no array.
+2. Thermal throttling. The dev machine logged 13,471 throttle events
+   during benchmarking, and sustained inference degraded latency 2-3x.
+   A long conversation gets slower. Budget for it.
+3. Microphone gain. Shipped at +12dB on the dev machine, clipping 1.46%
+   of samples at a normal speaking distance. Calibrate at install.
+4. Agent CLIs differ in headless and permission support.
+5. Building on Voxtype means tracking its config schema.
 
 ## Prior art (and the gap)
 
+Voxtype: Omarchy's own dictation, local whisper.cpp, push to talk.
+  Input only, types into the focused window. We build on it.
 voice-to-claude: local wake word dictation for Claude Code on Linux.
-  Input only, types into focused window, no spoken replies.
+  Input only, no spoken replies.
 tryvoice: adapter registry for Claude Code, OpenClaw, custom.
   Browser and cloud leaning, not a native desktop daemon.
 talk-to-claude, VoiceMode: MCP servers driven from inside a Claude
   session. The agent runs the loop, not the desktop.
-Claude Code native voice: hold Space only, no wake word yet.
+Claude Code native voice: hold to talk, and the transcription is a
+  hosted service rather than a local model.
 
-None is a desktop level, agent agnostic voice layer. That's this.
+None is a desktop level, agent agnostic, speaking voice layer.
+That's this.
 
 ## Build order
 
-1. Mic capture with echo cancel working
-2. Push to talk: Hyprland bind to STT to printed text, no AI
-3. Wake word into the same path
-4. Claude Code adapter, headless with session resume
-5. TTS with sentence by sentence streaming, conversation mode
-6. Permission MCP tool and popup
-7. Waybar module, install script, systemd service
+1. Wake word prototype: trigger phrase to printed transcript
+2. Transcript handoff from Voxtype into the daemon
+3. Claude Code adapter, headless with session resume
+4. TTS with sentence by sentence streaming, conversation mode
+5. Echo cancel and barge in
+6. Permission MCP tool and overlay
+7. Quickshell plugin, install script, systemd service
 8. Second adapter to prove the contract holds
 
 ## Layout (proposed)
 
 agentvoice/
-  daemon/        audio pipeline, conversation state, control socket
+  daemon/        wake word, conversation state, TTS, control socket
   adapters/      base.py, claude_code.py, openai_compat.py
-  permissions/   mcp server, popup UI
-  desktop/       waybar module, hyprland binds, systemd unit
+  permissions/   mcp server, overlay UI
+  desktop/       quickshell plugin, hyprland binds, systemd unit
+  bench/         hardware benchmark and findings
   install.sh
   config.toml

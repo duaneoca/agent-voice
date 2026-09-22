@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Control CLI for the agentvoice daemon, in the shape Omarchy expects: the bar
+# widget and Hyprland binds both shell out to this rather than knowing about
+# systemd or signals.
+#
+#   agentvoice start|stop|toggle   the service, i.e. the switch in the panel
+#   agentvoice mic                 release or re-engage the mic, service left up
+#   agentvoice status              JSON, for scripts and the bar
+set -euo pipefail
+
+UNIT=agentvoice.service
+RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agentvoice"
+STATE="$RUNDIR/state"
+PIDFILE="$RUNDIR/pid"
+
+active() { systemctl --user is-active --quiet "$UNIT"; }
+
+case "${1:-status}" in
+  start)
+    active || systemctl --user start "$UNIT"
+    ;;
+  stop)
+    systemctl --user stop "$UNIT" 2>/dev/null || true
+    # The unit clears this on the way out, but a hard kill would not.
+    printf '{"state":"off"}' > "$STATE" 2>/dev/null || true
+    ;;
+  toggle)
+    if active; then exec "$0" stop; else exec "$0" start; fi
+    ;;
+  mic)
+    if [[ -r $PIDFILE ]]; then
+      kill -USR1 "$(cat "$PIDFILE")"
+    else
+      echo "daemon not running" >&2
+      exit 1
+    fi
+    ;;
+  status)
+    if [[ -r $STATE ]] && active; then cat "$STATE"; else echo '{"state":"off"}'; fi
+    ;;
+  is-active)
+    active && echo yes || echo no
+    ;;
+  *)
+    echo "usage: agentvoice [start|stop|toggle|mic|status|is-active]" >&2
+    exit 2
+    ;;
+esac
