@@ -176,7 +176,9 @@ wakes them. `agentvoice-train-verifier` fits a logistic regression over
 openWakeWord's embeddings from a couple of dozen clips of your voice,
 against other speech and against other voices saying your phrase. It runs
 only after the wake word has already fired and replaces that score.
-Untested on real speech -- see *Known risks*.
+Measured: no loss on the owner's voice, and it rejects every held-out
+other-speaker clip the base model accepts. `agentvoice monitor --ab`
+scores both on the same audio if you want to check your own.
 
 **Echo cancel** not implemented. The plan is PipeWire
 `module-echo-cancel`, capturing from the cancelled source node rather
@@ -187,12 +189,12 @@ the only filter present is a speaker EQ.
 
 ## Open questions
 
-1. **Does the personal verifier work on real voices?** It is the whole
-   argument for openWakeWord's extra 154MB, and it is unvalidated.
-   Fitting one on synthesised speech failed to separate speakers -- but
-   Piper voices share a vocoder lineage and have no room acoustics, so
-   that is a weak test rather than a negative result. Needs real
-   recordings and a re-measurement.
+1. **Does a verifier reject a real stranger?** Trained on the owner's
+   voice it costs almost nothing and rejects everyone else: eleven live
+   utterances fired 11/11 either way (mean 0.963 with, 0.987 without),
+   while twelve held-out other-speaker clips were accepted 8/12 by the
+   base model and **0/12** with the verifier. But those speakers are
+   synthetic. A real person at the microphone is still untested.
 2. **Streaming transcription.** faster-whisper cannot start before the
    utterance ends, which is why Vosk's partials exist at all: they give
    the screen something to show during the ~320ms wait. Voxtype's
@@ -205,6 +207,19 @@ the only filter present is a speaker EQ.
 4. **Microphone contention.** agentvoice holds the microphone
    continuously in wake word mode. What that does to Voxtype's F9, and
    to any other recorder, is untested.
+
+## What it costs to run
+
+Roughly **600MB resident** and 5% of one core, idling. The models are what
+weigh: whisper `tiny.en` 323MB, openWakeWord with its scipy and sklearn
+179MB, a Piper voice 48MB, the Vosk model 114MB when the engine or the
+live-transcript setting needs it. Only the models actually in use are
+loaded, and switching engines releases the other one.
+
+On disk it is about 750MB installed, or 900MB with openWakeWord as well.
+
+That is comfortable on the 2014 laptop this was built on, which has 16GB.
+It is not nothing on a 4GB machine, and principle 5 says that matters.
 
 ## Known risks
 
