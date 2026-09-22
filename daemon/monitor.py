@@ -35,6 +35,87 @@ def bar(value: float, width: int = 24) -> str:
     return "█" * filled + "·" * (width - filled)
 
 
+def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0) -> int:
+    """Score the same audio with and without the verifier, utterance by
+    utterance, and report whether it helped, hurt, or did nothing."""
+    import sounddevice as sd
+
+    if not with_verifier.verifier:
+        print(f"  {YEL}No verifier is trained for {with_verifier.key}, so there "
+              f"is nothing to compare against.{OFF}")
+        return 1
+
+    without = OwwWake(cfg.str("owwModel"), threshold, use_verifier=False)
+
+    print(f"\n  {BLD}{with_verifier.key}{OFF}  threshold {threshold:.2f}")
+    print(f"  {DIM}Both detectors see identical audio. Say the wake phrase "
+          f"ten times or so, then ctrl-c.{OFF}\n")
+    print(f"  {'utterance':>9s}  {'with verifier':>14s}  {'base model':>11s}   verdict")
+
+    frames: queue.Queue[bytes] = queue.Queue()
+    sd.default.dtype = "int16"
+
+    rows = []
+    speaking = False
+    peak_a = peak_b = 0.0
+    quiet = 0
+
+    def cb(indata, _f, _t, status):
+        frames.put(bytes(indata))
+
+    with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16",
+                           blocksize=CHUNK, callback=cb):
+        started = time.time()
+        try:
+            while seconds <= 0 or time.time() - started < seconds:
+                pcm = frames.get()
+                with_verifier.feed(pcm)
+                without.feed(pcm)
+                a, b = with_verifier.last_score, without.last_score
+                peak_a, peak_b = max(peak_a, a), max(peak_b, b)
+
+                if max(a, b) > 0.02:
+                    speaking, quiet = True, 0
+                elif speaking:
+                    quiet += 1
+                    if quiet >= 8:            # ~800ms of nothing ends it
+                        n = len(rows) + 1
+                        fa, fb = peak_a >= threshold, peak_b >= threshold
+                        if fa and not fb:   verdict, col = "verifier SAVED it", GRN
+                        elif fb and not fa: verdict, col = "verifier BLOCKED it", RED
+                        elif fa and fb:     verdict, col = "both fired", DIM
+                        else:               verdict, col = "both missed", YEL
+                        print(f"  {col}{n:9d}  {peak_a:14.3f}  {peak_b:11.3f}   {verdict}{OFF}")
+                        rows.append((peak_a, peak_b))
+                        speaking, peak_a, peak_b, quiet = False, 0.0, 0.0, 0
+        except KeyboardInterrupt:
+            pass
+
+    if not rows:
+        print(f"\n  {YEL}Nothing was heard.{OFF}")
+        return 1
+
+    fa = sum(1 for a, _ in rows if a >= threshold)
+    fb = sum(1 for _, b in rows if b >= threshold)
+    mean_a = sum(a for a, _ in rows) / len(rows)
+    mean_b = sum(b for _, b in rows) / len(rows)
+    print(f"\n  {BLD}{len(rows)} utterances{OFF}")
+    print(f"    with verifier   fired {fa:2d}/{len(rows)}   mean peak {mean_a:.3f}")
+    print(f"    base model      fired {fb:2d}/{len(rows)}   mean peak {mean_b:.3f}")
+    if fa > fb:
+        print(f"\n  {GRN}The verifier is helping.{OFF}")
+    elif fb > fa:
+        print(f"\n  {RED}The verifier is costing you {fb - fa} wake(s). "
+              f"Delete it to fall back to the base model:{OFF}")
+        print(f"    rm ~/.local/share/agentvoice/verifiers/{with_verifier.key}.joblib")
+    else:
+        print(f"\n  {DIM}No difference in what fires. Compare the mean peaks: "
+              f"a lower mean with the verifier means less headroom.{OFF}")
+    print(f"  {DIM}This only measures YOUR voice. What a verifier is for -- "
+          f"rejecting other people -- needs someone else at the mic.{OFF}\n")
+    return 0
+
+
 def main() -> int:
     import sounddevice as sd
 
@@ -43,6 +124,8 @@ def main() -> int:
     ap.add_argument("--device", type=int, default=None)
     ap.add_argument("--no-verifier", action="store_true",
                     help="score with the base model only, ignoring any trained verifier")
+    ap.add_argument("--ab", action="store_true",
+                    help="score with AND without the verifier on the same audio")
     ap.add_argument("--all-frames", action="store_true",
                     help="show quiet frames too, not just ones past the gate")
     args = ap.parse_args()
@@ -61,6 +144,13 @@ def main() -> int:
     threshold = cfg.int("owwThresholdPct") / 100.0
     oww = OwwWake(cfg.str("owwModel"), threshold,
                   use_verifier=not args.no_verifier)
+
+    # Running both detectors over the same frames is the only way to compare
+    # them honestly: saying the phrase twenty times into one build and twenty
+    # times into another measures the difference between two performances at
+    # least as much as the difference between two models.
+    if args.ab:
+        return run_ab(cfg, threshold, oww, args.seconds)
 
     print(f"\n  {BLD}{oww.key}{OFF}  threshold {threshold:.2f}  "
           f"gate {gate:.0f} dBFS  "
