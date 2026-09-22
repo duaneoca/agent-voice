@@ -35,7 +35,10 @@ DEFAULTS = {
     "micThresholdDb": -38,
     "echoTailMs": 350,
     "refractoryMs": 2000,
+    # The float is what the code reads; the percent is what the bar schema
+    # exposes, because that schema has no float type. __getitem__ converts.
     "wakeConfidence": 0.70,
+    "wakeConfidencePct": 70,
     "model": "tiny.en",
     "speakReplies": True,
     "livePartials": "auto",

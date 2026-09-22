@@ -79,6 +79,8 @@ Item {
   readonly property var modelOptions: ["tiny.en", "base.en", "small.en"]
 
   readonly property bool conversation: setting("conversationMode", true)
+  readonly property bool askPermission: setting("askPermission", true)
+  readonly property bool speakReplies: setting("speakReplies", true)
   readonly property string engine: setting("engine", "vosk")
   readonly property bool usingOww: engine === "openwakeword"
 
@@ -609,6 +611,48 @@ Item {
               onCommitted: function(v) { root.persist("minUtteranceMs", v, true) }
             }
 
+            KnobRow {
+              width: parent.width
+              scrollTarget: formScroll
+              foreground: root.foreground; fontFamily: root.fontFamily
+              label: "Hard ceiling on one turn"
+              description: "A microphone stuck open stops here rather than " +
+                           "recording forever."
+              value: root.setting("maxUtteranceMs", 30000)
+              minimum: 5000; maximum: 120000; stepSize: 5000
+              onCommitted: function(v) { root.persist("maxUtteranceMs", v, true) }
+            }
+
+            // --- agent ----------------------------------------------------
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+            PanelSectionHeader {
+              text: "AGENT"; foreground: root.dim; fontFamily: root.fontFamily
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Ask before it changes anything"
+              description: "A spoken sentence can otherwise edit files and run " +
+                           "commands unchallenged. Read-only tools are never " +
+                           "asked about, and an unanswered prompt is denied."
+              checked: root.askPermission
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("askPermission",
+                                      root.askPermission ? "false" : "true", true)
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              visible: !root.askPermission
+              text: "Turned off. The agent can edit files and run commands with " +
+                    "nothing able to stop it."
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
             // --- conversation ---------------------------------------------
             PanelSeparator { width: parent.width; foreground: root.foreground }
             PanelSectionHeader {
@@ -645,6 +689,17 @@ Item {
             PanelSeparator { width: parent.width; foreground: root.foreground }
             PanelSectionHeader {
               text: "SPEECH"; foreground: root.dim; fontFamily: root.fontFamily
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Speak replies aloud"
+              description: "Off leaves the reply as text in the panel."
+              checked: root.speakReplies
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("speakReplies",
+                                      root.speakReplies ? "false" : "true", true)
             }
 
             Dropdown {
