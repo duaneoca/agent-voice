@@ -81,6 +81,18 @@ resume_daemon() {
   fi
 }
 
+# A new verifier is only picked up when the engine is rebuilt. Reusing existing
+# recordings skips the recording phase entirely, so nothing ever paused the
+# daemon and nothing ever restarted it -- leaving it running the verifier it
+# loaded at startup while the freshly trained one sat unused on disk.
+restart_daemon() {
+  if systemctl --user is-active --quiet agentvoice.service; then
+    systemctl --user restart agentvoice.service 2>/dev/null || true
+  else
+    resume_daemon
+  fi
+}
+
 # If gum is killed mid-prompt it can leave foot's kitty keyboard protocol
 # pushed, and every later keypress arrives as a literal escape sequence. Pop
 # it and turn bracketed paste back off on the way out. Popping an empty stack
@@ -300,7 +312,7 @@ if ! spin "Training on $have clips of your voice" "$OUT_FILE" -- \
 fi
 OUT="$(tail -1 "$OUT_FILE")"; rm -f "$OUT_FILE" "${SPIN_ERR:-}"
 
-resume_daemon
+restart_daemon
 
 echo
 gum style --border rounded --padding "0 2" --border-foreground 2 --width "$W" \

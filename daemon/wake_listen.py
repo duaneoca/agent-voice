@@ -154,11 +154,18 @@ class Pipeline:
         """Pick up the current knobs. Called between utterances only, so a
         turn in progress is never disturbed."""
         engine = cfg.str("engine")
-        want = (engine, cfg.str("owwModel") if engine == "openwakeword"
-                else cfg.str("phrase").lower())
+        # The verifier's mtime belongs in the spec: retraining rewrites that
+        # file, and without it the daemon keeps the copy it loaded at startup
+        # for ever. A freshly trained verifier then appears to do nothing --
+        # or worse, a replaced bad one goes on suppressing every wake.
+        want = (engine,
+                cfg.str("owwModel") if engine == "openwakeword"
+                else cfg.str("phrase").lower(),
+                self._verifier_stamp(cfg) if engine == "openwakeword" else 0.0)
         if want != getattr(self, "_wake_spec", None):
             self._wake_spec = want
             self._build_wake(cfg, engine)
+
         self.lead_in_ms = cfg.int("leadInMs")
         self.trailing_ms = cfg.int("trailingSilenceMs")
         self.min_utterance_ms = cfg.int("minUtteranceMs")
@@ -168,6 +175,17 @@ class Pipeline:
         self.wake_confidence = float(cfg["wakeConfidence"])
         # 300ms of continuous speech-level audio before a partial may wake it.
         self.min_loud_frames = 3
+
+    @staticmethod
+    def _verifier_stamp(cfg: Config) -> float:
+        """Modification time of the verifier this engine would load, or 0."""
+        try:
+            from verifier import installed_verifiers, resolve_model
+            _, key = resolve_model(cfg.str("owwModel"))
+            found = installed_verifiers().get(key)
+            return found.stat().st_mtime if found else 0.0
+        except Exception:
+            return 0.0
 
     def _build_wake(self, cfg: Config, engine: str) -> None:
         """Swap the wake engine. Vosk takes any phrase and scores phonetic
