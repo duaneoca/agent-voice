@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""Wake word -> utterance -> transcript -> spoken reply.
+
+The loop, with no agent behind it yet: it says back what it heard, which is
+enough to feel the timing and to surface the echo problem early.
+
+Two recognisers, because they are good at different things:
+
+  Vosk, grammar-restricted to the wake phrase, listens continuously. It is
+  cheap enough to leave running and its grammar pins the trigger far harder
+  than a general model would. It also endpoints your speech and its partial
+  results put something on screen immediately.
+
+  Whisper transcribes the captured utterance once you stop. Far more accurate,
+  especially with the vocabulary prompt, but it cannot start until you finish,
+  so it never runs while you are still talking.
+
+Knobs come from shell.json (written by the bar widget), falling back to
+prototype/agentvoice.toml. Both are re-read between utterances.
+
+    python prototype/wake_listen.py
+    python prototype/wake_listen.py --simulate bench/corpus/wav/11.wav
+    agentvoice toggle          # or: kill -USR1 $(cat $XDG_RUNTIME_DIR/agentvoice/pid)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import queue
+import signal
+import sys
+import time
+import wave
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from adapters import load as load_adapter, omarchy_default, sentences  # noqa: E402
+from adapters.base import speech_safe  # noqa: E402
+from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+VOSK_MODEL = ROOT / "bench/models/vosk-model-small-en-us-0.15"
+VOCAB_FILE = ROOT / "bench/corpus/vocab.txt"
+RATE, CHUNK = 16_000, 3200          # 100ms frames
+
+DIM, RED, GRN, YEL, CYA, BLD, OFF = (
+    "\033[2m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[1m", "\033[0m")
+
+
+def frame_db(pcm: bytes) -> float:
+    """RMS of one frame in dBFS. Cheap: this runs on every 100ms of audio."""
+    import numpy as np
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    if not len(x):
+        return -99.0
+    return float(20.0 * np.log10(np.sqrt((x ** 2).mean()) / 32768.0 + 1e-9))
+
+
+def load_vocab() -> str | None:
+    if not VOCAB_FILE.exists():
+        return None
+    terms = [l.strip() for l in VOCAB_FILE.read_text().splitlines()
+             if l.strip() and not l.startswith("#")]
+    return ", ".join(terms) + "." if terms else None
+
+
+class OwwWake:
+    """openWakeWord detector.
+
+    Unlike the Vosk grammar, this scores acoustically rather than deciding
+    between the phrase and everything-else -- which is why it can separate a
+    phonetic neighbour at all. Measured here: the real phrase peaks ~0.996, a
+    near miss ~0.898, unrelated speech 0.000.
+
+    openWakeWord wants 1280-sample frames (80ms) and the capture loop hands
+    out 1600 (100ms), so audio is rebuffered rather than resized upstream --
+    the 100ms cadence is what the Whisper path and the level meter expect.
+    """
+
+    FRAME = 1280
+
+    def __init__(self, model: str, threshold: float, verifier: str | None = None):
+        import numpy as np
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from verifier import installed_verifiers, resolve_model
+
+        from openwakeword.model import Model
+
+        path, self.key = resolve_model(model)
+        kwargs = {}
+        if verifier is None:
+            found = installed_verifiers().get(self.key)
+            verifier = str(found) if found else None
+        if verifier:
+            kwargs = {"custom_verifier_models": {self.key: verifier},
+                      "custom_verifier_threshold": 0.1}
+        self.verifier = verifier
+        self.threshold = threshold
+        self._np = np
+        self._model = Model(wakeword_model_paths=[str(path)], **kwargs)
+        self._tail = np.empty(0, dtype=np.int16)
+        self.phrase = model.replace("_", " ")
+
+    def reset(self) -> None:
+        self._tail = self._np.empty(0, dtype=self._np.int16)
+        if hasattr(self._model, "reset"):
+            self._model.reset()
+
+    def feed(self, pcm: bytes) -> bool:
+        x = self._np.frombuffer(pcm, dtype=self._np.int16)
+        self._tail = self._np.concatenate((self._tail, x))
+        fired = False
+        while len(self._tail) >= self.FRAME:
+            frame, self._tail = self._tail[:self.FRAME], self._tail[self.FRAME:]
+            scores = self._model.predict(frame)
+            if max(scores.values()) >= self.threshold:
+                fired = True
+        if fired:
+            self.reset()
+        return fired
+
+
+class Pipeline:
+    def __init__(self, cfg: Config, whisper_override: str | None = None):
+        import vosk
+        from faster_whisper import WhisperModel
+        vosk.SetLogLevel(-1)
+
+        self._vosk = vosk
+        self._model = vosk.Model(str(VOSK_MODEL))
+        self._vocab = load_vocab()
+        self.phrase = ""
+        self.engine = "vosk"
+        self._oww = None
+        self._loud_frames = 0
+        self._refractory_until = 0.0
+        self.apply(cfg)
+
+        size = whisper_override or cfg.str("model")
+        print(f"  {DIM}loading whisper {size}...{OFF}", end="", flush=True)
+        self._whisper = WhisperModel(size, device="cpu", compute_type="int8",
+                                     cpu_threads=4)
+        n = len(self._vocab.split(",")) if self._vocab else 0
+        print(f"\r  {DIM}whisper {size} ready"
+              f"{f', {n} vocab terms' if n else ''}{OFF}{' ' * 24}")
+
+    def apply(self, cfg: Config) -> None:
+        """Pick up the current knobs. Called between utterances only, so a
+        turn in progress is never disturbed."""
+        engine = cfg.str("engine")
+        want = (engine, cfg.str("owwModel") if engine == "openwakeword"
+                else cfg.str("phrase").lower())
+        if want != getattr(self, "_wake_spec", None):
+            self._wake_spec = want
+            self._build_wake(cfg, engine)
+        self.lead_in_ms = cfg.int("leadInMs")
+        self.trailing_ms = cfg.int("trailingSilenceMs")
+        self.min_utterance_ms = cfg.int("minUtteranceMs")
+        self.max_utterance_ms = cfg.int("maxUtteranceMs")
+        self.threshold_db = float(cfg["micThresholdDb"])
+        self.refractory_ms = int(cfg["refractoryMs"])
+        self.wake_confidence = float(cfg["wakeConfidence"])
+        # 300ms of continuous speech-level audio before a partial may wake it.
+        self.min_loud_frames = 3
+
+    def _build_wake(self, cfg: Config, engine: str) -> None:
+        """Swap the wake engine. Vosk takes any phrase and scores phonetic
+        neighbours as high as the real one; openWakeWord has four pretrained
+        phrases (plus anything trained locally) and real rejection."""
+        self.engine = engine
+        if engine == "openwakeword":
+            try:
+                self._oww = OwwWake(cfg.str("owwModel"),
+                                    cfg.int("owwThresholdPct") / 100.0)
+                self.phrase = self._oww.phrase
+                verifier = "with your verifier" if self._oww.verifier else "no verifier yet"
+                print(f"  {DIM}wake: openWakeWord {self._oww.key} "
+                      f"@ {self._oww.threshold:.2f} ({verifier}){OFF}")
+                return
+            except Exception as e:
+                print(f"  {YEL}openWakeWord unavailable ({type(e).__name__}: {e});"
+                      f" falling back to Vosk{OFF}")
+                self.engine = "vosk"
+        self._oww = None
+        self.phrase = cfg.str("phrase").lower()
+        self._reset_wake()
+
+    def _reset_wake(self) -> None:
+        self._wake = self._vosk.KaldiRecognizer(
+            self._model, RATE, json.dumps([self.phrase, "[unk]"]))
+        # Word-level confidence is the second line of defence. A grammar has
+        # to choose between the phrase and [unk], so anything phonetically
+        # near the trigger scores as a match -- which is how a podcast on a
+        # phone across the room wakes it.
+        self._wake.SetWords(True)
+
+    def feed_wake(self, pcm: bytes, level_db: float) -> bool:
+        """True when the trigger phrase lands loudly and confidently enough.
+
+        Three gates, because any one of them alone is too easy to trip:
+        the frame has to be louder than the room, the phrase has to survive a
+        sustained run of such frames rather than one blip, and the recogniser
+        has to be reasonably sure of the words it matched.
+        """
+        # A detector's internal buffers still hold the audio that just fired,
+        # so the next few frames can fire again on the same utterance.
+        # reset() does not fully clear them -- measured: feeding an unrelated
+        # clip straight after a positive one still fired. A refractory window
+        # is the reliable guard.
+        if time.time() < self._refractory_until:
+            return False
+
+        if level_db < self.threshold_db:
+            self._loud_frames = 0
+            return False
+        self._loud_frames += 1
+
+        # openWakeWord needs no grammar, no confidence gate and no
+        # loud-frame patience: its score is already a usable signal.
+        if self._oww is not None:
+            if self._oww.feed(pcm):
+                self._refractory_until = time.time() + self.refractory_ms / 1000.0
+                return True
+            return False
+
+        final = self._wake.AcceptWaveform(pcm)
+        if final:
+            payload = json.loads(self._wake.Result())
+            text = payload.get("text", "")
+            words = [w for w in payload.get("result", [])
+                     if w.get("word") in self.phrase.split()]
+            conf = (sum(w.get("conf", 0.0) for w in words) / len(words)) if words else 0.0
+        else:
+            text = json.loads(self._wake.PartialResult()).get("partial", "")
+            conf = None            # partials carry no confidence
+
+        if self.phrase not in text:
+            return False
+
+        # A partial can only wake it after enough consecutive loud frames to
+        # be actual speech; a final also has to clear the confidence bar.
+        if conf is None:
+            if self._loud_frames < self.min_loud_frames:
+                return False
+        elif conf < self.wake_confidence:
+            print(f"  {DIM}(rejected \"{text}\" — confidence {conf:.2f}"
+                  f" < {self.wake_confidence:.2f}){OFF}")
+            self._reset_wake()
+            self._loud_frames = 0
+            return False
+
+        self._reset_wake()
+        self._loud_frames = 0
+        self._refractory_until = time.time() + self.refractory_ms / 1000.0
+        return True
+
+    def new_capture(self):
+        return self._vosk.KaldiRecognizer(self._model, RATE)
+
+    def transcribe(self, pcm: bytes) -> tuple[str, float]:
+        import numpy as np
+        audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        t0 = time.perf_counter()
+        segments, _ = self._whisper.transcribe(
+            audio, language="en", beam_size=1, initial_prompt=self._vocab)
+        text = " ".join(s.text for s in segments).strip()
+        return text, (time.perf_counter() - t0) * 1000
+
+
+class Daemon:
+    def __init__(self, cfg: Config, pipe: Pipeline, state: StateFile,
+                 speaker: Speaker | None, agent=None):
+        self.cfg, self.pipe, self.state, self.speaker = cfg, pipe, state, speaker
+        self.agent = agent
+        # Carried between turns so the agent remembers the conversation.
+        self.session_id: str | None = None
+        self.enabled = True
+        # Half duplex. One microphone six inches from the speakers has no
+        # chance against its own output, so the microphone is simply deaf
+        # while the machine talks -- and for a moment afterwards, because a
+        # room has reverb and the audio device has a buffer.
+        self._frames = None
+        self._deaf_until = 0.0
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        (RUNTIME_DIR / "pid").write_text(str(os.getpid()))
+        signal.signal(signal.SIGUSR1, self._on_toggle)
+
+    def _on_toggle(self, *_):
+        self.enabled = not self.enabled
+        if not self.enabled:
+            if self.speaker:
+                self.speaker.cancel()
+            if self.agent:
+                self.agent.cancel()
+        print(f"\n  {CYA}mic {'engaged' if self.enabled else 'released'}{OFF}")
+        self._publish()
+
+    def _publish(self, **extra):
+        self.state.publish("listening" if self.enabled else "off", **extra)
+
+    def banner(self):
+        p = self.pipe
+        print(f"\n  {BLD}listening{OFF} for {CYA}\"{p.phrase}\"{OFF}"
+              f"   {DIM}lead-in {p.lead_in_ms}ms · trailing {p.trailing_ms}ms{OFF}")
+        print(f"  {DIM}gate {p.threshold_db:.0f} dBFS · confidence "
+              f"{p.wake_confidence:.2f} · {self.cfg.source}{OFF}")
+        who = f"{self.agent.name}" if self.agent else "nobody (echo mode)"
+        print(f"  {DIM}agent: {who} · voice: "
+              f"{self.speaker.name if self.speaker else 'off'}"
+              f"   (ctrl-c to stop){OFF}\n")
+
+    def refresh(self):
+        """Between turns, re-read config and re-announce if it moved."""
+        if not self.cfg.reload():
+            return
+        self.pipe.apply(self.cfg)
+
+        # A voice swap means loading a different model, so it happens here
+        # between turns rather than mid-sentence.
+        wanted = self.cfg.str("voice")
+        speak_on = self.cfg.bool("speakReplies")
+        if not speak_on:
+            self.speaker = None
+        elif self.speaker is None or self.speaker.name != wanted:
+            try:
+                self.speaker = Speaker(wanted)
+            except Exception as e:
+                print(f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
+
+        print(f"  {CYA}knobs updated{OFF}")
+        self.banner()
+
+    def deafen(self, tail_ms: int) -> None:
+        """Drop everything the microphone captured while we were speaking.
+
+        The run loop is synchronous, so frames pile up in the queue during
+        playback. Processing them afterwards would feed our own voice to the
+        wake word -- which is exactly how a speaking assistant wakes itself.
+        """
+        self._deaf_until = time.time() + tail_ms / 1000.0
+        if self._frames is None:
+            return
+        dropped = 0
+        while True:
+            try:
+                self._frames.get_nowait()
+                dropped += 1
+            except Exception:
+                break
+        if dropped:
+            print(f"  {DIM}(dropped {dropped * 100}ms of echo){OFF}")
+
+    def speak(self, text: str, tail_ms: int) -> None:
+        """Say something, then make sure we did not hear ourselves say it."""
+        if not self.speaker:
+            return
+        try:
+            self.speaker.say(speech_safe(text))
+        finally:
+            self.deafen(tail_ms)
+
+    def answer(self, text: str, last: dict) -> None:
+        """Hand the transcript to the agent and speak the reply as it lands.
+
+        Speech starts on the first complete sentence rather than the whole
+        reply, because the agent's own generation is now the slowest thing in
+        the loop by an order of magnitude -- local transcription is ~300ms and
+        time-to-first-token is measured in seconds.
+        """
+        tail_ms = self.cfg.int("echoTailMs")
+        if not self.agent:
+            if self.speaker:
+                self.state.publish("speaking", **last)
+                self.speak(text, tail_ms)       # echo mode
+            return
+
+        self.state.publish("thinking", **last)
+        t0 = time.time()
+        reply_parts: list[str] = []
+        ttft = None
+        error = None
+        spoke = False
+
+        def tap(stream):
+            nonlocal ttft, error
+            for chunk in stream:
+                if chunk.session_id:
+                    self.session_id = chunk.session_id
+                if chunk.ttft_ms is not None and ttft is None:
+                    ttft = chunk.ttft_ms
+                if chunk.tool:
+                    print(f"  {DIM}[{chunk.tool}]{OFF}", flush=True)
+                if chunk.error:
+                    error = chunk.error
+                yield chunk
+
+        try:
+            for sentence in sentences(tap(self.agent.send(text, self.session_id))):
+                print(f"  {CYA}{sentence}{OFF}", flush=True)
+                reply_parts.append(sentence)
+                if self.speaker and self.enabled:
+                    if not spoke:
+                        self.state.publish("speaking", **last)
+                        spoke = True
+                    self.speak(sentence, tail_ms)
+        except Exception as e:                  # a broken agent must not end the loop
+            error = f"{type(e).__name__}: {e}"
+
+        if error:
+            print(f"  {YEL}agent error: {error}{OFF}")
+            self.speak("Sorry, the agent failed.", tail_ms)
+
+        reply = " ".join(reply_parts)
+        last["reply"] = reply[:400]
+        print(f"  {DIM}agent {time.time() - t0:.1f}s"
+              f"{f', first token {ttft:.0f}ms' if ttft else ''}{OFF}")
+
+    def run(self, device: int | None) -> int:
+        import sounddevice as sd
+
+        frames: queue.Queue[bytes] = queue.Queue()
+
+        def cb(indata, _f, _t, status):
+            if status:
+                print(f"\n  {YEL}[audio: {status}]{OFF}")
+            frames.put(bytes(indata))
+
+        self._frames = frames
+        self.banner()
+        self._publish()
+        last = {"transcript": "", "ms": 0, "audio_s": 0.0}
+
+        with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16",
+                              blocksize=CHUNK, device=device, callback=cb):
+            phase = "wake"
+            buf = b""
+            cap = None
+            woke_at = last_voice = 0.0
+            heard = False
+
+            level_shown = 0.0
+            while True:
+                pcm = frames.get()
+
+                # Deaf window after our own speech: discard without even
+                # measuring, so a tail of reverb cannot register as input.
+                if time.time() < self._deaf_until:
+                    continue
+
+                level = frame_db(pcm)
+
+                if not self.enabled:
+                    continue
+
+                # The meter in the panel is how the threshold becomes settable
+                # by eye instead of by guesswork, so the level is published even
+                # while nothing is happening -- throttled, since this is every
+                # 100ms and the file is watched.
+                if phase == "wake" and abs(level - level_shown) > 1.5:
+                    level_shown = level
+                    self._publish(level_db=round(level, 1), **last)
+
+                if phase == "wake":
+                    if self.pipe.feed_wake(pcm, level):
+                        print(f"  {GRN}● wake{OFF}  {DIM}go ahead"
+                              f" ({self.pipe.lead_in_ms / 1000:.1f}s to start){OFF}",
+                              flush=True)
+                        phase, buf, cap = "capture", b"", self.pipe.new_capture()
+                        woke_at = last_voice = time.time()
+                        heard = False
+                        self.state.publish("capture", **last)
+                    continue
+
+                buf += pcm
+                done = cap.AcceptWaveform(pcm)
+                partial = "" if done else json.loads(
+                    cap.PartialResult()).get("partial", "")
+                # Energy decides when you stopped talking; Vosk's partials only
+                # say what it thinks you said. A pause between words produces no
+                # new partial but is not the end of a turn.
+                if level >= self.pipe.threshold_db:
+                    heard = True
+                    last_voice = time.time()
+                if partial:
+                    print(f"\r  {DIM}{partial[:100]}{OFF}{' ' * 20}",
+                          end="", flush=True)
+
+                now = time.time()
+                elapsed_ms = (now - woke_at) * 1000
+                quiet_ms = (now - last_voice) * 1000
+
+                # Waiting for you to begin. Deliberately generous: being cut
+                # off before you have started is the most irritating failure
+                # this thing can have.
+                if not heard:
+                    if elapsed_ms > self.pipe.lead_in_ms:
+                        print(f"\r  {DIM}(nothing heard){OFF}{' ' * 40}")
+                        phase = "wake"
+                        self._publish(**last)
+                        self.refresh()
+                    continue
+
+                if quiet_ms <= self.pipe.trailing_ms and elapsed_ms < self.pipe.max_utterance_ms:
+                    continue
+                if elapsed_ms >= self.pipe.max_utterance_ms:
+                    print(f"\r  {YEL}(hit max_utterance_ms){OFF}{' ' * 30}")
+
+                audio_ms = len(buf) / 32.0
+                if audio_ms < self.pipe.min_utterance_ms:
+                    print(f"\r  {DIM}(too short, discarded){OFF}{' ' * 40}")
+                else:
+                    self.state.publish("thinking", **last)
+                    text, ms = self.pipe.transcribe(buf)
+                    print(f"\r{' ' * 120}\r  {BLD}{text or '(nothing)'}{OFF}")
+                    print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
+                          f"whisper {ms:.0f}ms{OFF}")
+                    last = {"transcript": text, "ms": round(ms),
+                            "audio_s": round(audio_ms / 1000, 2)}
+
+                    if text:
+                        self.answer(text, last)
+                    print()
+
+                phase = "wake"
+                self._publish(**last)
+                self.refresh()
+        return 0
+
+
+def run_simulated(pipe: Pipeline, speaker: Speaker | None, wav: Path,
+                  daemon: "Daemon | None" = None) -> int:
+    with wave.open(str(wav)) as w:
+        pcm = w.readframes(w.getnframes())
+    print(f"\n  {DIM}simulating: {wav.name} ({len(pcm) / 32000:.1f}s)"
+          f" — no wake phrase, capturing the whole clip{OFF}\n")
+    cap = pipe.new_capture()
+    for off in range(0, len(pcm), CHUNK):
+        if not cap.AcceptWaveform(pcm[off:off + CHUNK]):
+            p = json.loads(cap.PartialResult()).get("partial", "")
+            if p:
+                print(f"\r  {DIM}{p[:100]}{OFF}", end="", flush=True)
+    text, ms = pipe.transcribe(pcm)
+    print(f"\r{' ' * 120}\r  {BLD}{text}{OFF}")
+    print(f"  {DIM}whisper {ms:.0f}ms{OFF}")
+    if text and daemon is not None:
+        daemon.answer(text, {"transcript": text, "ms": round(ms), "audio_s": 0.0})
+    elif text and speaker:
+        print(f"  {DIM}spoke {speaker.say(text):.1f}s{OFF}")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--whisper", default=None, help="override the configured model")
+    ap.add_argument("--device", type=int, default=None)
+    ap.add_argument("--no-speak", action="store_true")
+    ap.add_argument("--no-agent", action="store_true",
+                    help="echo the transcript instead of asking an agent")
+    ap.add_argument("--simulate", type=Path)
+    args = ap.parse_args()
+
+    cfg = Config()
+    print(f"  {DIM}knobs: {cfg.source}{OFF}")
+    pipe = Pipeline(cfg, args.whisper)
+
+    speaker = None
+    if cfg.bool("speakReplies") and not args.no_speak:
+        try:
+            speaker = Speaker(cfg.str("voice"))
+        except Exception as e:
+            print(f"  {YEL}tts unavailable: {e}{OFF}")
+
+    agent = None
+    if not args.no_agent:
+        agent = load_adapter()
+        if agent is None:
+            which = omarchy_default()
+            print(f"  {YEL}no adapter for agent "
+                  f"{which or '(unset — run: omarchy default agent claude)'}"
+                  f"; echoing instead{OFF}")
+
+    state = StateFile()
+    try:
+        daemon = Daemon(cfg, pipe, state, speaker, agent)
+        if args.simulate:
+            return run_simulated(pipe, speaker, args.simulate, daemon)
+        return daemon.run(args.device)
+    except KeyboardInterrupt:
+        print(f"\n  {DIM}stopped{OFF}")
+        return 0
+    finally:
+        state.clear()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

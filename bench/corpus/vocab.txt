@@ -1,0 +1,18 @@
+# Terms the generic models have never seen. Fed to Whisper as initial_prompt
+# and (eventually) to Vosk as a restricted grammar. One per line; blank lines
+# and # comments ignored. This is the single highest-leverage knob in the
+# whole pipeline - see results/vocab.json.
+Omarchy
+Hyprland
+Waybar
+PipeWire
+Quickshell
+systemd
+journalctl
+kubectl
+namespace
+Wayland
+tmux
+uv
+ctranslate2
+faster-whisper

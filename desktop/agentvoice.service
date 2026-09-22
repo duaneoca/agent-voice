@@ -1,0 +1,23 @@
+[Unit]
+Description=Agent Voice — wake word, transcription, spoken replies
+Documentation=https://github.com/duaneoca/agent-voice
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# The prototype runs out of the checkout. A packaged install would point at
+# /usr/lib/agentvoice instead.
+WorkingDirectory=%h/git/duaneoca/agent-voice
+ExecStart=%h/git/duaneoca/agent-voice/bench/.venv/bin/python -u prototype/wake_listen.py
+Restart=on-failure
+RestartSec=2
+# Whisper on four Haswell cores is the whole budget; niceness keeps a long
+# transcription from making the desktop stutter.
+Nice=5
+# The state file the bar widget watches lives here.
+RuntimeDirectory=agentvoice
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=graphical-session.target
