@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Consistency checks that do not need a running desktop.
+#
+# The first one exists because a setting was declared in manifest.json, wired
+# through the daemon, and never drawn in the overlay -- so it worked from the
+# CLI and was invisible in the UI. Nothing caught that but a user noticing.
+set -uo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+fail=0
+
+say() { printf '  %-46s %s\n' "$1" "$2"; }
+
+# 1. every schema key is rendered somewhere in the overlay
+out=$(python3 - "$ROOT" <<'PY'
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+declared = {k["key"] for k in json.loads((root/"manifest.json").read_text())["barWidget"]["schema"]}
+qml = (root/"Settings.qml").read_text() + (root/"Panel.qml").read_text()
+missing = sorted(k for k in declared if not re.search(r'["\']' + re.escape(k) + r'["\']', qml))
+print(" ".join(missing))
+PY
+)
+if [[ -n ${out// } ]]; then say "settings declared but never drawn" "FAIL: $out"; fail=1
+else say "every schema key is drawn in the UI" "ok"; fi
+
+# 2. every schema key has a default the daemon knows
+out=$(python3 - "$ROOT" <<'PY'
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+declared = {k["key"] for k in json.loads((root/"manifest.json").read_text())["barWidget"]["schema"]}
+src = (root/"daemon/runtime.py").read_text()
+block = src.split("DEFAULTS = {",1)[1].split("}",1)[0]
+known = set(re.findall(r'"([A-Za-z]+)"\s*:', block))
+print(" ".join(sorted(declared - known)))
+PY
+)
+if [[ -n ${out// } ]]; then say "settings with no daemon default" "FAIL: $out"; fail=1
+else say "every schema key has a daemon default" "ok"; fi
+
+# 3. python files parse
+bad=""
+for f in $(git -C "$ROOT" ls-files '*.py'); do
+  python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$ROOT/$f" 2>/dev/null || bad="$bad $f"
+done
+if [[ -n ${bad// } ]]; then say "python syntax" "FAIL:$bad"; fail=1; else say "python syntax" "ok"; fi
+
+# 4. shell scripts parse
+bad=""
+for f in $(git -C "$ROOT" ls-files 'bin/*' 'install.sh' 'bench/*.sh'); do
+  bash -n "$ROOT/$f" 2>/dev/null || bad="$bad $f"
+done
+if [[ -n ${bad// } ]]; then say "shell syntax" "FAIL:$bad"; fail=1; else say "shell syntax" "ok"; fi
+
+exit $fail
