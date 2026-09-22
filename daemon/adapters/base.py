@@ -67,6 +67,14 @@ class Adapter(ABC):
     #: Name as Omarchy's `default agent` spells it.
     name: str = ""
 
+    #: True only when the adapter can actually put a permission prompt on
+    #: screen and wait for an answer. Claude Code can, through a PreToolUse
+    #: hook. Nothing else here can, so the honest thing is to say so rather
+    #: than let a setting called "ask before it changes anything" quietly mean
+    #: nothing. An adapter that cannot guard runs in the safest mode its CLI
+    #: offers instead of its unattended one.
+    guards_permissions: bool = False
+
     @abstractmethod
     def available(self) -> bool:
         """True when this backend can actually be run on this machine."""

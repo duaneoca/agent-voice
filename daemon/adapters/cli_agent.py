@@ -48,13 +48,20 @@ TEMPLATES: dict[str, tuple[str, bool]] = {
 class CliAgent(Adapter):
     """Runs one configured command per turn and streams its stdout."""
 
-    def __init__(self, agent: str, spoken: bool = True, cwd: str | None = None):
+    #: The flag each template uses to skip approvals. Removed when the user
+    #: has asked to be consulted, since none of these can consult anyone.
+    BYPASS_FLAGS = ("--allow-all", "--yolo", "--trust", "--auto-approve",
+                    "--auto", "--permission-mode", "bypassPermissions")
+
+    def __init__(self, agent: str, spoken: bool = True, cwd: str | None = None,
+                 ask_permission: bool = True):
         template, verified = TEMPLATES[agent]
         self.name = agent
         self.template = template
         self.verified = verified
         self.spoken = spoken
         self.cwd = cwd
+        self.ask_permission = ask_permission
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
@@ -67,8 +74,13 @@ class CliAgent(Adapter):
 
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
+        parts = shlex.split(self.template)
+        if self.ask_permission:
+            # None of these can raise a prompt, so the guard means refusing to
+            # hand them a flag that skips one.
+            parts = [p for p in parts if p not in self.BYPASS_FLAGS]
         argv = [prompt if part == "{prompt}" else part.replace("{prompt}", prompt)
-                for part in shlex.split(self.template)]
+                for part in parts]
         try:
             proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,

@@ -438,6 +438,20 @@ class Daemon:
               f"{f'on, {p.follow_up_ms / 1000:.0f}s follow-up window' if p.conversation else 'off'}"
               f"{OFF}")
         who = f"{self.agent.name}" if self.agent else "nobody (echo mode)"
+        # A setting called "ask before it changes anything" must not quietly
+        # mean nothing. Only Claude Code can raise a prompt from here; the
+        # others are held in whatever read-only or ask-first mode their CLI
+        # has, which is weaker and worth saying out loud.
+        if self.agent and self.cfg.bool("askPermission"):
+            if getattr(self.agent, "guards_permissions", False):
+                print(f"  {DIM}permission: prompts on screen{OFF}")
+            else:
+                print(f"  {YEL}permission: {self.agent.name} cannot prompt from here."
+                      f" Running in its safest mode instead — it may refuse work"
+                      f" rather than ask.{OFF}")
+        elif self.agent:
+            print(f"  {YEL}permission: not asking. {self.agent.name} can change"
+                  f" files and run commands unchallenged.{OFF}")
         print(f"  {DIM}agent: {who} · voice: "
               f"{self.speaker.name if self.speaker else 'off'}"
               f"   (ctrl-c to stop){OFF}\n")
