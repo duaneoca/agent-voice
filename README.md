@@ -5,11 +5,35 @@ installed on the box a natural voice interface: wake word or push to
 talk in, spoken replies out. Claude Code is the first target, not the
 only one.
 
-Omarchy already ships the input half. Voxtype gives it push to talk
-dictation on F9, running whisper.cpp locally, with a Dictation
-indicator in the bar. agentvoice does not rebuild any of that. It
-builds the half that is missing: the agent hears you, and answers out
-loud.
+Omarchy already ships dictation. Voxtype gives it push to talk on F9,
+running whisper.cpp locally, with a Dictation indicator in the bar.
+agentvoice is the other half: a wake word instead of a keypress, an
+agent instead of a text field, and an answer spoken back.
+
+## Install
+
+The bar widget is an Omarchy shell plugin, so it arrives the usual way:
+
+```bash
+omarchy plugin add https://github.com/duaneoca/agent-voice.git --enable
+```
+
+That gets you the icon and the settings screen. The thing that listens is a
+Python daemon with a few hundred megabytes of models behind it, so it is a
+second, explicit step -- the way Omarchy installs Voxtype:
+
+```bash
+~/.config/omarchy/plugins/duaneoca.agentvoice/install.sh
+```
+
+It needs one system package, `uv` from the official `extra` repo, and then
+manages its own CPython. Nothing is installed against the system interpreter:
+Arch is a rolling release, and a venv built on `/usr/bin/python` stops
+importing the next time Arch bumps it, which would leave voice silently dead
+after an `omarchy update`.
+
+Roughly 750MB with the default engine, or 900MB with openWakeWord as well;
+the installer says what the second engine costs before installing it.
 
 ## Principles
 
@@ -26,32 +50,45 @@ loud.
 5. **Old hardware is the target, not the edge case.** Benchmarked on a
    2014 MacBook Pro, CPU only. If it needs a GPU it does not ship.
 
-## What we own, and what we don't
+## Where Voxtype fits
 
-**Voxtype owns input.** Microphone capture, whisper.cpp inference,
-model management, push to talk binds, the bar indicator. It exposes
-everything we need: `record start|stop|toggle|cancel`, a JSON status
-command, a state file, a unix socket, `whisper.initial_prompt` for
-custom vocabulary, and `whisper.mode = remote` for machines too slow
-to run a model at all.
+An earlier draft of this file said agentvoice would drive Voxtype for
+transcription and never open the microphone itself. That turned out not
+to be possible, and it is worth writing down why, because the idea is an
+obvious one to have twice.
 
-**agentvoice owns the conversation.** Wake word, conversation state,
-the agent adapters, spoken replies, barge in, and tool permission
-prompts. Voxtype types a transcript into whatever window has focus; it
-has no idea an agent exists. That gap is the project.
+Voxtype's running daemon exposes `record start|stop|toggle|cancel`, and
+those operate on *its* microphone and type the result into the focused
+window. There is no "transcribe this buffer" on the socket. The one
+entry point that takes audio we already hold, `voxtype transcribe
+<file>`, is a separate process that reloads the model on every call --
+measured at 2.2s against ~320ms for an in-process model. And its capture
+would only begin after the wake word had already been spoken, which is
+the wrong moment.
+
+So **agentvoice owns the whole input path** for wake word mode: capture,
+wake word, endpointing, transcription. What it takes from Voxtype is its
+shape, not its code -- a small state file the bar watches, a CLI of plain
+verbs, models under XDG data.
+
+**They coexist rather than compose.** F9 remains Voxtype's dictation and
+is untouched; agentvoice listens for a phrase instead. Both want the same
+microphone, which is a real constraint rather than a theoretical one:
+running a wake word and holding F9 at the same time is asking one device
+for two things.
 
 ## Input modes
 
 1. **Wake word.** Say the trigger phrase, talk, get a spoken answer.
    Stays in conversation mode for a few seconds after each reply.
    Ours to build: Voxtype is push to talk only.
-2. **Push to talk.** Voxtype's F9, unchanged. We read the transcript
-   rather than reimplementing the capture path.
+2. **Push to talk.** Voxtype's F9, unchanged and unintegrated. It
+   dictates into the focused window, which is a different job.
 3. **Mic toggle.** One key and one bar click to grab or release the
    microphone entirely.
 
 Default binds (configurable):
-  F9 (hold)            push to talk, Voxtype's existing bind
+  F9 (hold)            Voxtype dictation, untouched
   Super+Alt+Space      toggle wake word listening on/off
   Super+Ctrl+Space     cancel current response
 
@@ -60,15 +97,20 @@ Super+Space is Omarchy's application launcher and stays that way.
 ## Architecture
 
 **Voice daemon** (Python, systemd user service)
-Owns wake word detection, conversation state, TTS playback, and echo
-cancel. Drives Voxtype for transcription rather than opening the mic
-itself. Exposes a small local socket so binds and the bar can send it
-commands (wake_on, wake_off, cancel, status).
+Owns the microphone and everything done to what comes off it: wake word,
+endpointing, transcription, conversation state, speech. Publishes what it
+is doing to a state file the bar widget watches, and takes commands
+through the `agentvoice` CLI (`start|stop|toggle|mic|status`), which
+signals it rather than opening a socket -- the same shape Voxtype uses.
 
-**Transcript handoff**
-Voxtype hands text back through `output.post_process.command`, which
-receives the transcription on stdin, or `output.mode = file`. Either
-way agentvoice gets text, not keystrokes.
+**Audio path**
+100ms frames from PipeWire. Every frame is measured and dropped below the
+gate, so nothing quieter than the room reaches the wake word. After the
+wake word fires, the same frames feed both an endpointer and a buffer;
+when a pause ends the turn, the buffer goes to Whisper in one piece.
+While the machine is speaking the microphone is deaf, and the queue is
+drained afterwards, because one microphone beside one speaker cannot
+win -- see *Known risks*.
 
 **Backend adapters**
 One contract: take text plus a session ID, stream text back.
@@ -96,10 +138,10 @@ Omarchy 4 has no Waybar.
 
 Measured on the target hardware. See `bench/FINDINGS.md`.
 
-**STT** whisper `tiny.en` through Voxtype, with a custom vocabulary
-prompt. 6.5% WER against 6.9% for `base.en` with the same prompt, at
-roughly half the latency. `small.en` is disqualified: nearly two
-seconds of dead air after every utterance.
+**STT** faster-whisper `tiny.en`, in process, with a custom vocabulary
+prompt. 4.9% WER against 6.5% for `base.en` with the same prompt, at
+roughly half the latency, ~320ms after you stop talking. `small.en` is
+disqualified: nearly two seconds of dead air on every turn.
 
 **Custom vocabulary** is a first class component, not a tuning knob. A
 fourteen word `initial_prompt` cut domain errors by 41% for 41ms.
@@ -110,26 +152,59 @@ the term list; project names and tool names go in it.
 is 22x realtime. espeak-ng is the fallback for machines that cannot
 manage even that; it is robotic and costs 6ms.
 
-**Wake word** undecided, pending the `eager_processing` test below.
-Vosk is the candidate: pacman installable from `extra`, 30ms, and its
-grammar restriction pins the trigger phrase far harder than a generic
-model. It does not need to be accurate, only to notice a phrase.
+**Wake word** two engines, chosen in settings, because they fail
+differently.
 
-**Echo cancel** PipeWire `module-echo-cancel`. Capture from the
-cancelled source node, not raw ALSA, or the speakers feed straight
-back into the mic.
+*Vosk* (default) takes any phrase you like and costs 26MB. Its weakness
+is not accuracy but the shape of the question it answers: a grammar has
+to choose between the phrase and anything-else, so a phonetic neighbour
+maps cleanly onto the phrase at full confidence. Measured here, `"hey
+cloud"` scores **1.00** against a `"hey claude"` grammar, and `"apple
+pie"` scores 0.89 against `"hey pi"`. A confidence threshold cannot fix
+this; there is nothing to threshold.
+
+*openWakeWord* has four pretrained phrases and real separation --
+`"hey jarvis"` 0.996, a phonetic attack 0.898, unrelated speech 0.000 --
+so 0.90 rejects the near miss and still fires. It costs ~154MB, almost
+none of it the detector: scipy and scikit-learn are hard imports of its
+package `__init__`. Pin `openwakeword==0.4.0`; 0.5 and later depend on
+`tflite-runtime`, which has no wheel past cp311.
+
+**Personal verifier** the only layer that knows *who* is speaking. Both
+engines above are speaker independent by design, which is why a podcast
+wakes them. `agentvoice-train-verifier` fits a logistic regression over
+openWakeWord's embeddings from a couple of dozen clips of your voice,
+against other speech and against other voices saying your phrase. It runs
+only after the wake word has already fired and replaces that score.
+Untested on real speech -- see *Known risks*.
+
+**Echo cancel** not implemented. The plan is PipeWire
+`module-echo-cancel`, capturing from the cancelled source node rather
+than raw ALSA. Until then the microphone goes deaf while the machine
+speaks, and for a configurable tail afterwards, which works but makes
+barge in impossible. On the dev machine the module is not even loaded --
+the only filter present is a speaker EQ.
 
 ## Open questions
 
-1. `whisper.eager_processing` transcribes overlapping chunks while you
-   are still speaking. If it delivers, Whisper gets Vosk's streaming
-   latency and the wake word component may not need Vosk at all.
-   Untested. Highest value experiment remaining.
-2. Voxtype's ONNX build carries Moonshine and Parakeet, both built for
-   low latency. The AVX2 build we run has whisper only. Worth a look.
-3. Whether the transcript handoff should be `post_process.command` or
-   the unix socket. The socket carries live audio levels and may carry
-   more.
+1. **Does the personal verifier work on real voices?** It is the whole
+   argument for openWakeWord's extra 154MB, and it is unvalidated.
+   Fitting one on synthesised speech failed to separate speakers -- but
+   Piper voices share a vocoder lineage and have no room acoustics, so
+   that is a weak test rather than a negative result. Needs real
+   recordings and a re-measurement.
+2. **Streaming transcription.** faster-whisper cannot start before the
+   utterance ends, which is why Vosk's partials exist at all: they give
+   the screen something to show during the ~320ms wait. Voxtype's
+   `whisper.eager_processing` transcribes overlapping chunks while you
+   are still speaking; whether an equivalent is worth building here is
+   open.
+3. **Moonshine and Parakeet.** Both are built for low-latency short
+   utterances and both appear in Voxtype's ONNX build. Either could beat
+   `tiny.en` on the metric that matters -- time after you stop talking.
+4. **Microphone contention.** agentvoice holds the microphone
+   continuously in wake word mode. What that does to Voxtype's F9, and
+   to any other recorder, is untested.
 
 ## Known risks
 
@@ -140,13 +215,28 @@ back into the mic.
    A long conversation gets slower. Budget for it.
 3. Microphone gain. Shipped at +12dB on the dev machine, clipping 1.46%
    of samples at a normal speaking distance. Calibrate at install.
-4. Agent CLIs differ in headless and permission support.
-5. Building on Voxtype means tracking its config schema.
+4. **Phonetic neighbours wake the Vosk engine.** Not a tuning problem: a
+   grammar scores `"hey cloud"` exactly as high as `"hey claude"`. Use
+   openWakeWord, and a verifier, if anything in the room talks.
+5. **Tools run unattended.** The Claude adapter passes
+   `--permission-mode auto`, matching what `omarchy agent` does for its
+   own launches. There is no approval surface yet, so a spoken sentence
+   can edit files with nothing able to stop it. This is the largest
+   outstanding gap.
+6. Agent CLIs differ in headless and permission support. Only the Claude
+   adapter has been run against a live agent; the Codex and Gemini
+   adapters are written against observed flags and an unauthenticated
+   CLI, and the nine others share one plain-stdout adapter.
+7. **Cold stubs look installed.** Omarchy puts a mise stub on PATH for
+   every agent it knows, so `command -v` finds all thirteen on a machine
+   with none of them. Invoking one triggers a minute-long install.
+   Adapters check for a real install, not just a name on PATH.
 
 ## Prior art (and the gap)
 
 Voxtype: Omarchy's own dictation, local whisper.cpp, push to talk.
-  Input only, types into the focused window. We build on it.
+  Input only, types into the focused window. We coexist with it;
+  driving it turned out not to be possible. See above.
 voice-to-claude: local wake word dictation for Claude Code on Linux.
   Input only, no spoken replies.
 tryvoice: adapter registry for Claude Code, OpenClaw, custom.
@@ -161,39 +251,26 @@ That's this.
 
 ## Build order
 
-1. Wake word prototype: trigger phrase to printed transcript
-2. Transcript handoff from Voxtype into the daemon
-3. Claude Code adapter, headless with session resume
-4. TTS with sentence by sentence streaming, conversation mode
-5. Echo cancel and barge in
-6. Permission MCP tool and overlay
-7. Quickshell plugin, install script, systemd service
-8. Second adapter to prove the contract holds
+Done:
 
-## Install
+1. Wake word to transcript, two engines, tunable from the bar
+2. Claude Code adapter: headless, streaming, session resume
+3. Replies written for the ear, spoken sentence by sentence
+4. Quickshell plugin, settings overlay, install script, user service
+5. Personal verifier training tool
 
-The bar widget is an Omarchy shell plugin, so it arrives the usual way:
+Next, roughly in order of how much they matter:
 
-```bash
-omarchy plugin add https://github.com/duaneoca/agent-voice.git --enable
-```
-
-That gets you the icon and the settings screen. The thing that listens is a
-Python daemon with a few hundred megabytes of models behind it, so it is a
-second, explicit step -- the way Omarchy installs Voxtype:
-
-```bash
-~/.config/omarchy/plugins/duaneoca.agentvoice/install.sh
-```
-
-It needs one system package, `uv` from the official `extra` repo, and then
-manages its own CPython. Nothing is installed against the system interpreter:
-Arch is a rolling release, and a venv built on `/usr/bin/python` stops
-importing the next time Arch bumps it, which would leave voice silently dead
-after an `omarchy update`.
-
-Roughly 750MB with the default engine, or 900MB with openWakeWord as well;
-the installer says what the second engine costs before installing it.
+6. Permission overlay, so tool calls are answerable rather than
+   automatic. The one real risk in shipping this as it stands.
+7. Validate the verifier on real speech, which decides whether
+   openWakeWord earns its install size.
+8. Echo cancel, and barge in on top of it. Today the microphone simply
+   goes deaf while the machine talks, so it cannot be interrupted.
+9. Tests. There are none, and this session introduced several bugs a
+   test would have caught in seconds.
+10. A second adapter run against a live agent, to prove the contract
+    holds rather than merely compiles.
 
 ## Layout
 
