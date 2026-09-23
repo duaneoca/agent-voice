@@ -170,7 +170,7 @@ class Codex(Adapter):
                 # Killed for going quiet. Indistinguishable from a cancel by
                 # exit code alone, and silence is the one thing a voice
                 # interface must never answer with.
-                yield Chunk(error=f"{"codex"} stopped responding after "
+                yield Chunk(error=f"codex stopped responding after "
                                   f"{dog.idle_s:.0f}s")
                 return
             if code != 0 and not spoken_any and code not in (-15, 143, -9, 137):
