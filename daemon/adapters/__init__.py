@@ -33,6 +33,7 @@ REGISTRY: dict[str, type[Adapter]] = {
     "gemini": Gemini,
     "agy": Antigravity,
     "antigravity": Antigravity,
+    "antigravity-cli": Antigravity,
 }
 
 
