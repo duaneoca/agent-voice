@@ -144,7 +144,7 @@ class ClaudeCode(Adapter):
                 # Killed for going quiet. Indistinguishable from a cancel by
                 # exit code alone, and silence is the one thing a voice
                 # interface must never answer with.
-                yield Chunk(error=f"{"claude"} stopped responding after "
+                yield Chunk(error=f"claude stopped responding after "
                                   f"{dog.idle_s:.0f}s")
                 return
             if code != 0:

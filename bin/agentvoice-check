@@ -10,6 +10,15 @@ fail=0
 
 say() { printf '  %-46s %s\n' "$1" "$2"; }
 
+# Resolved once, and used for the syntax check as well as the tests. Syntax is
+# version-specific: nesting the same quote inside an f-string is legal from
+# 3.12 and a SyntaxError before it, so checking with whatever `python3` happens
+# to be says nothing about the range this project claims to support. CI caught
+# one of those; this machine could not, because its venv is newer.
+PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
+[[ -x $PY ]] || PY="$ROOT/bench/.venv/bin/python"
+[[ -x $PY ]] || PY="$(command -v python3)"
+
 # Several checks below iterate `git ls-files`. Outside a repository that is
 # empty, and every one of them would pass having examined nothing -- the same
 # shape of false green as a skipped test suite.
@@ -50,7 +59,7 @@ else say "every schema key has a daemon default" "ok"; fi
 # 3. python files parse
 bad=""
 for f in $(git -C "$ROOT" ls-files '*.py'); do
-  python3 -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$ROOT/$f" 2>/dev/null || bad="$bad $f"
+  "$PY" -c "import ast,sys;ast.parse(open(sys.argv[1]).read())" "$ROOT/$f" 2>/dev/null || bad="$bad $f"
 done
 if [[ -n ${bad// } ]]; then say "python syntax" "FAIL:$bad"; fail=1; else say "python syntax" "ok"; fi
 
@@ -85,8 +94,6 @@ if [[ -n ${out// } ]]; then say "manifest is installable" "FAIL: $out"; fail=1
 else say "manifest is installable" "ok"; fi
 
 # 6. the behavioural tests, when pytest is available
-PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
-[[ -x $PY ]] || PY="$ROOT/bench/.venv/bin/python"
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"
