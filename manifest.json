@@ -44,7 +44,7 @@
       "followUpMs": 7000,
       "livePartials": "auto",
       "projectDir": "",
-      "permissionLevel": "ask"
+      "permissions": {}
     },
     "schema": [
       {
@@ -238,18 +238,6 @@
         "label": "Project directory",
         "defaultValue": "",
         "description": "Where the agent works. Empty means your home directory. Everything it reads, writes or runs happens here, and the permission level below applies to this directory."
-      },
-      {
-        "key": "permissionLevel",
-        "type": "enum",
-        "label": "Permission level",
-        "options": [
-          "ask",
-          "edits",
-          "trusted"
-        ],
-        "defaultValue": "ask",
-        "description": "ask: every change is prompted. edits: files inside the project may be edited without asking, commands still are. trusted: nothing is asked. Read-only tools are never prompted at any level, and an unanswered prompt is denied."
       }
     ]
   },

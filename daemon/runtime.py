@@ -43,7 +43,7 @@ DEFAULTS = {
     "model": "tiny.en",
     "speakReplies": True,
     "livePartials": "auto",
-    "permissionLevel": "ask",
+    "permissions": {},
     "projectDir": "",
     "conversationMode": True,
     "followUpMs": 7000,
@@ -67,7 +67,7 @@ TOML_ALIASES = {
     "refractoryMs": ("wake", "refractory_ms"),
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
-    "permissionLevel": ("agent", "permission_level"),
+    "permissions": ("agent", "permissions"),
     "projectDir": ("agent", "project_dir"),
     "conversationMode": ("wake", "conversation_mode"),
     "followUpMs": ("timing", "follow_up_ms"),
@@ -147,6 +147,25 @@ class Config:
     def str(self, key: str) -> str:
         return str(self[key])
 
+    def level_for(self, agent: str | None) -> str:
+        """The permission level chosen for this agent, defaulting to "ask".
+
+        Levels are per agent because trust is a judgement about one program's
+        capabilities, and those differ enormously: Claude Code can be stopped
+        mid-call by a hook we answer, Codex cannot be stopped at all. A single
+        global level meant that trusting Claude Code silently handed the same
+        trust to whatever `omarchy default agent` was switched to next.
+
+        Anything unrecognised reads as "ask". An agent nobody has made a
+        decision about has not been trusted, and the absence of a decision
+        must never be read as a permissive one.
+        """
+        raw = self["permissions"]
+        if not isinstance(raw, dict) or not agent:
+            return "ask"
+        value = raw.get(agent)
+        return value if value in ("ask", "edits", "trusted") else "ask"
+
 
 class StateFile:
     """What the daemon is doing, written where the bar widget can watch it.
@@ -160,9 +179,22 @@ class StateFile:
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         self.path = RUNTIME_DIR / "state"
         self._last: dict = {}
+        # Facts that hold for the whole session and belong in every payload,
+        # so the panel can render what the running agent actually supports
+        # instead of keeping its own copy of that knowledge and drifting.
+        self._context: dict = {}
+
+    def describe(self, **fields) -> None:
+        """Set the sticky fields merged into every subsequent publish."""
+        if fields != self._context:
+            self._context = dict(fields)
+            if self._last:
+                self.publish(self._last.get("state", "off"),
+                             **{k: v for k, v in self._last.items()
+                                if k != "state" and k not in self._context})
 
     def publish(self, state: str, **extra) -> None:
-        payload = {"state": state, **extra}
+        payload = {"state": state, **self._context, **extra}
         if payload == self._last:
             return
         self._last = payload

@@ -75,6 +75,29 @@ class Adapter(ABC):
     #: offers instead of its unattended one.
     guards_permissions: bool = False
 
+    #: The permission levels this backend can actually honour, in order.
+    #: "edits" means files inside the project may be changed without asking
+    #: while commands still are -- a distinction that needs either a hook we
+    #: can answer or a flag the CLI provides. Most have neither, so for them
+    #: "ask" and "edits" would be the same posture, and offering both would
+    #: be a setting that changes nothing. Two honest options beat three where
+    #: one is a lie.
+    levels: tuple[str, ...] = ("ask", "trusted")
+
+    def posture(self, level: str) -> str:
+        """One line naming what `level` really means for this backend.
+
+        Shown on the panel, because the whole point of per-agent levels is
+        that the user can see what is in force rather than what was asked for.
+        """
+        if level == "trusted":
+            return "trusted — never asks"
+        if level == "edits" and "edits" in self.levels:
+            return "edits here · commands ask"
+        if self.guards_permissions:
+            return "asks before every change"
+        return f"read-only — {self.name} cannot ask"
+
     @abstractmethod
     def available(self) -> bool:
         """True when this backend can actually be run on this machine."""
