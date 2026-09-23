@@ -361,14 +361,16 @@ the flags said it already.
 Measured 2026-09-23, same prompt ("In two short sentences, what is a wake
 word?"), wall clock from request to last token.
 
-| backend | model | time |
-|---|---|---|
-| Groq | qwen/qwen3.8-27b | 0.19s |
-| Groq | openai/gpt-oss-20b | 0.40s |
-| OpenAI | gpt-4o-mini | 1.9s |
-| Codex | gpt-5.6-terra | 2.8s |
-| Antigravity | default | 12.2s |
-| Ollama (Mac mini, LAN) | qwen3:4b | 7.6s |
+| backend | model | time | tools |
+|---|---|---|---|
+| Groq | qwen/qwen3.8-27b | 0.19s | no |
+| Groq | openai/gpt-oss-20b | 0.40s | no |
+| OpenAI | gpt-4o-mini | 1.9s | no |
+| Codex | gpt-5.6-terra | 2.8s | yes |
+| xAI Grok | grok-4.20-reasoning | 3.23s | no |
+| xAI Grok | grok-4.7 | 4.57s | no |
+| Ollama (Mac mini, LAN) | qwen3:4b | 7.6s | no |
+| Antigravity | default | 12.2s | yes |
 
 For a voice interface this is the ranking that matters, and it does not
 line up with capability. The agentic CLIs are doing more -- a session, a
@@ -386,6 +388,17 @@ itself, and the failure looks like an auth problem rather than a client
 one. Assume any provider behind Cloudflare does the same.
 
 **Grok is not Groq.** Keys tell them apart: `xai-` is xAI's Grok, `gsk_`
-is Groq the inference provider. An `gsk_` key sent to `api.x.ai` returns
+is Groq the inference provider. A `gsk_` key sent to `api.x.ai` returns
 "Incorrect API key provided", which reads like a bad key rather than the
 wrong company.
+
+Omarchy supports the first and has never heard of the second:
+`omarchy default agent grok` installs `npm:@xai-official/grok`, and
+`groq` appears nowhere in its tree. So the fastest backend measured here
+is reachable only through the endpoint adapter -- which makes that path
+the route to a class of providers the desktop has no concept of, rather
+than a fallback for exotic cases.
+
+Reasoning models are worth checking individually rather than per
+backend: `grok-4.20-0309-reasoning` and `qwen3:4b` both leaked nothing,
+but a model that emits its thinking would have it read aloud verbatim.
