@@ -371,26 +371,45 @@ Done:
 4. Quickshell plugin, settings overlay, install script, user service
 5. Personal verifier training tool, and a permission prompt for
    Claude Code
+6. Push to talk on F8, and an interrupt. Barge-in by voice was measured
+   and rejected rather than skipped: at a normal listening volume our
+   own playback reaches the microphone as loudly as the speaker does
+   and detection falls to 5/20, where reliable wake needs about +24 dB
+   of headroom. Echo cancellation closes the gap but wants ~30s of
+   continuous output to converge, which is longer than a reply. The
+   numbers are in `bench/FINDINGS.md`.
+7. A project directory the agent works in, and permission levels that
+   are per agent, because trust is a judgement about one program's
+   capabilities and cannot survive swapping the program.
+8. Four backends answering live turns: Claude Code, Codex, Gemini and
+   Antigravity.
 
 Next, roughly in order of how much they matter:
 
-6. Run the remaining adapters against live agents. Codex and Gemini now
-   answer, and Codex keeps context across turns; the nine sharing the
-   CLI adapter never have, and their permission posture is inferred from
-   flags rather than tested. Watching Gemini corrected three guesses in
-   its adapter and Codex none, so the rate is unknown but not zero.
+9. Run the remaining adapters against live agents. The ten sharing the
+   CLI adapter never have, and their permission posture is inferred
+   from flags rather than tested. They are Omarchy mise stubs on this
+   machine, so each needs a real install first.
 
-   Gemini needs an API key: Google withdrew Gemini CLI for individual
-   Code Assist accounts in June 2026 and points them at Antigravity,
-   but an AI Studio key still drives the same binary. It also refuses
-   headless runs in a folder it has not been told to trust, which the
-   adapter now asserts for itself.
-7. Echo cancel, and barge in on top of it. Today the microphone simply
-   goes deaf while the machine talks, so it cannot be interrupted.
-8. Widen the tests. `bin/agentvoice-check` runs 78 of them, covering
-   the speakable-text rules, the permission hook, config precedence and
-   the adapter contract. The wake loop and the QML are still exercised
-   only by hand.
+   The rate of wrong guesses so far: three in Gemini's adapter, none in
+   Codex's, and one security claim withdrawn from Antigravity's after
+   testing. Assume flags read off `--help` are a hypothesis.
+10. Decide what to do about `OpenAICompatible`. It covers Ollama, LM
+    Studio, vLLM and anything else speaking that dialect -- the one
+    wire format here that never had to be guessed -- but it takes a
+    base URL and a model as required arguments, so `load()` cannot
+    construct it and nothing can select it. Either it earns two
+    settings and becomes the local-model path, or it goes. Google
+    withdrawing free Gemini access is an argument for having one.
+11. Antigravity is in Omarchy's default branch (`quattro`) but not in
+    any release: `gemini` and `gemini-cli` alias to `agy` there, which
+    is the name this already registers. Until that ships, selecting it
+    means writing `~/.config/omarchy/defaults/agent` directly.
+12. Widen the tests. `bin/agentvoice-check` runs 152, covering the
+    speakable-text rules, the permission hook and its levels, config
+    precedence, the adapter contract and the recorded envelopes of the
+    backends that have answered. The wake loop and the QML are still
+    exercised only by hand.
 
 ## Development
 
