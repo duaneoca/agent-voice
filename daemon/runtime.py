@@ -45,6 +45,8 @@ DEFAULTS = {
     "livePartials": "auto",
     "permissions": {},
     "projectDir": "",
+    "endpointUrl": "",
+    "endpointModel": "",
     "conversationMode": True,
     "followUpMs": 7000,
     "voice": "lessac-medium",
@@ -69,6 +71,8 @@ TOML_ALIASES = {
     "livePartials": ("stt", "live_partials"),
     "permissions": ("agent", "permissions"),
     "projectDir": ("agent", "project_dir"),
+    "endpointUrl": ("agent", "endpoint_url"),
+    "endpointModel": ("agent", "endpoint_model"),
     "conversationMode": ("wake", "conversation_mode"),
     "followUpMs": ("timing", "follow_up_ms"),
 }

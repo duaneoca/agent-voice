@@ -511,6 +511,54 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
+            Text {
+              width: parent.width
+              text: "ENDPOINT (optional)"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            TextField {
+              width: parent.width
+              text: root.setting("endpointUrl", "")
+              placeholderText: "http://your-machine:11434/v1"
+              foreground: root.foreground
+              font.family: root.fontFamily
+              onEditingFinished: {
+                if (text !== root.setting("endpointUrl", ""))
+                  root.persist("endpointUrl", text, false)
+              }
+            }
+
+            TextField {
+              width: parent.width
+              text: root.setting("endpointModel", "")
+              placeholderText: "model name, e.g. llama3.2"
+              foreground: root.foreground
+              font.family: root.fontFamily
+              onEditingFinished: {
+                if (text !== root.setting("endpointModel", ""))
+                  root.persist("endpointModel", text, false)
+              }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, " +
+                    "OpenAI, xAI. Set both and it answers instead of the " +
+                    "desktop's agent. It is chat only: it cannot read files, " +
+                    "change them or run commands, whatever it is asked, so the " +
+                    "permission level above does not apply to it.\n" +
+                    "A key, if the endpoint needs one, goes in " +
+                    "~/.config/agentvoice/endpoint.key — never here, because " +
+                    "this file is the desktop's config and gets copied around."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             // --- talking and interrupting -----------------------------------

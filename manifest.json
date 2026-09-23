@@ -44,7 +44,9 @@
       "followUpMs": 7000,
       "livePartials": "auto",
       "projectDir": "",
-      "permissions": {}
+      "permissions": {},
+      "endpointUrl": "",
+      "endpointModel": ""
     },
     "schema": [
       {
@@ -238,6 +240,20 @@
         "label": "Project directory",
         "defaultValue": "",
         "description": "Where the agent works. Empty means your home directory. Everything it reads, writes or runs happens here, and the permission level below applies to this directory."
+      },
+      {
+        "key": "endpointUrl",
+        "type": "string",
+        "label": "Endpoint URL",
+        "defaultValue": "",
+        "description": "An OpenAI-compatible /chat/completions endpoint: Ollama, LM Studio, vLLM, OpenAI, xAI. Set this and it is used instead of Omarchy's agent. Empty means follow omarchy default agent."
+      },
+      {
+        "key": "endpointModel",
+        "type": "string",
+        "label": "Endpoint model",
+        "defaultValue": "",
+        "description": "The model name that endpoint expects, such as llama3.2 or gpt-4o-mini."
       }
     ]
   },

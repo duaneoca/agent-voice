@@ -47,13 +47,23 @@ def omarchy_default() -> str | None:
 
 
 def load(name: str | None = None, level: str | None = None,
-         **kwargs) -> Adapter | None:
+         endpoint: dict | None = None, **kwargs) -> Adapter | None:
     """Build the adapter for `name`, or for Omarchy's default when omitted.
 
     Returns None when the agent is unset, unknown, or installed-but-unusable
     (an unauthenticated CLI counts as unusable -- better to fall back to echo
     than to narrate an auth error once per sentence).
     """
+    # A configured endpoint wins over the desktop's agent, because setting
+    # one is a deliberate act and there is nowhere else to express it: Omarchy
+    # has no entry for "the model on my other machine".
+    if endpoint and endpoint.get("url") and endpoint.get("model"):
+        adapter = OpenAICompatible(
+            base_url=endpoint["url"], model=endpoint["model"],
+            api_key=endpoint.get("key") or None,
+            spoken=kwargs.get("spoken", True))
+        return adapter if adapter.available() else None
+
     agent = name or omarchy_default()
     if not agent:
         return None

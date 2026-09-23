@@ -26,7 +26,15 @@ DEFAULT_HISTORY_TURNS = 8
 
 
 class OpenAICompatible(Adapter):
-    name = "openai-compat"
+    name = "endpoint"
+
+    #: There are no tools on this path. It is a chat completion and nothing
+    #: else: it cannot read a file, write one, or run a command, whatever it
+    #: is asked. So the permission levels have nothing to govern, and offering
+    #: them would invite a choice that changes nothing. The one thing worth
+    #: saying about it is where the words go, which posture() does.
+    levels = ("ask",)
+    guards_permissions = False
 
     def __init__(self, base_url: str, model: str,
                  api_key: str | None = None,
@@ -46,6 +54,34 @@ class OpenAICompatible(Adapter):
 
     def available(self) -> bool:
         return bool(self.base_url and self.model)
+
+    def why_unavailable(self) -> str:
+        if not self.base_url:
+            return "no endpoint URL set"
+        return "no endpoint model set"
+
+    def _is_local(self) -> bool:
+        """True when the endpoint is on this machine or a private network.
+
+        Worth distinguishing on screen rather than in documentation: the same
+        adapter can be a model running in the next room or a transcript
+        leaving for someone else's server, and those are not the same promise.
+        """
+        import ipaddress
+        import urllib.parse
+
+        host = (urllib.parse.urlparse(self.base_url).hostname or "").lower()
+        if host in ("localhost", "::1") or host.endswith(".local"):
+            return True
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return address.is_loopback or address.is_private
+
+    def posture(self, level: str) -> str:
+        where = "on your network" if self._is_local() else "sent off this machine"
+        return f"chat only — cannot read or change anything · {where}"
 
     def _messages(self, text: str, session_id: str | None) -> tuple[str, list[dict]]:
         sid = session_id or str(uuid.uuid4())
