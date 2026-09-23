@@ -45,9 +45,9 @@ the installer says what the second engine costs before installing it.
 2. **Agent agnostic.** Follows `omarchy default agent`, so switching
    agents at the desktop switches the voice too. The voice layer never
    cares who is answering -- though the guarantees are not yet even:
-   Claude Code, Codex and Gemini have answered live turns, the nine
-   sharing the CLI adapter have not, and only Claude Code can raise a
-   permission prompt.
+   Claude Code, Codex, Gemini and Antigravity have answered live turns,
+   the nine sharing the CLI adapter have not, and only Claude Code can
+   raise a permission prompt.
 3. **You own the mic.** Nothing listens unless you've enabled it, and
    the state is always visible. Linux has no OS level mic gate, so
    that guarantee is ours to build.

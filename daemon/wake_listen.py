@@ -36,7 +36,9 @@ import wave
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from adapters import load as load_adapter, omarchy_default, sentences  # noqa: E402
+from adapters import (  # noqa: E402
+    explain as explain_agent, load as load_adapter, omarchy_default, sentences,
+)
 from adapters.base import speech_safe  # noqa: E402
 from speech_text import is_stop_command  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
@@ -457,7 +459,8 @@ class Daemon:
             return
         if self.agent is not None:
             self.agent.cancel()
-        self.agent = load_adapter(ask_permission=want_ask, cwd=want_cwd)
+        self.agent = load_adapter(ask_permission=want_ask, cwd=want_cwd,
+                                  level=want_level)
         self.session_id = None
         self.publish_agent()
         print(f"  {CYA}agent: {want_name or 'nobody'} · {want_cwd}{OFF}"
@@ -480,6 +483,13 @@ class Daemon:
         one changed. It is published instead, so the screen and the daemon
         cannot disagree about a permission guarantee.
         """
+        if self.agent is None:
+            # Echoing instead of answering looks like a broken assistant. Say
+            # which agent is missing and why, where it can actually be read.
+            name = omarchy_default() or ""
+            self.state.describe(agent=name, level="ask", levels=["ask"],
+                                posture=explain_agent(name) or "no agent")
+            return
         self.state.describe(
             agent=getattr(self.agent, "name", "") or "",
             level=self.level(),
@@ -906,12 +916,11 @@ def main() -> int:
     agent = None
     if not args.no_agent:
         level = cfg.level_for(omarchy_default())
-        agent = load_adapter(ask_permission=level != "trusted",
+        agent = load_adapter(ask_permission=level != "trusted", level=level,
                              cwd=str(project_dir(cfg.str("projectDir"))))
         if agent is None:
             which = omarchy_default()
-            print(f"  {YEL}no adapter for agent "
-                  f"{which or '(unset — run: omarchy default agent claude)'}"
+            print(f"  {YEL}no agent: {explain_agent(which)}"
                   f"; echoing instead{OFF}")
 
     state = StateFile()

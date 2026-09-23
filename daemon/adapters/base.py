@@ -5,9 +5,57 @@ audio, and nothing in the voice loop knows which agent answered.
 """
 from __future__ import annotations
 
+import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Iterator
+
+
+#: Seconds of complete silence from a backend before it is presumed hung.
+#: Idle, not total: an agent that is still streaming is still working, and a
+#: real task can legitimately run for minutes. What must not happen is the
+#: loop waiting forever on something that will never speak -- Gemini answers
+#: a 503 by retrying with backoff rather than failing, so a turn can block
+#: indefinitely while the panel sits on "thinking" and the room stays silent.
+IDLE_TIMEOUT_S = 90.0
+
+
+class Watchdog:
+    """Kills a subprocess that has gone quiet for too long.
+
+    Poked on every line received. A backend that is streaming never trips it;
+    one that has stopped speaking is killed, its pipes close, and the read
+    loop ends normally so the adapter can report the failure out loud instead
+    of leaving the turn hanging with nothing on screen and nothing in the air.
+    """
+
+    def __init__(self, proc, idle_s: float = IDLE_TIMEOUT_S) -> None:
+        self.idle_s = idle_s
+        self.fired = False
+        self._proc = proc
+        self._last = time.monotonic()
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+
+    def poke(self) -> None:
+        self._last = time.monotonic()
+
+    def stop(self) -> None:
+        self._done.set()
+
+    def _watch(self) -> None:
+        while not self._done.wait(0.5):
+            if self._proc.poll() is not None:
+                return
+            if time.monotonic() - self._last >= self.idle_s:
+                self.fired = True
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+                return
 
 
 def installed(binary: str) -> bool:
@@ -83,6 +131,23 @@ class Adapter(ABC):
     #: be a setting that changes nothing. Two honest options beat three where
     #: one is a lie.
     levels: tuple[str, ...] = ("ask", "trusted")
+
+    #: Seconds of silence before this backend is presumed hung.
+    idle_timeout_s: float = IDLE_TIMEOUT_S
+
+    #: The chosen permission level. Most backends can only act on the coarse
+    #: ask_permission flag; the ones that can tell "edits" apart read this.
+    level: str = "ask"
+
+    def why_unavailable(self) -> str:
+        """Why `available()` said no, in words the panel can show.
+
+        An agent that vanishes with no account of itself reads as a broken
+        voice assistant rather than as a backend that needs attention -- and
+        the most likely reason today is that Google withdrew a login, which
+        nobody would guess from silence.
+        """
+        return f"{self.name} is not installed"
 
     def posture(self, level: str) -> str:
         """One line naming what `level` really means for this backend.

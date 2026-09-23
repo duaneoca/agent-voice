@@ -23,7 +23,7 @@ import subprocess
 import threading
 from typing import Iterator
 
-from .base import SPOKEN_STYLE, Adapter, Chunk, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
 
 #: agent id -> (argv template, verified?). "{prompt}" is substituted.
 #: Confirmed non-interactive by omarchy-agent's own table:
@@ -72,6 +72,11 @@ class CliAgent(Adapter):
     def available(self) -> bool:
         return installed(self.binary)
 
+    def why_unavailable(self) -> str:
+        # Omarchy puts a stub on PATH for every agent it knows, so "missing"
+        # here usually means "never actually installed", not "not on PATH".
+        return f"{self.binary} is not installed — run it once to install it"
+
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
         parts = shlex.split(self.template)
@@ -91,18 +96,28 @@ class CliAgent(Adapter):
 
         with self._lock:
             self._proc = proc
+        dog = Watchdog(proc, self.idle_timeout_s)
 
         got_text = False
         try:
             for line in proc.stdout:
+                dog.poke()
                 if line.strip():
                     got_text = True
                     yield Chunk(text=line)
             code = proc.wait()
+            if dog.fired:
+                # Killed for going quiet. Indistinguishable from a cancel by
+                # exit code alone, and silence is the one thing a voice
+                # interface must never answer with.
+                yield Chunk(error=f"{self.binary} stopped responding after "
+                                  f"{dog.idle_s:.0f}s")
+                return
             if code != 0 and not got_text and code not in (-15, 143, -9, 137):
                 err = (proc.stderr.read() or "").strip().splitlines()
                 yield Chunk(error=(err[-1] if err else f"{self.binary} exited {code}"))
         finally:
+            dog.stop()
             with self._lock:
                 self._proc = None
             for stream in (proc.stdout, proc.stderr):

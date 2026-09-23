@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .base import Adapter, Chunk, sentences, speech_safe
 from .cli_agent import TEMPLATES as CLI_TEMPLATES, CliAgent
+from .antigravity import Antigravity
 from .claude_code import ClaudeCode
 from .codex import Codex
 from .gemini import Gemini
@@ -18,13 +19,20 @@ from .openai_compat import OpenAICompatible
 
 DEFAULT_AGENT_FILE = Path.home() / ".config/omarchy/defaults/agent"
 
-# Omarchy's spelling -> our adapter, for the three that have a module of their
-# own. How far each was verified is in its docstring: claude fully, codex's
-# envelope only, gemini's flags only.
+# Omarchy's spelling -> our adapter, for the four that have a module of their
+# own. How far each was verified is in its docstring; claude, codex, gemini
+# and agy have all answered a live turn.
+#
+# "agy" is not one of Omarchy's own agent names -- `omarchy default agent` has
+# a hardcoded list and Antigravity is not on it yet -- so selecting it means
+# writing the defaults file directly until that changes. Google is migrating
+# every individual Gemini CLI user here, so it is a question of when.
 REGISTRY: dict[str, type[Adapter]] = {
     "claude": ClaudeCode,
     "codex": Codex,
     "gemini": Gemini,
+    "agy": Antigravity,
+    "antigravity": Antigravity,
 }
 
 
@@ -37,7 +45,8 @@ def omarchy_default() -> str | None:
     return value or None
 
 
-def load(name: str | None = None, **kwargs) -> Adapter | None:
+def load(name: str | None = None, level: str | None = None,
+         **kwargs) -> Adapter | None:
     """Build the adapter for `name`, or for Omarchy's default when omitted.
 
     Returns None when the agent is unset, unknown, or installed-but-unusable
@@ -48,17 +57,47 @@ def load(name: str | None = None, **kwargs) -> Adapter | None:
     if not agent:
         return None
 
+    def finish(adapter: Adapter) -> Adapter | None:
+        # Applied after construction so every adapter takes the same call,
+        # whether or not it can do anything with the level.
+        if level:
+            adapter.level = level
+        return adapter if adapter.available() else None
+
     cls = REGISTRY.get(agent)
     if cls is not None:
-        adapter = cls(**kwargs)
-        return adapter if adapter.available() else None
+        return finish(cls(**kwargs))
 
     # The remaining nine Omarchy agents share one plain-stdout adapter.
     if agent in CLI_TEMPLATES:
-        adapter = CliAgent(agent, **kwargs)
-        return adapter if adapter.available() else None
+        return finish(CliAgent(agent, **kwargs))
 
     return None
+
+
+def explain(name: str | None = None) -> str:
+    """Why there is no adapter for `name`, in words worth putting on screen.
+
+    `load()` answers None for four different reasons -- unset, unknown,
+    missing, unauthenticated -- and a voice assistant that quietly starts
+    echoing instead of answering looks broken rather than unconfigured. The
+    likeliest cause today is that Google withdrew the Gemini login in June
+    2026, which nobody would deduce from silence.
+    """
+    agent = name or omarchy_default()
+    if not agent:
+        return "no agent chosen — run: omarchy default agent claude"
+    try:
+        cls = REGISTRY.get(agent)
+        adapter = cls() if cls is not None else (
+            CliAgent(agent) if agent in CLI_TEMPLATES else None)
+        if adapter is None:
+            return f"{agent} is not an agent this knows about"
+        # Asked about a backend that is actually fine, say nothing rather than
+        # inventing a fault: this is also called to check, not only to explain.
+        return "" if adapter.available() else adapter.why_unavailable()
+    except Exception:
+        return f"{agent} is unavailable"
 
 
 def supported() -> dict[str, str]:

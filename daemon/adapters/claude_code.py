@@ -8,7 +8,7 @@ import subprocess
 import threading
 from typing import Iterator
 
-from .base import SPOKEN_STYLE, Adapter, Chunk, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
 
 #: Tools that can change something or reach the network. Read-only tools are
 #: not listed: asking about every Read would train you to say yes.
@@ -98,9 +98,11 @@ class ClaudeCode(Adapter):
 
         with self._lock:
             self._proc = proc
+        dog = Watchdog(proc, self.idle_timeout_s)
 
         try:
             for line in proc.stdout:
+                dog.poke()
                 line = line.strip()
                 if not line:
                     continue
@@ -138,12 +140,20 @@ class ClaudeCode(Adapter):
                                 duration_ms=msg.get("duration_ms"))
 
             code = proc.wait()
+            if dog.fired:
+                # Killed for going quiet. Indistinguishable from a cancel by
+                # exit code alone, and silence is the one thing a voice
+                # interface must never answer with.
+                yield Chunk(error=f"{"claude"} stopped responding after "
+                                  f"{dog.idle_s:.0f}s")
+                return
             if code != 0:
                 err = (proc.stderr.read() or "").strip()
                 # A cancel closes the pipe under us; that is not a failure.
                 if code not in (-15, 143, -9, 137):
                     yield Chunk(error=err or f"claude exited {code}")
         finally:
+            dog.stop()
             with self._lock:
                 self._proc = None
             for stream in (proc.stdout, proc.stderr):

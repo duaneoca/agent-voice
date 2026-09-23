@@ -34,7 +34,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterator
 
-from .base import SPOKEN_STYLE, Adapter, Chunk, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
 
 # Keys that have carried assistant text in this family of protocols. Checked
 # in order; the first non-empty string wins.
@@ -102,6 +102,11 @@ class Codex(Adapter):
         argv.append(prompt)
         return argv
 
+    def why_unavailable(self) -> str:
+        if not installed("codex"):
+            return "codex is not installed"
+        return "codex is not signed in — run: codex login"
+
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         argv = self._argv(text, session_id)
         try:
@@ -116,10 +121,12 @@ class Codex(Adapter):
 
         with self._lock:
             self._proc = proc
+        dog = Watchdog(proc, self.idle_timeout_s)
 
         spoken_any = False
         try:
             for line in proc.stdout:
+                dog.poke()
                 line = line.strip()
                 if not line or not line.startswith("{"):
                     continue          # codex interleaves plain log lines
@@ -159,10 +166,18 @@ class Codex(Adapter):
                     pass
 
             code = proc.wait()
+            if dog.fired:
+                # Killed for going quiet. Indistinguishable from a cancel by
+                # exit code alone, and silence is the one thing a voice
+                # interface must never answer with.
+                yield Chunk(error=f"{"codex"} stopped responding after "
+                                  f"{dog.idle_s:.0f}s")
+                return
             if code != 0 and not spoken_any and code not in (-15, 143, -9, 137):
                 err = (proc.stderr.read() or "").strip().splitlines()
                 yield Chunk(error=(err[-1] if err else f"codex exited {code}"))
         finally:
+            dog.stop()
             with self._lock:
                 self._proc = None
             for stream in (proc.stdout, proc.stderr):
