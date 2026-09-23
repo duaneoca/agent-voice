@@ -24,6 +24,9 @@ from .base import SPOKEN_STYLE, Adapter, Chunk
 #: replayed turn is re-billed and re-read on the next request.
 DEFAULT_HISTORY_TURNS = 8
 
+#: Sent on every request. Not decoration: see the header block in send().
+USER_AGENT = "agentvoice/0.2 (+https://github.com/duaneoca/agent-voice)"
+
 
 class OpenAICompatible(Adapter):
     name = "endpoint"
@@ -111,7 +114,13 @@ class OpenAICompatible(Adapter):
             "messages": messages,
             "stream": True,
         }).encode()
-        headers = {"Content-Type": "application/json"}
+        # Cloudflare sits in front of several of these providers and blocks
+        # urllib's default agent outright: Groq answers "403, error code 1010"
+        # to Python-urllib/3.13 and 200 to anything that looks like a client
+        # with a name. Identifying ourselves is both more honest and the only
+        # way through.
+        headers = {"Content-Type": "application/json",
+                   "User-Agent": USER_AGENT}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 

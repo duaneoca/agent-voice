@@ -27,7 +27,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         RECEIVED.append({"body": json.loads(body or b"{}"),
-                         "auth": self.headers.get("Authorization")})
+                         "auth": self.headers.get("Authorization"),
+                         "agent": self.headers.get("User-Agent")})
         if BEHAVIOUR["mode"] == "http_error":
             self.send_response(401)
             self.end_headers()
@@ -355,3 +356,16 @@ class TestStallAndInterrupt:
         a.cancel()
         chunks = list(a.send("hi"))
         assert not any(c.error for c in chunks)
+
+
+class TestUserAgent:
+    def test_the_request_identifies_itself(self, server):
+        """Cloudflare fronts several of these providers and blocks urllib's
+        default agent outright: Groq answered 403 "error code 1010" to
+        Python-urllib/3.13 and 200 to the same request from a named client.
+        Every Groq model was unreachable until this was set.
+        """
+        list(OpenAICompatible(base_url=server, model="m").send("hi"))
+        agent = RECEIVED[-1]["agent"]
+        assert agent and "agentvoice" in agent
+        assert "urllib" not in agent.lower()

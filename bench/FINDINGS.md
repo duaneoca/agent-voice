@@ -355,3 +355,37 @@ defensively at the call site as well.
 **What would bring it back:** a demonstration that writes outside the
 project are refused. That is a measurement, not a reading of the flags --
 the flags said it already.
+
+## 14. Latency, across every backend that has answered
+
+Measured 2026-09-23, same prompt ("In two short sentences, what is a wake
+word?"), wall clock from request to last token.
+
+| backend | model | time |
+|---|---|---|
+| Groq | qwen/qwen3.8-27b | 0.19s |
+| Groq | openai/gpt-oss-20b | 0.40s |
+| OpenAI | gpt-4o-mini | 1.9s |
+| Codex | gpt-5.6-terra | 2.8s |
+| Antigravity | default | 12.2s |
+| Ollama (Mac mini, LAN) | qwen3:4b | 7.6s |
+
+For a voice interface this is the ranking that matters, and it does not
+line up with capability. The agentic CLIs are doing more -- a session, a
+sandbox, tools -- and pay for it. A chat endpoint has none of that and
+answers before the speaker has finished the wake-word chime.
+
+Groq being forty times faster than a 4B on local hardware is worth
+sitting with: the bottleneck for local inference is not the model size,
+it is that the machine is also doing everything else.
+
+**Cloudflare blocks urllib.** Groq answers `403, error code 1010` to
+`Python-urllib/3.13` and `200` to the identical request carrying a named
+User-Agent. Every Groq model was unreachable until the adapter identified
+itself, and the failure looks like an auth problem rather than a client
+one. Assume any provider behind Cloudflare does the same.
+
+**Grok is not Groq.** Keys tell them apart: `xai-` is xAI's Grok, `gsk_`
+is Groq the inference provider. An `gsk_` key sent to `api.x.ai` returns
+"Incorrect API key provided", which reads like a bad key rather than the
+wrong company.
