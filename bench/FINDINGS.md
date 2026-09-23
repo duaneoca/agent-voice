@@ -264,3 +264,59 @@ converged AEC figure is an upper bound. Replaying wake clips through the
 speaker instead was tried and rejected as a method — the round trip costs
 so much fidelity that even a quiet room scores 3/6, leaving no headroom to
 measure anything.
+
+## 12. What each agent CLI can actually be asked to do
+
+Version currency on 2026-09-22, against `mise latest`:
+
+| CLI | installed | latest |
+|---|---|---|
+| claude | 2.1.278 | 2.1.278 |
+| gemini | 0.60.0 | 0.60.0 |
+| codex | 0.154.0 | 0.155.1 |
+| agy (Antigravity) | — | 1.2.8 |
+
+Nothing here is stale. The question is not age but capability, and it
+differs enough per backend that one permission model cannot cover them.
+
+### Verified by running the binaries
+
+- **Claude Code** — PreToolUse hook via `--settings`, receives the pending
+  call on stdin and blocks on the verdict. The only backend that can turn a
+  spoken request into a question on screen. `--permission-prompt-tool`, the
+  documented flag for exactly this, is accepted, loads the MCP server, and
+  is never consulted.
+- **Codex** — `codex exec --json`, four-line envelope, `thread_id` resumes
+  and genuinely carries context. No interception point: withholding
+  `--approve-for-me` leaves it at `approval: never`, `sandbox: read-only`.
+- **Gemini** — one-shot, no session handle. Withdrawn for individual Code
+  Assist accounts in June 2026; an AI Studio API key still drives the same
+  binary, which is a paid, per-token arrangement rather than a plan.
+- **Antigravity (`agy` 1.2.8)** — installed and its flags read off the
+  binary, but not run: a turn needs a Google login. Every documented
+  headless flag exists verbatim, except `--print-timeout`, which the docs
+  give as 5 minutes and the binary as `0s`, meaning wait forever.
+
+### Why Antigravity is the interesting one
+
+It is the only backend whose own surface expresses what agentvoice's
+permission levels mean, rather than collapsing them to safe-or-trusted:
+
+    --mode plan | accept-edits     read-only, or edits without asking
+    --add-dir <path>               scope the workspace to the project
+    --sandbox                      terminal restrictions
+    --dangerously-skip-permissions the trusted level, named honestly
+
+Access matters more than features here. Antigravity CLI is included at
+every tier including free, on a personal Google account, which is the
+arrangement an Omarchy user is likely to have -- where Gemini now wants a
+billed API key.
+
+**It has PreToolUse hooks, and they cannot grant.** The decision vocabulary
+is richer than Claude's (`allow`, `deny`, `ask`, `force_ask`,
+`deny_unless_prior_grant`), but in headless mode `allow` is ignored: the
+hook fires, returns valid JSON, raises no error, and the call is denied
+anyway. Upstream issue #1053, open against 1.2.7. A hook there can restrict
+and never permit, so it cannot be the thing that asks -- the same shape of
+trap as `--permission-prompt-tool`, and worth re-testing before any adapter
+depends on it.
