@@ -552,8 +552,10 @@ Item {
                     "change them or run commands, whatever it is asked, so the " +
                     "permission level above does not apply to it.\n" +
                     "A key, if the endpoint needs one, goes in " +
-                    "~/.config/agentvoice/endpoint.key — never here, because " +
-                    "this file is the desktop's config and gets copied around."
+                    "~/.config/agentvoice/endpoint.key — just the key on a " +
+                    "line, though KEY=value and quotes are tolerated. Not " +
+                    "here: this file is the desktop's config and gets copied " +
+                    "around. Ollama and LM Studio need no key at all."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

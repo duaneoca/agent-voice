@@ -186,3 +186,51 @@ class TestNoToolsIsNotTheSameAsRestrained:
         from adapters.gemini import Gemini
         for cls in (ClaudeCode, Codex, Gemini, Antigravity):
             assert cls().has_tools is True, cls.__name__
+
+
+class TestKeyFileShape:
+    """Whatever shape the key file is in, the failure must not be a 401.
+
+    The key is the one piece of configuration a user hand-writes into a file
+    rather than a settings screen, so it arrives in whatever form the habit
+    of the moment produces. Rejecting those costs an opaque authentication
+    error; accepting them costs six lines.
+    """
+
+    @pytest.fixture
+    def keyfile(self, tmp_path, monkeypatch):
+        import importlib
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        for var in ("AGENTVOICE_ENDPOINT_KEY", "OPENAI_API_KEY", "XAI_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        import paths
+        importlib.reload(paths)
+        paths.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        yield paths
+        importlib.reload(paths)
+
+    @pytest.mark.parametrize("written", [
+        "sk-abc123",
+        "sk-abc123\n",
+        "  sk-abc123  \n",
+        "OPENAI_API_KEY=sk-abc123\n",
+        "export OPENAI_API_KEY=sk-abc123\n",
+        'OPENAI_API_KEY="sk-abc123"\n',
+        "XAI_API_KEY='sk-abc123'\n",
+        "# the key for openai\nsk-abc123\n",
+    ])
+    def test_every_plausible_shape_yields_the_key(self, keyfile, written):
+        (keyfile.CONFIG_DIR / "endpoint.key").write_text(written)
+        assert keyfile.endpoint_key() == "sk-abc123"
+
+    def test_an_empty_file_is_no_key_not_a_crash(self, keyfile):
+        (keyfile.CONFIG_DIR / "endpoint.key").write_text("\n\n# nothing\n")
+        assert keyfile.endpoint_key() == ""
+
+    def test_a_missing_file_is_no_key(self, keyfile):
+        assert keyfile.endpoint_key() == ""
+
+    def test_the_environment_wins_over_the_file(self, keyfile, monkeypatch):
+        (keyfile.CONFIG_DIR / "endpoint.key").write_text("sk-from-file")
+        monkeypatch.setenv("AGENTVOICE_ENDPOINT_KEY", "sk-from-env")
+        assert keyfile.endpoint_key() == "sk-from-env"
