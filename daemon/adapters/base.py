@@ -30,10 +30,17 @@ class Watchdog:
     of leaving the turn hanging with nothing on screen and nothing in the air.
     """
 
-    def __init__(self, proc, idle_s: float = IDLE_TIMEOUT_S) -> None:
+    def __init__(self, proc, idle_s: float = IDLE_TIMEOUT_S,
+                 on_timeout=None) -> None:
+        """`proc` is a subprocess, or anything else that can be stopped.
+
+        `on_timeout` replaces the default kill for something that is not a
+        process -- an HTTP response, which is stopped by closing it.
+        """
         self.idle_s = idle_s
         self.fired = False
         self._proc = proc
+        self._on_timeout = on_timeout
         self._last = time.monotonic()
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._watch, daemon=True)
@@ -47,12 +54,15 @@ class Watchdog:
 
     def _watch(self) -> None:
         while not self._done.wait(0.5):
-            if self._proc.poll() is not None:
+            # An HTTP response has no poll(); only a subprocess can report
+            # that it has already finished on its own.
+            poll = getattr(self._proc, "poll", None)
+            if poll is not None and poll() is not None:
                 return
             if time.monotonic() - self._last >= self.idle_s:
                 self.fired = True
                 try:
-                    self._proc.kill()
+                    (self._on_timeout or self._proc.kill)()
                 except Exception:
                     pass
                 return
