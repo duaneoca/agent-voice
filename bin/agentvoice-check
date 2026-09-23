@@ -33,13 +33,15 @@ else say "every schema key is drawn in the UI" "ok"; fi
 
 # 2. every schema key has a default the daemon knows
 out=$(python3 - "$ROOT" <<'PY'
-import json, pathlib, re, sys
+import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 declared = {k["key"] for k in json.loads((root/"manifest.json").read_text())["barWidget"]["schema"]}
-src = (root/"daemon/runtime.py").read_text()
-block = src.split("DEFAULTS = {",1)[1].split("}",1)[0]
-known = set(re.findall(r'"([A-Za-z]+)"\s*:', block))
-print(" ".join(sorted(declared - known)))
+# Imported rather than scraped. The previous version split the source on the
+# first "}" after DEFAULTS, so the day a default was an empty dict the block
+# ended early and every key after it silently looked undefaulted.
+sys.path.insert(0, str(root / "daemon"))
+from runtime import DEFAULTS
+print(" ".join(sorted(declared - set(DEFAULTS))))
 PY
 )
 if [[ -n ${out// } ]]; then say "settings with no daemon default" "FAIL: $out"; fail=1
