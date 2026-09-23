@@ -125,3 +125,87 @@ class TestRegistry:
         s = supported()
         assert s["claude"] == "verified"
         assert "UNVERIFIED" in s["grok"]
+
+
+class TestGeminiAuthDetection:
+    """What counts as a usable Gemini, checked against a live CLI.
+
+    Google withdrew Gemini CLI for individual Code Assist accounts in June
+    2026 and points them at Antigravity. The OAuth entry stays in settings
+    long after it stops working, so believing it means narrating an auth
+    error once per sentence -- the thing available() exists to prevent. An
+    AI Studio API key still drives the same binary, verified by a live turn.
+    """
+
+    @pytest.fixture
+    def settings(self, tmp_path, monkeypatch):
+        """Point ~/.gemini/settings.json at a scratch file."""
+        home = tmp_path / "home"
+        (home / ".gemini").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        for var in ("GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI",
+                    "GOOGLE_GENAI_USE_GCA"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr("adapters.gemini.installed", lambda _: True)
+        return home / ".gemini" / "settings.json"
+
+    def test_the_shape_the_cli_actually_writes(self, settings):
+        """security.auth.selectedType -- not the selectedAuthType we grepped
+        for, which reported a configured Gemini as absent."""
+        settings.write_text('{"security": {"auth": {"selectedType": "gemini-api-key"}}}')
+        assert Gemini().available()
+
+    def test_the_older_flat_shape_still_counts(self, settings):
+        settings.write_text('{"selectedAuthType": "gemini-api-key"}')
+        assert Gemini().available()
+
+    def test_the_withdrawn_login_does_not_count(self, settings):
+        settings.write_text('{"security": {"auth": {"selectedType": "oauth-personal"}}}')
+        assert not Gemini().available()
+
+    def test_an_api_key_in_the_environment_is_enough(self, settings, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "x")
+        assert Gemini().available()
+
+    def test_unparseable_settings_are_not_an_endorsement(self, settings):
+        settings.write_text("{not json at all")
+        assert not Gemini().available()
+
+    def test_absent_settings_are_not_an_endorsement(self, settings):
+        assert not Gemini().available()
+
+
+class TestGeminiHeadless:
+    def test_the_workspace_is_trusted_for_headless_runs(self, monkeypatch):
+        """Without it the CLI refuses outright: the project directory is the
+        user's to choose, so it is rarely one Gemini has been told to trust."""
+        seen = {}
+
+        class FakeProc:
+            stdout, stderr = iter(()), None
+            def wait(self): return 0
+
+        def fake_popen(argv, **kw):
+            seen.update(kw)
+            return FakeProc()
+
+        monkeypatch.setattr("adapters.gemini.subprocess.Popen", fake_popen)
+        list(Gemini(ask_permission=True).send("hi"))
+        assert seen["env"]["GEMINI_CLI_TRUST_WORKSPACE"] == "true"
+
+    def test_the_terminal_warning_is_never_spoken(self, monkeypatch):
+        """The live CLI prints this on stdout, mixed in with the answer, and
+        it would otherwise have been handed to the speaker and read aloud."""
+        lines = ["Warning: 256-color support not detected.\n",
+                 "A wake word starts the conversation.\n"]
+
+        class FakeProc:
+            stdout = iter(lines)
+            stderr = None
+            def wait(self): return 0
+
+        monkeypatch.setattr("adapters.gemini.subprocess.Popen",
+                            lambda argv, **kw: FakeProc())
+        spoken = "".join(c.text for c in Gemini().send("hi") if c.text)
+        assert "256-color" not in spoken
+        assert "A wake word starts the conversation." in spoken
