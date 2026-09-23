@@ -52,6 +52,10 @@ class OpenAICompatible(Adapter):
         # notion of a resumable conversation.
         self._sessions: dict[str, list[dict]] = {}
         self._cancelled = False
+        # Held so cancel() can close it. Setting a flag is not enough: the
+        # read blocks until the next token, so on a model with a long time to
+        # first token an interrupt would not land for as long as that takes.
+        self._response = None
 
     def available(self) -> bool:
         return bool(self.base_url and self.model)
@@ -115,8 +119,16 @@ class OpenAICompatible(Adapter):
             f"{self.base_url}/chat/completions", data=body, headers=headers)
 
         reply = ""
+        # urlopen's timeout is the *socket* timeout, applied to each blocking
+        # read rather than to the request as a whole -- so it is already an
+        # idle timeout, and a reliable one. A watchdog thread was tried first
+        # and detected the stall correctly but could not end it: closing an
+        # HTTPResponse from another thread does not interrupt a read blocked
+        # inside it, so the call still ran to the server's own timeout.
+        idle = min(self.timeout, self.idle_timeout_s)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=idle) as response:
+                self._response = response
                 for raw in response:
                     if self._cancelled:
                         break
@@ -139,9 +151,20 @@ class OpenAICompatible(Adapter):
             detail = e.read().decode("utf-8", "replace")[:200]
             yield Chunk(error=f"HTTP {e.code}: {detail}")
             return
+        except TimeoutError:
+            yield Chunk(error=f"{self.base_url} stopped responding after "
+                              f"{idle:.0f}s")
+            return
         except Exception as e:
+            # Cancel stops this by closing the socket, so the resulting read
+            # error is the interrupt working, not a fault worth announcing.
+            if self._cancelled:
+                yield Chunk(done=True, session_id=sid)
+                return
             yield Chunk(error=f"{type(e).__name__}: {e}")
             return
+        finally:
+            self._response = None
 
         if reply:
             self._sessions[sid].append({"role": "assistant", "content": reply})
@@ -149,3 +172,11 @@ class OpenAICompatible(Adapter):
 
     def cancel(self) -> None:
         self._cancelled = True
+        # Close the socket so a read blocked waiting for the first token
+        # returns now rather than whenever the model gets around to it.
+        response, self._response = self._response, None
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass

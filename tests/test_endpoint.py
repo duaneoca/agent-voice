@@ -295,3 +295,63 @@ class TestKeySources:
         mp.setattr(paths.shutil, "which", lambda _: None)
         (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
         assert paths.endpoint_key("api.openai.com") == "from-file"
+
+
+class TestStallAndInterrupt:
+    """An endpoint that stops talking, and one the user stops.
+
+    Both matter more here than for the subprocess backends: there is no
+    process to kill, only a socket to stop reading from.
+    """
+
+    def test_a_silent_endpoint_gives_up_and_says_so(self):
+        """The socket timeout is per-read, so it is already an idle timeout.
+
+        A watchdog thread was tried first. It detected the stall correctly and
+        could not end it -- closing an HTTPResponse from another thread does
+        not interrupt a read blocked inside it, so the call still ran on to
+        the server's own timeout, 60s in the test that caught this.
+        """
+        import threading
+        import time
+        # Threading, and a short stall: a plain HTTPServer handles requests
+        # on the serve_forever thread, so shutdown() waits for the sleeping
+        # handler and the whole suite pays for it.
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Silent(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.flush()
+                time.sleep(5)
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Silent)
+        httpd.daemon_threads = True
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            a = OpenAICompatible(
+                base_url=f"http://127.0.0.1:{httpd.server_address[1]}/v1",
+                model="m")
+            a.idle_timeout_s = 1.0
+            start = time.monotonic()
+            errors = [c.error for c in a.send("hi") if c.error]
+            elapsed = time.monotonic() - start
+        finally:
+            httpd.shutdown()
+
+        assert elapsed < 10, f"waited {elapsed:.1f}s on a stalled endpoint"
+        assert errors and "stopped responding" in errors[0]
+
+    def test_cancel_is_not_reported_as_a_failure(self, server):
+        """Interrupting closes the socket, and the read error that follows is
+        the interrupt working -- not something to announce or speak."""
+        a = OpenAICompatible(base_url=server, model="m")
+        a.cancel()
+        chunks = list(a.send("hi"))
+        assert not any(c.error for c in chunks)
