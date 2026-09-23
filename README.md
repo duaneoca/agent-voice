@@ -45,8 +45,9 @@ the installer says what the second engine costs before installing it.
 2. **Agent agnostic.** Follows `omarchy default agent`, so switching
    agents at the desktop switches the voice too. The voice layer never
    cares who is answering -- though the guarantees are not yet even:
-   Claude Code and Gemini have answered live turns, the rest have not,
-   and only Claude Code can raise a permission prompt.
+   Claude Code, Codex and Gemini have answered live turns, the nine
+   sharing the CLI adapter have not, and only Claude Code can raise a
+   permission prompt.
 3. **You own the mic.** Nothing listens unless you've enabled it, and
    the state is always visible. Linux has no OS level mic gate, so
    that guarantee is ours to build.
@@ -357,11 +358,11 @@ Done:
 
 Next, roughly in order of how much they matter:
 
-6. Run the remaining adapters against live agents. Gemini now answers
-   (see below); Codex and the nine sharing the CLI adapter have never
-   answered a turn, and their permission posture is inferred from flags
-   rather than tested. Watching Gemini for one turn corrected three
-   guesses in its adapter, so assume the others carry the same kind.
+6. Run the remaining adapters against live agents. Codex and Gemini now
+   answer, and Codex keeps context across turns; the nine sharing the
+   CLI adapter never have, and their permission posture is inferred from
+   flags rather than tested. Watching Gemini corrected three guesses in
+   its adapter and Codex none, so the rate is unknown but not zero.
 
    Gemini needs an API key: Google withdrew Gemini CLI for individual
    Code Assist accounts in June 2026 and points them at Antigravity,

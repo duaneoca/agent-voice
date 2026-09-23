@@ -209,3 +209,57 @@ class TestGeminiHeadless:
         spoken = "".join(c.text for c in Gemini().send("hi") if c.text)
         assert "256-color" not in spoken
         assert "A wake word starts the conversation." in spoken
+
+
+class TestCodexStream:
+    """The exact envelope a signed-in codex-cli 0.154.0 emitted, replayed.
+
+    Recorded from a live turn rather than from --help, so a schema change
+    shows up here as a parse failure instead of as a voice assistant that
+    answers every question with silence.
+    """
+
+    OBSERVED = [
+        '{"type": "thread.started", "thread_id": "01a0cc69-d9ba-7910-8a98-01f1b73bd21c"}',
+        '{"type": "turn.started"}',
+        '{"type": "item.completed", "item": {"id": "item_0", "type": "agent_message",'
+        ' "text": "A wake word is a phrase that activates a voice assistant."}}',
+        '{"type": "turn.completed", "usage": {"input_tokens": 12960, "output_tokens": 33}}',
+    ]
+
+    def replay(self, lines, monkeypatch):
+        class FakeProc:
+            stdout = iter([ln + "\n" for ln in lines])
+            stderr = None
+            def wait(self): return 0
+
+        monkeypatch.setattr("adapters.codex.subprocess.Popen",
+                            lambda argv, **kw: FakeProc())
+        return list(Codex(ask_permission=True).send("hi"))
+
+    def test_the_thread_id_becomes_the_session(self, monkeypatch):
+        """Conversation mode hands this back as `codex exec resume <id>`."""
+        chunks = self.replay(self.OBSERVED, monkeypatch)
+        assert any(c.session_id == "01a0cc69-d9ba-7910-8a98-01f1b73bd21c"
+                   for c in chunks)
+
+    def test_the_answer_is_harvested(self, monkeypatch):
+        chunks = self.replay(self.OBSERVED, monkeypatch)
+        text = "".join(c.text for c in chunks if c.text)
+        assert "A wake word is a phrase that activates a voice assistant." in text
+
+    def test_usage_and_envelope_are_not_spoken(self, monkeypatch):
+        """Only the assistant message is speech; the rest is bookkeeping."""
+        chunks = self.replay(self.OBSERVED, monkeypatch)
+        text = "".join(c.text for c in chunks if c.text)
+        for noise in ("input_tokens", "turn.started", "thread.started"):
+            assert noise not in text
+
+    def test_a_turn_always_ends(self, monkeypatch):
+        assert any(c.done for c in self.replay(self.OBSERVED, monkeypatch))
+
+    def test_garbage_between_events_does_not_derail_the_turn(self, monkeypatch):
+        """Anything non-JSON on stdout must be stepped over, not fatal."""
+        noisy = [self.OBSERVED[0], "not json at all", ""] + self.OBSERVED[1:]
+        text = "".join(c.text for c in self.replay(noisy, monkeypatch) if c.text)
+        assert "A wake word is a phrase" in text

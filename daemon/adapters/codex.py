@@ -1,17 +1,28 @@
 """Codex CLI, headless, via `codex exec --json`.
 
-Partly verified. The envelope was confirmed against the installed CLI
-(codex-cli 0.154.0): it emits newline-delimited JSON with `thread.started`
-(carrying `thread_id`, which is the handle `codex exec resume` takes),
-`turn.started`, `item.completed`, `error` and `turn.failed`. What could NOT be
-confirmed is which event carries assistant text, because this machine's Codex
-is not signed in and every turn 401s before producing any.
+Verified against a signed-in CLI (codex-cli 0.154.0, gpt-5.6-terra) on
+2026-09-22. A whole turn is four lines of newline-delimited JSON:
 
-So text extraction is deliberately structural rather than keyed to one event
-name: it walks whatever item or delta arrives and takes the text it finds. That
-is uglier than the Claude adapter, and it is the honest shape for a protocol
-observed only at its edges. When a signed-in Codex is available, watch one real
-turn and tighten this.
+    {"type": "thread.started", "thread_id": "01a0cc69-..."}
+    {"type": "turn.started"}
+    {"type": "item.completed", "item": {"id": ..., "type": "agent_message",
+                                        "text": "A wake word is ..."}}
+    {"type": "turn.completed", "usage": {...}}
+
+Assistant text arrives whole, on `item.completed` with `item.type` of
+`agent_message` -- not as deltas, so there is no partial-token stream to
+regroup here the way the Claude adapter does. `thread_id` is the handle
+`codex exec resume` takes, and it really does carry context: a second turn
+recalled a number from the first.
+
+Text extraction stays structural rather than keyed to that one event name.
+The guess turned out right, but it was a guess when written, and the cost of
+being wrong -- an adapter that looks correct and silently yields nothing -- is
+worse than the cost of walking a few extra keys.
+
+One trap worth recording: `codex exec` reads additional input from stdin and
+will block forever waiting for it. A turn left to inherit a terminal hangs
+with no output at all, which is why send() passes stdin=DEVNULL.
 """
 from __future__ import annotations
 
