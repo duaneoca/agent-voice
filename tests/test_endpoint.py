@@ -168,3 +168,21 @@ class TestAbandonedTurns:
         list(a.send("second", sid))
         sent = RECEIVED[-1]["body"]["messages"]
         assert not any(m["role"] == "assistant" for m in sent)
+
+
+class TestNoToolsIsNotTheSameAsRestrained:
+    """An agent held read-only would act if allowed and refuses because it is
+    not. A chat completion has nothing to refuse with. Saying "it may refuse
+    work rather than ask" about the second describes a restraint that is not
+    doing any work, and a project directory it never touches is noise."""
+
+    def test_the_endpoint_declares_no_tools(self):
+        assert OpenAICompatible(base_url="http://x/v1", model="m").has_tools is False
+
+    def test_every_agent_backend_declares_tools(self):
+        from adapters.antigravity import Antigravity
+        from adapters.claude_code import ClaudeCode
+        from adapters.codex import Codex
+        from adapters.gemini import Gemini
+        for cls in (ClaudeCode, Codex, Gemini, Antigravity):
+            assert cls().has_tools is True, cls.__name__
