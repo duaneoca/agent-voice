@@ -45,8 +45,8 @@ the installer says what the second engine costs before installing it.
 2. **Agent agnostic.** Follows `omarchy default agent`, so switching
    agents at the desktop switches the voice too. The voice layer never
    cares who is answering -- though the guarantees are not yet even:
-   only Claude Code has been run end to end, and only Claude Code can
-   raise a permission prompt.
+   Claude Code and Gemini have answered live turns, the rest have not,
+   and only Claude Code can raise a permission prompt.
 3. **You own the mic.** Nothing listens unless you've enabled it, and
    the state is always visible. Linux has no OS level mic gate, so
    that guarantee is ours to build.
@@ -357,9 +357,17 @@ Done:
 
 Next, roughly in order of how much they matter:
 
-6. Run the other adapters against live agents. Codex, Gemini and the
-   nine sharing the CLI adapter have never answered a turn, and their
-   permission posture is inferred from flags rather than tested.
+6. Run the remaining adapters against live agents. Gemini now answers
+   (see below); Codex and the nine sharing the CLI adapter have never
+   answered a turn, and their permission posture is inferred from flags
+   rather than tested. Watching Gemini for one turn corrected three
+   guesses in its adapter, so assume the others carry the same kind.
+
+   Gemini needs an API key: Google withdrew Gemini CLI for individual
+   Code Assist accounts in June 2026 and points them at Antigravity,
+   but an AI Studio key still drives the same binary. It also refuses
+   headless runs in a folder it has not been told to trust, which the
+   adapter now asserts for itself.
 7. Echo cancel, and barge in on top of it. Today the microphone simply
    goes deaf while the machine talks, so it cannot be interrupted.
 8. Widen the tests. `bin/agentvoice-check` runs 78 of them, covering

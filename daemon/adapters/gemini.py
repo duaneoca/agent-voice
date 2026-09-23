@@ -1,14 +1,25 @@
 """Gemini CLI, headless.
 
-Deliberately uses plain text output rather than `-o stream-json`. The flags
-were read off the installed CLI, but the stream-json event schema could not be
-observed -- this machine's Gemini has no auth configured, so every invocation
-stops at "Please set an Auth method". Guessing a JSON schema produces an
-adapter that looks right and silently yields nothing, which is the worst
-failure mode available. Plain stdout has no schema to get wrong.
+Deliberately uses plain text output rather than `-o stream-json`: guessing an
+event schema produces an adapter that looks right and silently yields nothing,
+which is the worst failure mode available. Plain stdout has no schema to get
+wrong. The cost is losing tool-call visibility and token counts.
 
-The cost is losing tool-call visibility and token counts. Worth revisiting
-once a signed-in Gemini can be watched for one turn.
+Watched against a live turn on 2026-09-22, which corrected three guesses:
+
+  - auth lives at security.auth.selectedType, not the selectedAuthType this
+    used to grep for, so a configured Gemini was reported as absent;
+  - headless runs refuse outright in a folder the CLI has not been told to
+    trust, and the project directory is the user's to choose, so it will
+    usually be one Gemini has never seen;
+  - the CLI prints "Warning: 256-color support not detected" on stdout, which
+    this would have handed to the speaker and said out loud.
+
+Google discontinued Gemini CLI for individual *Code Assist* accounts in June
+2026 (IneligibleTierError, UNSUPPORTED_CLIENT) and points them at Antigravity.
+An AI Studio API key still drives this CLI -- that is a different product from
+the OAuth login that was withdrawn -- so the check below accepts a key and
+refuses the login path rather than reporting a backend that 401s every turn.
 
 Also learned the hard way: `--approval-mode yolo` is silently downgraded --
 "Approval mode overridden to default because the current folder is not
@@ -18,6 +29,7 @@ folder for it to mean anything.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -44,6 +56,11 @@ class Gemini(Adapter):
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
+    #: Withdrawn for individuals in June 2026. Present in settings long after
+    #: it stopped working, so treating it as usable means narrating an auth
+    #: error once per sentence -- exactly what available() exists to prevent.
+    DEAD_AUTH = {"oauth-personal", "LOGIN_WITH_GOOGLE"}
+
     def available(self) -> bool:
         if not installed("gemini"):
             return False
@@ -54,9 +71,13 @@ class Gemini(Adapter):
             return True
         settings = os.path.expanduser("~/.gemini/settings.json")
         try:
-            return "selectedAuthType" in open(settings).read()
-        except OSError:
+            with open(settings) as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
             return False
+        auth = ((data.get("security") or {}).get("auth") or {})
+        chosen = auth.get("selectedType") or data.get("selectedAuthType")
+        return bool(chosen) and chosen not in self.DEAD_AUTH
 
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
@@ -64,10 +85,16 @@ class Gemini(Adapter):
         if self.model:
             argv += ["-m", self.model]
 
+        # Headless Gemini refuses to run in a folder it has not been told to
+        # trust, and the project directory is chosen by the user, so it will
+        # usually be one it has never seen. Trust is asserted here and safety
+        # is carried by --approval-mode, which is the flag the caller actually
+        # controls; without this the turn does not start at all.
+        env = {**os.environ, "GEMINI_CLI_TRUST_WORKSPACE": "true"}
         try:
             proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    text=True, bufsize=1)
+                                    text=True, bufsize=1, env=env)
         except OSError as e:
             yield Chunk(error=f"could not start gemini: {e}")
             return
@@ -84,7 +111,8 @@ class Gemini(Adapter):
                 if not stripped:
                     continue
                 if stripped.startswith(("YOLO mode", "Approval mode", "Loaded cached",
-                                        "Data collection", "Flushing")):
+                                        "Data collection", "Flushing", "Warning:",
+                                        "Warning ")):
                     continue
                 got_text = True
                 yield Chunk(text=line)
