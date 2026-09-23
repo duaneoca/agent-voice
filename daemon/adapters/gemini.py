@@ -36,7 +36,7 @@ import subprocess
 import threading
 from typing import Iterator
 
-from .base import SPOKEN_STYLE, Adapter, Chunk, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
 
 
 class Gemini(Adapter):
@@ -79,6 +79,24 @@ class Gemini(Adapter):
         chosen = auth.get("selectedType") or data.get("selectedAuthType")
         return bool(chosen) and chosen not in self.DEAD_AUTH
 
+    def why_unavailable(self) -> str:
+        if not installed("gemini"):
+            return "gemini is not installed"
+        settings = os.path.expanduser("~/.gemini/settings.json")
+        try:
+            with open(settings) as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            return "gemini has no auth configured — run: gemini"
+        auth = ((data.get("security") or {}).get("auth") or {})
+        chosen = auth.get("selectedType") or data.get("selectedAuthType")
+        if chosen in self.DEAD_AUTH:
+            # The single most likely reason today, and the one nobody would
+            # guess from a silent fallback to echoing.
+            return ("Google withdrew this Gemini login in June 2026 — "
+                    "use an API key, or switch to Antigravity")
+        return "gemini has no auth configured — run: gemini"
+
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
         argv = ["gemini", "-p", prompt, "--approval-mode", self.approval_mode]
@@ -101,12 +119,14 @@ class Gemini(Adapter):
 
         with self._lock:
             self._proc = proc
+        dog = Watchdog(proc, self.idle_timeout_s)
 
         got_text = False
         try:
             # Gemini prints prose, and prefixes its own notices. Those are
             # dropped rather than spoken.
             for line in proc.stdout:
+                dog.poke()
                 stripped = line.strip()
                 if not stripped:
                     continue
@@ -117,10 +137,18 @@ class Gemini(Adapter):
                 got_text = True
                 yield Chunk(text=line)
             code = proc.wait()
+            if dog.fired:
+                # Killed for going quiet. Indistinguishable from a cancel by
+                # exit code alone, and silence is the one thing a voice
+                # interface must never answer with.
+                yield Chunk(error=f"{"gemini"} stopped responding after "
+                                  f"{dog.idle_s:.0f}s")
+                return
             if code != 0 and not got_text and code not in (-15, 143, -9, 137):
                 err = (proc.stderr.read() or "").strip().splitlines()
                 yield Chunk(error=(err[-1] if err else f"gemini exited {code}"))
         finally:
+            dog.stop()
             with self._lock:
                 self._proc = None
             for stream in (proc.stdout, proc.stderr):

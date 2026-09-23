@@ -64,8 +64,8 @@ correct it in place rather than leaving two versions of the truth — the
 Voxtype-transcription architecture and the "31% of one core" figure were both
 wrong, and both are now written down as corrections with the reasoning.
 
-Say which backends have actually answered a turn. Claude Code, Codex and
-Gemini have; the nine on the shared CLI adapter have not. Watching a single
+Say which backends have actually answered a turn. Claude Code, Codex,
+Gemini and Antigravity have; the nine on the shared CLI adapter have not. Watching a single
 live turn falsified three things Gemini's adapter believed -- where the CLI
 records its auth, that a headless run needs no trusted folder, and that
 everything on stdout was speech -- and nothing in Codex's. Flags read off
