@@ -165,3 +165,102 @@ after the trim).
 CPU is not a concern: openWakeWord inference is 2.97ms per 80ms frame, 3.7%
 of one core, and the whole daemon idles at 5.3%. `vad_threshold` does not
 reduce that — it runs Silero VAD *after* the predictions and adds ~22%.
+
+## 11. Barge-in is a hardware problem, not a software one
+
+One microphone about a foot from the speaker it is listening to, at the
+machine's normal listening volume (70%). Two separate questions, opposite
+answers.
+
+**Does the detector false-fire on our own speech?** No, at any volume.
+
+| playback volume | bleed median | bleed p90 | mic absmax | wake score |
+|---|---|---|---|---|
+| 30% | -45.6 | -44.0 | 1733 | 0.001 silent |
+| 50% | -43.7 | -36.4 | 4982 | 0.001 silent |
+| 70% | -37.3 | -27.3 | 16537 | 0.001 silent |
+| 100% | -29.5 | -18.1 | 32733 | 0.000 silent |
+
+Listening while talking is safe. (At 100% the microphone input clips —
+absmax 32733 — so full volume is a bad idea for other reasons.)
+
+**Can it hear you over our own speech?** No, and the reason is a level
+problem, not a model problem. Our own playback reaches the microphone at
+the same loudness as the user's voice:
+
+| condition | bed level | SNR | fires | median peak |
+|---|---|---|---|---|
+| quiet room | — | — | 19/20 | 0.95 |
+| over our own reply | -32.6 dBFS | +1.2 dB | 5/20 | 0.44 |
+| AEC, converged | -44.8 dBFS | +13.4 dB | 19/20 | 0.93 |
+
+Levels are the 75th-percentile frame — the speech, not the pauses —
+because SNR is the quantity that survives a change of speaker volume or
+microphone gain, and both knobs move.
+
+How much SNR the detector needs, sweeping a scaled bleed bed:
+
+| SNR | +30 | +24 | +18 | +12 | +6 | 0 | -6 |
+|---|---|---|---|---|---|---|---|
+| fires /20 | 19 | 18 | 12 | 11 | 9 | 5 | 1 |
+
+Reliable detection wants ~+24 dB. Reality at a normal volume is +1.2 dB,
+a deficit of about 23 dB. A trained interrupt phrase would be swamped
+identically — the failure is acoustic masking, not vocabulary — so the
+hermes-satellite approach of training a second phrase does not transfer
+to a machine with one microphone.
+
+### SNR alone does not predict detection
+
+The converged canceller scores 19/20 at +13.4 dB, while a *scaled* bleed
+bed at +12 dB scores 11/20. Same SNR, very different outcome: what the
+canceller leaves behind is decorrelated from the wake word and overlaps
+its spectrum far less than speech-shaped bleed at equal level. Masking is
+spectral, so any level-only rule of thumb here will mislead.
+
+### The echo canceller works, with two caveats worth the space
+
+`pactl load-module module-echo-cancel aec_method=webrtc` removes ~12 dB of
+the active bleed level (median -37.3 to -45.9, p90 -27.3 to -43.7, absmax
+16537 to 1296) and restores detection completely. Two things nearly made
+this measurement a lie:
+
+*The stock settings destroy the signal while looking like a triumph.*
+webrtc's noise suppressor and AGC are on by default. They drop the median
+bleed to -67 dBFS — an apparent 31 dB win — while clipping transients to
+full scale (absmax 32768) and gating the wake word to **0/20**. Reporting
+the median alone would have inverted the conclusion. Pass
+`analog_gain_control=0 digital_gain_control=0 noise_suppression=0` and
+leave the canceller alone to do its actual job.
+
+*It converges slowly.* Over 45s of continuous far-end audio:
+
+| elapsed | median | p90 |
+|---|---|---|
+| 0-9s | -44.7 | -29.0 |
+| 9-18s | -47.0 | -41.1 |
+| 18-27s | -47.7 | -46.3 |
+| 36-45s | -49.1 | -46.8 |
+
+The p90 improves ~18 dB but takes ~30 seconds. A spoken reply is five to
+ten. Whether the filter stays converged across a session of many short
+replies is untested, and is the open question that decides whether
+acoustic barge-in is buildable here.
+
+So: half duplex, with an explicit interrupt on a keybind. `agentvoice
+interrupt` (SIGUSR2) cancels the speaker and the agent, and is a no-op
+when the daemon is idle.
+
+**Method note.** A first pass at this was wrong in two ways, both of the
+same kind. The machine's volume had been turned down and later muted while
+the measurements ran, so one "cancelled" bed was really silence and the
+canceller appeared perfect; and levels were summarised as medians, which
+is exactly what hid the full-scale clipping under AGC. Every number above
+was re-measured at a known, verified volume with audio confirmed present,
+and levels are reported as distributions. Detection figures come from
+mixing recorded bleed into clean wake clips: that models the echo adding
+linearly and does not exercise webrtc's double-talk suppressor, so the
+converged AEC figure is an upper bound. Replaying wake clips through the
+speaker instead was tried and rejected as a method — the round trip costs
+so much fidelity that even a quiet room scores 3/6, leaving no headroom to
+measure anything.

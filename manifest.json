@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "duaneoca.agentvoice",
   "name": "Agent Voice",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "duaneoca",
   "license": "MIT",
   "description": "Wake word, spoken replies, and the knobs that govern them, for whichever AI agent is on the box.",
@@ -43,7 +43,8 @@
       "conversationMode": true,
       "followUpMs": 7000,
       "livePartials": "auto",
-      "askPermission": true
+      "projectDir": "",
+      "permissionLevel": "ask"
     },
     "schema": [
       {
@@ -232,11 +233,23 @@
         "description": "Rough text shown as you talk, before Whisper returns. It needs the Vosk model, which costs 156MB resident. 'auto' shows it only when Vosk is already loaded for the wake word, so it is never paid for twice."
       },
       {
-        "key": "askPermission",
-        "type": "bool",
-        "label": "Ask before the agent changes anything",
-        "defaultValue": true,
-        "description": "A spoken sentence can otherwise edit files and run commands with nothing able to stop it. Read-only tools are never asked about, and an unanswered prompt is denied."
+        "key": "projectDir",
+        "type": "string",
+        "label": "Project directory",
+        "defaultValue": "",
+        "description": "Where the agent works. Empty means your home directory. Everything it reads, writes or runs happens here, and the permission level below applies to this directory."
+      },
+      {
+        "key": "permissionLevel",
+        "type": "enum",
+        "label": "Permission level",
+        "options": [
+          "ask",
+          "edits",
+          "trusted"
+        ],
+        "defaultValue": "ask",
+        "description": "ask: every change is prompted. edits: files inside the project may be edited without asking, commands still are. trusted: nothing is asked. Read-only tools are never prompted at any level, and an unanswered prompt is denied."
       }
     ]
   },

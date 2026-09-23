@@ -30,6 +30,7 @@ import os
 import queue
 import signal
 import sys
+import threading
 import time
 import wave
 from pathlib import Path
@@ -40,7 +41,7 @@ from adapters.base import speech_safe  # noqa: E402
 from speech_text import is_stop_command  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
-from paths import ROOT, vocab_file, vosk_model  # noqa: F401
+from paths import ROOT, project_dir, vocab_file, vosk_model  # noqa: F401
 
 RATE, CHUNK = 16_000, 3200          # 100ms frames
 
@@ -413,7 +414,15 @@ class Daemon:
         self._deaf_until = 0.0
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         (RUNTIME_DIR / "pid").write_text(str(os.getpid()))
+        # Barge-in is not possible acoustically on this class of hardware:
+        # at a normal listening volume our own playback reaches the mic at
+        # the same level as the user's voice (SNR +1.2 dB), and detection
+        # falls to 5/20. PipeWire's echo canceller fixes that but needs ~30s
+        # of continuous output to converge, which is longer than a reply. So
+        # an interrupt is an explicit act -- a keybind, or the Stop button.
+        self._interrupt = threading.Event()
         signal.signal(signal.SIGUSR1, self._on_toggle)
+        signal.signal(signal.SIGUSR2, self._on_interrupt)
 
     def _on_toggle(self, *_):
         self.enabled = not self.enabled
@@ -424,6 +433,65 @@ class Daemon:
                 self.agent.cancel()
         print(f"\n  {CYA}mic {'engaged' if self.enabled else 'released'}{OFF}")
         self._publish()
+
+    def reconcile_agent(self) -> None:
+        """Rebuild the agent when the project or permission level changes.
+
+        The adapter is constructed once at startup, so without this a new
+        directory would be set in the UI and simply not happen -- the same
+        read-once bug that made two earlier settings look broken.
+
+        The session is dropped on the way: `--resume` is scoped to a project
+        in Claude Code, so carrying an id across a directory change would
+        resume the wrong conversation, or none.
+        """
+        if self.agent is None:
+            return
+        want_cwd = str(project_dir(self.cfg.str("projectDir")))
+        want_ask = self.cfg.str("permissionLevel") != "trusted"
+        if (getattr(self.agent, "cwd", None) == want_cwd
+                and getattr(self.agent, "ask_permission", None) == want_ask):
+            return
+        self.agent.cancel()
+        self.agent = load_adapter(ask_permission=want_ask, cwd=want_cwd)
+        self.session_id = None
+        print(f"  {CYA}project: {want_cwd}{OFF}  {DIM}"
+              f"({self.cfg.str('permissionLevel')}){OFF}")
+
+    def _on_interrupt(self, *_):
+        """Cut the current reply short and go back to listening.
+
+        Only meaningful mid-turn; when the daemon is already idle this is
+        deliberately a no-op, so a stray keypress cannot leave it in a state
+        the user never asked for.
+        """
+        if self.state.current not in ("thinking", "speaking"):
+            return
+        self._interrupt.set()
+        if self.speaker:
+            self.speaker.cancel()
+        if self.agent:
+            self.agent.cancel()
+        print(f"\n  {YEL}interrupted{OFF}")
+
+    def take_command(self) -> str | None:
+        """One-shot commands from the CLI, for what a signal cannot carry.
+
+        Push-to-talk needs press and release as two distinct events, which is
+        more signals than they are worth. A file is atomic enough when the
+        writer renames it into place and the reader unlinks it. Interrupts
+        stay on a signal, because the run loop is blocked inside playback
+        exactly when an interrupt matters and would never read this.
+        """
+        path = RUNTIME_DIR / "command"
+        if not path.exists():
+            return None
+        try:
+            cmd = path.read_text().strip()
+            path.unlink()
+            return cmd
+        except OSError:
+            return None
 
     def _publish(self, **extra):
         self.state.publish("listening" if self.enabled else "off", **extra)
@@ -442,7 +510,7 @@ class Daemon:
         # mean nothing. Only Claude Code can raise a prompt from here; the
         # others are held in whatever read-only or ask-first mode their CLI
         # has, which is weaker and worth saying out loud.
-        if self.agent and self.cfg.bool("askPermission"):
+        if self.agent and self.cfg.str("permissionLevel") != "trusted":
             if getattr(self.agent, "guards_permissions", False):
                 print(f"  {DIM}permission: prompts on screen{OFF}")
             else:
@@ -452,6 +520,9 @@ class Daemon:
         elif self.agent:
             print(f"  {YEL}permission: not asking. {self.agent.name} can change"
                   f" files and run commands unchallenged.{OFF}")
+        if self.agent:
+            print(f"  {DIM}project: {getattr(self.agent, 'cwd', '?')}"
+                  f" · permission {self.cfg.str('permissionLevel')}{OFF}")
         print(f"  {DIM}agent: {who} · voice: "
               f"{self.speaker.name if self.speaker else 'off'}"
               f"   (ctrl-c to stop){OFF}\n")
@@ -461,6 +532,7 @@ class Daemon:
         if not self.cfg.reload():
             return
         self.pipe.apply(self.cfg)
+        self.reconcile_agent()
 
         # A voice swap means loading a different model, so it happens here
         # between turns rather than mid-sentence.
@@ -499,7 +571,7 @@ class Daemon:
 
     def speak(self, text: str, tail_ms: int) -> None:
         """Say something, then make sure we did not hear ourselves say it."""
-        if not self.speaker:
+        if not self.speaker or self._interrupt.is_set():
             return
         try:
             self.speaker.say(speech_safe(text))
@@ -515,6 +587,7 @@ class Daemon:
         time-to-first-token is measured in seconds.
         """
         tail_ms = self.cfg.int("echoTailMs")
+        self._interrupt.clear()
         if not self.agent:
             if self.speaker:
                 self.state.publish("speaking", **last)
@@ -543,6 +616,11 @@ class Daemon:
 
         try:
             for sentence in sentences(tap(self.agent.send(text, self.session_id))):
+                # Checked before the sentence is recorded, so the transcript
+                # in the panel is what was actually said out loud rather than
+                # what the agent had written by the time it was stopped.
+                if self._interrupt.is_set():
+                    break
                 print(f"  {CYA}{sentence}{OFF}", flush=True)
                 reply_parts.append(sentence)
                 if self.speaker and self.enabled:
@@ -553,7 +631,12 @@ class Daemon:
         except Exception as e:                  # a broken agent must not end the loop
             error = f"{type(e).__name__}: {e}"
 
-        if error:
+        if self._interrupt.is_set():
+            # Killing the agent mid-stream usually surfaces as an error. It is
+            # not one, and announcing it would talk over the user who just
+            # asked for silence.
+            self.deafen(tail_ms)
+        elif error:
             print(f"  {YEL}agent error: {error}{OFF}")
             self.speak("Sorry, the agent failed.", tail_ms)
 
@@ -591,8 +674,25 @@ class Daemon:
 
             level_shown = 0.0
             last_poll = time.time()
+            # Push-to-talk: the key decides both ends of the turn, so the
+            # wake word is bypassed and silence no longer endpoints.
+            ptt = ptt_done = False
             while True:
                 pcm = frames.get()
+
+                cmd = self.take_command()
+                if cmd == "talk" and self.enabled:
+                    phase, buf, cap = "capture", b"", self.pipe.new_capture()
+                    woke_at = last_voice = time.time()
+                    heard = False
+                    ptt, ptt_done = True, False
+                    active_lead_in = self.pipe.lead_in_ms
+                    self._deaf_until = 0.0
+                    print(f"  {GRN}● talk{OFF}  {DIM}(listening while held){OFF}",
+                          flush=True)
+                    self.state.publish("capture", **last)
+                elif cmd == "talk-end" and ptt:
+                    ptt_done = True
 
                 # Deaf window after our own speech: discard without even
                 # measuring, so a tail of reverb cannot register as input.
@@ -659,17 +759,26 @@ class Daemon:
                 # off before you have started is the most irritating failure
                 # this thing can have.
                 if not heard:
-                    if elapsed_ms > active_lead_in:
+                    # Holding the key says "I am about to speak", so the
+                    # lead-in timer does not run until it comes back up.
+                    if ptt_done if ptt else elapsed_ms > active_lead_in:
                         print(f"\r  {DIM}(nothing heard){OFF}{' ' * 40}")
                         phase = "wake"
+                        ptt = ptt_done = False
                         self._publish(**last)
                         self.refresh()
                     continue
 
-                if quiet_ms <= self.pipe.trailing_ms and elapsed_ms < self.pipe.max_utterance_ms:
+                if ptt and not ptt_done:
+                    # A key that never comes back up must not buffer forever.
+                    if elapsed_ms < self.pipe.max_utterance_ms:
+                        continue
+                elif not ptt and quiet_ms <= self.pipe.trailing_ms \
+                        and elapsed_ms < self.pipe.max_utterance_ms:
                     continue
                 if elapsed_ms >= self.pipe.max_utterance_ms:
                     print(f"\r  {YEL}(hit max_utterance_ms){OFF}{' ' * 30}")
+                ptt = ptt_done = False
 
                 audio_ms = len(buf) / 32.0
                 follow_up = False
@@ -684,10 +793,13 @@ class Daemon:
                     last = {"transcript": text, "ms": round(ms),
                             "audio_s": round(audio_ms / 1000, 2)}
 
-                    # "stop", "cancel that", "never mind" and friends end the
-                    # conversation without a round trip to the agent. Matched
-                    # against the whole transcript, so an ordinary sentence
-                    # that merely contains "stop" cannot trigger it.
+                    # "stop", "cancel that", "never mind" and friends discard
+                    # the turn instead of sending it. This is not an interrupt
+                    # and cannot be one -- by the time anything is being said
+                    # aloud the microphone is already deaf. Its real job is
+                    # cancelling a wake that fired by mistake. Matched against
+                    # the whole transcript, so an ordinary sentence that merely
+                    # contains "stop" cannot trigger it.
                     if text and is_stop_command(text):
                         print(f"  {DIM}(stopping){OFF}")
                         follow_up = False
@@ -761,7 +873,9 @@ def main() -> int:
 
     agent = None
     if not args.no_agent:
-        agent = load_adapter(ask_permission=cfg.bool("askPermission"))
+        level = cfg.str("permissionLevel")
+        agent = load_adapter(ask_permission=level != "trusted",
+                             cwd=str(project_dir(cfg.str("projectDir"))))
         if agent is None:
             which = omarchy_default()
             print(f"  {YEL}no adapter for agent "

@@ -79,7 +79,8 @@ Item {
   readonly property var modelOptions: ["tiny.en", "base.en", "small.en"]
 
   readonly property bool conversation: setting("conversationMode", true)
-  readonly property bool askPermission: setting("askPermission", true)
+  readonly property string permissionLevel: setting("permissionLevel", "ask")
+  readonly property string projectDir: setting("projectDir", "")
   readonly property bool speakReplies: setting("speakReplies", true)
   readonly property string engine: setting("engine", "vosk")
   readonly property bool usingOww: engine === "openwakeword"
@@ -153,12 +154,30 @@ Item {
     onExited: cfgReload.running = true
   }
 
+  // shell.json changes from more than one place: this screen, the panel's own
+  // switch, `omarchy bar set`, and a refresh. This screen only re-read it when
+  // it was opened or when it wrote, so anything changed underneath an open
+  // screen stayed invisible here while the panel -- which the bar updates live
+  // -- showed the new value. The two then disagreed, which is exactly the kind
+  // of thing a settings screen must never do about permissions.
+  FileView {
+    id: cfgFile
+    path: (Quickshell.env("XDG_CONFIG_HOME")
+           || ((Quickshell.env("HOME") || "") + "/.config")) + "/omarchy/shell.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: {
+      cfgFile.reload()
+      cfgReload.running = true
+    }
+  }
+
   // shell.json is the store; jq pulls out just this widget's entry.
   Process {
     id: cfgReload
     command: ["bash", "-c",
       "jq -c '[.bar.layout[]?[]? | select(.id==\"duaneoca.agentvoice\")][0] // {}' " +
-      "\"$HOME/.config/omarchy/shell.json\" 2>/dev/null || echo '{}'"]
+      "\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json\" 2>/dev/null || echo '{}'"]
     stdout: StdioCollector {
       onStreamFinished: {
         try { root.cfg = JSON.parse(String(text).trim() || "{}") }
@@ -388,26 +407,106 @@ Item {
               onCommitted: function(v) { root.persist("followUpMs", v, true) }
             }
 
-            Toggle {
+            // The directory and what is allowed in it are one decision, not
+            // two: a permission level with no root to apply to means nothing,
+            // and changing where the agent works without revisiting what it
+            // may do there is how you end up trusting the wrong folder.
+            Text {
               width: parent.width
-              label: "Ask before it changes anything"
-              description: "A spoken sentence can otherwise edit files and run " +
-                           "commands unchallenged. Read-only tools are never " +
-                           "asked about, and an unanswered prompt is denied."
-              checked: root.askPermission
+              text: "PROJECT"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            TextField {
+              width: parent.width
+              text: root.projectDir
+              placeholderText: "~  (your home directory)"
               foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("askPermission",
-                                      root.askPermission ? "false" : "true", true)
+              font.family: root.fontFamily
+              onEditingFinished: {
+                if (text !== root.projectDir) root.persist("projectDir", text, false)
+              }
             }
 
             Text {
               width: parent.width
               wrapMode: Text.WordWrap
-              visible: !root.askPermission
-              text: "Turned off. The agent can edit files and run commands with " +
-                    "nothing able to stop it."
-              color: Color.urgent
+              text: "Where the agent works. Everything it reads, writes or runs " +
+                    "happens here. Changing it starts a new conversation, because " +
+                    "the agent keeps its history per project."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Dropdown {
+              width: parent.width
+              showLabel: true
+              label: "Permission level"
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              options: [
+                { label: "Ask before every change", value: "ask" },
+                { label: "Edits here are fine, ask for commands", value: "edits" },
+                { label: "Trust everything here", value: "trusted" }
+              ]
+              value: root.permissionLevel
+              onChanged: function(v) { root.persist("permissionLevel", v, false) }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.permissionLevel === "edits"
+                    ? "Files inside the project can be edited without asking. " +
+                      "Commands, web fetches and anything outside the project " +
+                      "still prompt."
+                    : root.permissionLevel === "trusted"
+                    ? "Nothing is asked. A spoken sentence can edit files and " +
+                      "run commands here with nothing able to stop it."
+                    : "Every change is prompted. Read-only tools are never asked " +
+                      "about, and an unanswered prompt is denied."
+              color: root.permissionLevel === "trusted" ? Color.urgent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // --- talking and interrupting -----------------------------------
+            // Not settings: the keys. They are here because the feature was
+            // built, bound and still undiscoverable -- the first question
+            // asked of it was how to make it stop.
+            PanelSectionHeader {
+              text: "TALKING TO IT"; foreground: root.dim; fontFamily: root.fontFamily
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.StyledText
+              text: "<b>Hold F8</b> and speak, release when you are done — no " +
+                    "wake word needed.<br>" +
+                    "<b>Press F8</b> while it is replying to stop it. So does " +
+                    "<b>Super+Ctrl+Space</b>, or the stop button in the panel.<br>" +
+                    "<b>Super+Alt+Space</b> releases the microphone entirely."
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "No spoken phrase can interrupt a reply: the microphone is " +
+                    "ignored while it talks, and at a normal volume its own " +
+                    "voice reaches the mic as loudly as yours anyway. " +
+                    "Saying \"stop\" or \"never mind\" cancels a turn it has " +
+                    "not taken yet — useful when the wake word fires by " +
+                    "mistake, so nothing is sent to the agent."
+              color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }

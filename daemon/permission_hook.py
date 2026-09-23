@@ -26,7 +26,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import RUNTIME_DIR  # noqa: E402
+from paths import RUNTIME_DIR, project_dir  # noqa: E402
 
 PENDING = RUNTIME_DIR / "permissions"
 TIMEOUT = float(os.environ.get("AGENTVOICE_PERMISSION_TIMEOUT", "45"))
@@ -35,11 +35,58 @@ TIMEOUT = float(os.environ.get("AGENTVOICE_PERMISSION_TIMEOUT", "45"))
 ALWAYS_ALLOW = {"Read", "Glob", "Grep", "NotebookRead", "TodoWrite",
                 "WebSearch", "Task", "BashOutput"}
 
+#: Tools whose damage is confined to one named file, so a path rule can
+#: describe them honestly. Bash is deliberately absent: "cd /; rm -rf ." has
+#: no file_path, and no amount of prefix matching makes one safe to infer.
+PATH_SCOPED = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _settings() -> tuple[str, Path]:
+    """The permission level and project directory, read fresh.
+
+    The hook is a separate process spawned by Claude, so it cannot be handed
+    these by the daemon -- it has to read the same config the daemon reads.
+    Any failure falls back to the strictest setting: a config this cannot
+    parse must not become a reason to stop asking.
+    """
+    try:
+        from runtime import Config
+        cfg = Config()
+        return cfg.str("permissionLevel"), project_dir(cfg.str("projectDir"))
+    except Exception:
+        return "ask", project_dir("")
+
+
+def _inside(path: str, root: Path) -> bool:
+    """True when `path` resolves to something under `root`.
+
+    Resolved on both sides, because the whole point is to answer "is this in
+    the project", and `~/project/../../etc/passwd` is not, however it is
+    spelled. A path that does not exist yet is still judged -- Write creates
+    files -- so the parent is what gets resolved.
+    """
+    if not path:
+        return False
+    try:
+        p = Path(path).expanduser()
+        p = p.resolve() if p.exists() else p.parent.resolve() / p.name
+        return p == root or root in p.parents
+    except (OSError, RuntimeError, ValueError):
+        return False
+
 
 def decide(tool_name: str, tool_input: dict) -> tuple[str, str]:
     """Return (decision, reason). decision is 'allow' or 'deny'."""
     if tool_name in ALWAYS_ALLOW:
         return "allow", ""
+
+    level, root = _settings()
+    if level == "trusted":
+        return "allow", ""
+    if level == "edits" and tool_name in PATH_SCOPED:
+        target = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        if _inside(target, root):
+            return "allow", ""
 
     PENDING.mkdir(parents=True, exist_ok=True)
     request_id = uuid.uuid4().hex[:12]

@@ -24,6 +24,13 @@ _XDG_DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share"
 _XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 _XDG_RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
 
+#: Omarchy's shell config, where the bar widget's settings live. Derived from
+#: XDG_CONFIG_HOME rather than hardcoding ~/.config, because a hardcoded home
+#: is not redirectable: the permission tests read this file, and reading the
+#: developer's real one made `decide()` answer according to whatever level was
+#: set on the machine -- including "allow" to `rm -rf /` on a green run.
+SHELL_JSON = _XDG_CONFIG / "omarchy/shell.json"
+
 DATA_DIR = _XDG_DATA / "agentvoice"
 CONFIG_DIR = _XDG_CONFIG / "agentvoice"
 RUNTIME_DIR = _XDG_RUNTIME / "agentvoice"
@@ -70,3 +77,25 @@ def config_toml() -> Path:
     """Fallback config for machines without Omarchy's shell.json."""
     user = CONFIG_DIR / "agentvoice.toml"
     return user if user.exists() else ROOT / "daemon/agentvoice.toml"
+
+
+def project_dir(configured: str = "") -> Path:
+    """Where the agent works.
+
+    Empty means the home directory, which is what a bare `claude` does and so
+    is the least surprising default. Anything else is expanded and resolved --
+    resolved because the permission rules compare paths, and "~/src/app" and
+    "/home/me/src/app/../app" have to be the same directory or a rule that
+    trusts one would not trust the other.
+
+    Falls back to home when the configured path has gone: a directory that was
+    deleted or unmounted must not leave the agent running somewhere arbitrary.
+    """
+    home = Path.home()
+    if not configured.strip():
+        return home
+    try:
+        p = Path(configured.strip()).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return home
+    return p if p.is_dir() else home

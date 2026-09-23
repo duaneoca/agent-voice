@@ -85,17 +85,59 @@ for two things.
 1. **Wake word.** Say the trigger phrase, talk, get a spoken answer.
    Stays in conversation mode for a few seconds after each reply.
    Ours to build: Voxtype is push to talk only.
-2. **Push to talk.** Voxtype's F9, unchanged and unintegrated. It
-   dictates into the focused window, which is a different job.
+2. **Push to talk.** Hold F8, speak, release. Skips the wake word
+   entirely, which makes it the reliable path when the room is noisy or
+   the wake word is being stubborn. Distinct from Voxtype's F9, which
+   dictates into the focused window -- a different job.
 3. **Mic toggle.** One key and one bar click to grab or release the
    microphone entirely.
+4. **Interrupt.** Press F8 while it is replying, or Super+Ctrl+Space, or
+   the stop button in the panel. Deliberately not voice-triggered -- see
+   below.
 
-Default binds (configurable):
+Suggested binds. `install.sh` prints these rather than writing them,
+because `~/.config/hypr/bindings.lua` is yours:
+
+  F8 (hold)            talk to the agent; a press mid-reply stops it
   F9 (hold)            Voxtype dictation, untouched
-  Super+Alt+Space      toggle wake word listening on/off
-  Super+Ctrl+Space     cancel current response
+  Super+Alt+Space      release or re-engage the mic
+  Super+Ctrl+Space     stop talking, keep listening
 
 Super+Space is Omarchy's application launcher and stays that way.
+
+### Why you cannot interrupt by voice
+
+The obvious design is to say "stop" over the reply. Measured on this
+hardware -- one laptop microphone about a foot from the speaker it is
+listening to, at a normal listening volume -- that does not work:
+
+  wake word detected in a quiet room       19/20
+  wake word detected over our own reply     5/20
+
+The reason is simple once measured: our own playback arrives at the
+microphone at the same level as your voice. Signal to noise is +1.2 dB,
+and the detector needs about +24 dB to be reliable. That is a ~23 dB
+deficit, and a dedicated "interrupt" phrase would be swamped identically
+-- the failure is acoustic masking, not vocabulary.
+
+The detector never false-fires on our own voice: peak score 0.001 at every
+volume up to 100%, against a 0.75 threshold. Listening while talking is
+safe; hearing over it is not.
+
+PipeWire's echo canceller does fix it, and completely:
+
+  no cancellation              SNR  +1.2 dB    5/20
+  module-echo-cancel, converged SNR +13.4 dB   19/20
+
+Two conditions keep it out of the default install. Its stock settings
+enable webrtc's noise suppressor and AGC, which gate the wake word into
+unintelligibility (0/20) while appearing, if you only look at median
+levels, to be cancelling beautifully. And the adaptive filter needs
+roughly 30 seconds of continuous output to converge -- far longer than a
+spoken reply -- so it is unconverged exactly when a short answer needs it.
+
+Half duplex with an explicit interrupt is honest about the hardware;
+acoustic barge-in is an open question, not a feature.
 
 ## Architecture
 
@@ -122,7 +164,29 @@ One contract: take text plus a session ID, stream text back.
 3. Generic OpenAI compatible HTTP: OpenAI, Grok, Ollama
 Autodetect on install; choose the active one in config.
 
-**Permissions**
+**Project and permissions**
+The agent works in one directory, and what it may do is a property of
+that directory -- the two are one setting, shown together on the panel so
+you can see before you speak what you are about to affect and how much it
+can do without asking. Empty means your home directory, which is what a
+bare `claude` does.
+
+  ask       every change is prompted
+  edits     files inside the project may be edited without asking;
+            commands, web fetches and anything outside it still prompt
+  trusted   nothing is asked
+
+`edits` is the level that stops you approving reflexively: editing files
+is frequent and legible, running shell commands is rare and dangerous, so
+they are separated. Bash is never path-scoped at any level -- `cd /; rm
+-rf .` carries no file path, and no prefix match makes one safe to infer.
+Path rules compare fully resolved paths, so `..` and symlinks cannot walk
+out of a trusted project.
+
+Changing the project drops the session id, because `--resume` is scoped
+per project in Claude Code and would otherwise resume the wrong
+conversation.
+
 A spoken sentence should not be able to edit files unchallenged. For
 Claude Code, a PreToolUse hook passed through `--settings` receives each
 tool call, writes it to the runtime directory, summons the overlay and
@@ -342,3 +406,15 @@ agent-voice/              <- also the plugin directory once installed
 
 Everything the installer downloads -- interpreter, wheels, models, trained
 verifiers -- lives under `~/.local/share/agentvoice/`, never in the repo.
+
+## License
+
+MIT, in `LICENSE` and declared in `manifest.json`. Both have to say the
+same thing: Omarchy reads the manifest, GitHub reads the file, and a
+manifest claiming a licence the repo does not carry grants nothing.
+
+The models are not covered by it. Nothing here redistributes them --
+`install.sh` downloads Whisper, Piper, Vosk and openWakeWord from their
+own projects at install time, and each carries its own terms. A trained
+verifier is yours and stays on your machine; it is a pickle, so it must
+never be one you downloaded.
