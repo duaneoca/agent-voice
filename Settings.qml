@@ -551,11 +551,15 @@ Item {
                     "desktop's agent. It is chat only: it cannot read files, " +
                     "change them or run commands, whatever it is asked, so the " +
                     "permission level above does not apply to it.\n" +
-                    "A key, if the endpoint needs one, goes in " +
-                    "~/.config/agentvoice/endpoint.key — just the key on a " +
-                    "line, though KEY=value and quotes are tolerated. Not " +
-                    "here: this file is the desktop's config and gets copied " +
-                    "around. Ollama and LM Studio need no key at all."
+                    "Ollama and LM Studio need no key. For one that does, the " +
+                    "login keyring is the best place — it unlocks when you log " +
+                    "in and only this session can read it:\n" +
+                    "  secret-tool store --label=agentvoice \\\n" +
+                    "      service agentvoice endpoint api.openai.com\n" +
+                    "Keyed by host, so several endpoints can each have their " +
+                    "own. Failing that, ~/.config/agentvoice/endpoint.key. " +
+                    "Never in this settings file — it is the desktop's config " +
+                    "and gets copied around."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

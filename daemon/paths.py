@@ -15,6 +15,8 @@ specific, and must survive `git pull` without showing up in `git status`.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 #: The repo / plugin directory: the parent of this package.
@@ -101,22 +103,87 @@ def project_dir(configured: str = "") -> Path:
     return p if p.is_dir() else home
 
 
-def endpoint_key() -> str:
+def _keyring(**attrs) -> str:
+    """Read a secret from the freedesktop secret service, or "".
+
+    Used ahead of the file because the keyring is where a desktop key
+    belongs: it is unlocked at login by the same session that runs this
+    daemon (gnome-keyring lives under user@.service, as we do), so a
+    background service can read it without a prompt it has no way to answer.
+    That is the thing 1Password's CLI cannot do here -- its desktop
+    integration wants an interactive unlock, and a systemd unit has no
+    terminal to unlock in.
+    """
+    tool = shutil.which("secret-tool")
+    if not tool:
+        return ""
+    argv = [tool, "lookup"]
+    for key, value in attrs.items():
+        argv += [key, value]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def _keyring_has_hosts() -> bool:
+    """True when at least one key is stored against a specific endpoint host.
+
+    Distinguishes "one endpoint, one key" -- where a generic key or the file
+    is exactly right -- from "several endpoints, keyed by host", where a miss
+    has to mean no key rather than somebody else's.
+    """
+    tool = shutil.which("secret-tool")
+    if not tool:
+        return False
+    try:
+        out = subprocess.run([tool, "search", "service", "agentvoice"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "attribute.endpoint" in (out.stdout + out.stderr)
+
+
+def endpoint_key(host: str = "") -> str:
     """The API key for an OpenAI-compatible endpoint, or "".
 
     Deliberately not a setting. shell.json is the desktop's config file --
-    world-readable, copied between machines, pasted into bug reports -- and a
-    key does not belong there. This reads a file the user creates at
-    ~/.config/agentvoice/endpoint.key, or the environment when the daemon was
-    given one, and it is never logged or published to the state file.
+    world readable, copied between machines, pasted into bug reports -- and a
+    key does not belong there. Omarchy has no key store of its own to borrow:
+    it installs each agent CLI and lets it handle its own authentication.
 
-    A local endpoint such as Ollama needs no key at all, so absence is normal
-    rather than an error.
+    Looked for in order of how much the machine protects it:
+
+      1. the environment, for a key that should never touch disk at all
+      2. the login keyring, keyed by endpoint host, so an OpenAI key and an
+         xAI key can be stored side by side rather than swapped in a file
+      3. the keyring under a generic name, for a single endpoint
+      4. ~/.config/agentvoice/endpoint.key, for machines with no keyring
+
+    A local endpoint such as Ollama needs no key at all, so absence is
+    normal rather than an error.
     """
     for var in ("AGENTVOICE_ENDPOINT_KEY", "OPENAI_API_KEY", "XAI_API_KEY"):
         value = os.environ.get(var, "").strip()
         if value:
             return value
+
+    if host:
+        found = _keyring(service="agentvoice", endpoint=host)
+        if found:
+            return found
+        # Once any key is filed under a host, the absence of one for *this*
+        # host means there is no key for it -- not that some other endpoint's
+        # key will do. Falling through here would hand an OpenAI credential
+        # to api.x.ai on the next settings change, which is a small leak but
+        # an entirely avoidable one.
+        if _keyring_has_hosts():
+            return ""
+    found = _keyring(service="agentvoice", key="endpoint")
+    if found:
+        return found
+
     try:
         raw = (CONFIG_DIR / "endpoint.key").read_text()
     except OSError:
