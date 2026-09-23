@@ -99,3 +99,25 @@ def project_dir(configured: str = "") -> Path:
     except (OSError, RuntimeError):
         return home
     return p if p.is_dir() else home
+
+
+def endpoint_key() -> str:
+    """The API key for an OpenAI-compatible endpoint, or "".
+
+    Deliberately not a setting. shell.json is the desktop's config file --
+    world-readable, copied between machines, pasted into bug reports -- and a
+    key does not belong there. This reads a file the user creates at
+    ~/.config/agentvoice/endpoint.key, or the environment when the daemon was
+    given one, and it is never logged or published to the state file.
+
+    A local endpoint such as Ollama needs no key at all, so absence is normal
+    rather than an error.
+    """
+    for var in ("AGENTVOICE_ENDPOINT_KEY", "OPENAI_API_KEY", "XAI_API_KEY"):
+        value = os.environ.get(var, "").strip()
+        if value:
+            return value
+    try:
+        return (CONFIG_DIR / "endpoint.key").read_text().strip()
+    except OSError:
+        return ""

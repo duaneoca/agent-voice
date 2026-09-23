@@ -43,7 +43,9 @@ from adapters.base import speech_safe  # noqa: E402
 from speech_text import is_stop_command  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
-from paths import ROOT, project_dir, vocab_file, vosk_model  # noqa: F401
+from paths import (  # noqa: F401
+    ROOT, endpoint_key, project_dir, vocab_file, vosk_model,
+)
 
 RATE, CHUNK = 16_000, 3200          # 100ms frames
 
@@ -447,24 +449,49 @@ class Daemon:
         in Claude Code, so carrying an id across a directory change would
         resume the wrong conversation, or none.
         """
-        want_name = omarchy_default()
+        endpoint = self.endpoint_spec()
+        want_name = "endpoint" if endpoint else omarchy_default()
         want_cwd = str(project_dir(self.cfg.str("projectDir")))
         want_level = self.cfg.level_for(want_name)
         want_ask = want_level != "trusted"
+        # The endpoint's identity is its URL and model, not just its name:
+        # switching which machine answers must rebuild, and they all report
+        # the same name.
+        same_endpoint = (endpoint is None
+                         or (getattr(self.agent, "base_url", None)
+                             == endpoint["url"].rstrip("/")
+                             and getattr(self.agent, "model", None)
+                             == endpoint["model"]))
         if (self.agent is not None
                 and getattr(self.agent, "name", None) == want_name
-                and getattr(self.agent, "cwd", None) == want_cwd
-                and getattr(self.agent, "ask_permission", None) == want_ask):
+                and same_endpoint
+                and (endpoint is not None
+                     or getattr(self.agent, "cwd", None) == want_cwd)
+                and (endpoint is not None
+                     or getattr(self.agent, "ask_permission", None) == want_ask)):
             self.publish_agent()
             return
         if self.agent is not None:
             self.agent.cancel()
         self.agent = load_adapter(ask_permission=want_ask, cwd=want_cwd,
-                                  level=want_level)
+                                  level=want_level, endpoint=endpoint)
         self.session_id = None
         self.publish_agent()
         print(f"  {CYA}agent: {want_name or 'nobody'} · {want_cwd}{OFF}"
               f"  {DIM}({self.posture()}){OFF}")
+
+    def endpoint_spec(self) -> dict | None:
+        """The configured OpenAI-compatible endpoint, or None.
+
+        The key never travels with the rest of the settings: it is read from
+        its own file at the moment it is needed, so it cannot end up in
+        shell.json, in the state file, or in anything published to the panel.
+        """
+        url = self.cfg.str("endpointUrl").strip()
+        model = self.cfg.str("endpointModel").strip()
+        if not url or not model:
+            return None
+        return {"url": url, "model": model, "key": endpoint_key()}
 
     def level(self) -> str:
         return self.cfg.level_for(getattr(self.agent, "name", None))
@@ -916,8 +943,13 @@ def main() -> int:
     agent = None
     if not args.no_agent:
         level = cfg.level_for(omarchy_default())
+        url = cfg.str("endpointUrl").strip()
+        model = cfg.str("endpointModel").strip()
+        spec = ({"url": url, "model": model, "key": endpoint_key()}
+                if url and model else None)
         agent = load_adapter(ask_permission=level != "trusted", level=level,
-                             cwd=str(project_dir(cfg.str("projectDir"))))
+                             cwd=str(project_dir(cfg.str("projectDir"))),
+                             endpoint=spec)
         if agent is None:
             which = omarchy_default()
             print(f"  {YEL}no agent: {explain_agent(which)}"
