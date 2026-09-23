@@ -118,6 +118,18 @@ def endpoint_key() -> str:
         if value:
             return value
     try:
-        return (CONFIG_DIR / "endpoint.key").read_text().strip()
+        raw = (CONFIG_DIR / "endpoint.key").read_text()
     except OSError:
         return ""
+    # Tolerant about shape, because the failure is otherwise a 401 that says
+    # nothing: people reasonably write OPENAI_API_KEY=sk-... out of habit, or
+    # leave the quotes on, or add a comment line. Take the first line that
+    # looks like a value and strip the furniture off it.
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            line = line.split("=", 1)[1].strip()
+        return line.strip("'\"")
+    return ""
