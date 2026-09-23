@@ -130,6 +130,27 @@ Panel {
   }
 
   Process { id: micToggle; command: ["agentvoice", "mic"] }
+  Process { id: interrupt; command: ["agentvoice", "interrupt"] }
+
+  // What the agent is pointed at, and how much it may do there. On the panel
+  // rather than behind the gear because it is the thing to check *before*
+  // speaking -- what am I about to change, and can it act without asking.
+  readonly property string projectDir: voice.setting("projectDir", "")
+  readonly property string permissionLevel: voice.setting("permissionLevel", "ask")
+  readonly property string projectLabel: {
+    var d = String(voice.projectDir).trim()
+    if (d === "") return "~"
+    var home = Quickshell.env("HOME") || ""
+    if (home !== "" && d.indexOf(home) === 0) return "~" + d.slice(home.length)
+    return d
+  }
+  readonly property color permissionColor:
+    voice.permissionLevel === "trusted" ? voice.urgent : voice.dim
+  readonly property string permissionLabel: {
+    if (voice.permissionLevel === "trusted") return "trusted — never asks"
+    if (voice.permissionLevel === "edits") return "edits here · commands ask"
+    return "asks before every change"
+  }
 
   // systemd is the authority on whether the daemon exists; the state file only
   // says what it is doing. Both are needed: a stale state file outlives a
@@ -239,6 +260,59 @@ Panel {
         }
       }
 
+      // The MouseArea is the container rather than an overlay: a child with
+      // anchors.fill inside a Column disables the Column outright, which is
+      // how this block came to be written, shipped, and invisible.
+      MouseArea {
+        width: parent.width
+        height: projectRows.implicitHeight
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: { settings.running = true; voice.close() }
+
+        Column {
+          id: projectRows
+          width: parent.width
+          spacing: Style.space(3)
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.sm
+            Text {
+              text: "\uf07b"
+              color: voice.dim
+              font.family: voice.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              width: parent.width - Style.space(22)
+              elide: Text.ElideMiddle
+              text: voice.projectLabel
+              color: voice.fg
+              font.family: voice.fontFamily
+              font.pixelSize: Style.font.body
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.sm
+            Text {
+              text: "\uf023"
+              color: voice.permissionColor
+              font.family: voice.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+            Text {
+              text: voice.permissionLabel
+              color: voice.permissionColor
+              font.family: voice.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
+
       // What it last heard. On screen, because the whole problem with an
       // interface you cannot see is being unsure whether it understood you.
       Column {
@@ -277,6 +351,25 @@ Panel {
           color: voice.dim
           font.family: voice.fontFamily
           font.pixelSize: Style.font.body
+        }
+      }
+
+      // Barge-in cannot work acoustically here -- the microphone sits beside
+      // the speaker -- so stopping a reply is an explicit act. This is the
+      // discoverable half of it; Super+Ctrl+Space is the fast half.
+      Text {
+        visible: voice.vState === "speaking" || voice.vState === "thinking"
+        text: "\uf04d   stop"
+        color: stopHover.containsMouse ? voice.fg : voice.dim
+        font.family: voice.fontFamily
+        font.pixelSize: Style.font.caption
+        MouseArea {
+          id: stopHover
+          anchors.fill: parent
+          anchors.margins: -Style.space(6)
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: interrupt.running = true
         }
       }
 

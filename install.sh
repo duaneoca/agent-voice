@@ -131,4 +131,12 @@ cat <<NEXT
     agentvoice start
 
   The Whisper model downloads on first use (~75MB).
+
+  Optional keybinds -- paste into ~/.config/hypr/bindings.lua. They are not
+  installed for you, because that file is yours:
+
+    o.bind("F8", "Talk to the agent (push-to-talk)", "agentvoice talk")
+    o.bind("F8", "End the turn (push-to-talk)", "agentvoice talk-end", { release = true })
+    o.bind("SUPER + CTRL + SPACE", "Stop the agent talking", "agentvoice interrupt")
+    o.bind("SUPER + ALT + SPACE", "Release or re-engage the mic", "agentvoice mic")
 NEXT

@@ -5,6 +5,10 @@
 #
 #   agentvoice start|stop|toggle   the service, i.e. the switch in the panel
 #   agentvoice mic                 release or re-engage the mic, service left up
+#   agentvoice interrupt           stop the reply in progress, keep listening
+#   agentvoice talk                push-to-talk pressed: listen now, or, if it
+#                                  is mid-reply, stop it
+#   agentvoice talk-end            push-to-talk released: that was the turn
 #   agentvoice status              JSON, for scripts and the bar
 #   agentvoice monitor             live wake-word scores, for calibration
 #   agentvoice permit <id> allow|deny   answer a pending permission request
@@ -17,6 +21,33 @@ STATE="$RUNDIR/state"
 PIDFILE="$RUNDIR/pid"
 
 active() { systemctl --user is-active --quiet "$UNIT"; }
+
+# What the daemon is doing right now; "off" when it is not running.
+vstate() {
+  if [[ -r $STATE ]] && active; then
+    sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p' "$STATE"
+  else
+    echo off
+  fi
+}
+
+# SIGUSR2's default action is to terminate. A daemon installed before the
+# interrupt existed does not catch it, so sending one blind would kill the
+# thing it was meant to interrupt. SigCgt is the caught-signal mask; bit 11
+# is signal 12.
+handles_interrupt() {
+  local mask
+  mask=$(awk '/^SigCgt:/{print $2}' "/proc/$1/status" 2>/dev/null) || return 1
+  [[ -n $mask ]] || return 1
+  (( (0x$mask >> 11) & 1 ))
+}
+
+# One-shot command to the run loop. Renamed into place so the daemon cannot
+# read a half-written file.
+send_command() {
+  mkdir -p "$RUNDIR"
+  printf '%s' "$1" > "$RUNDIR/command.tmp" && mv -f "$RUNDIR/command.tmp" "$RUNDIR/command"
+}
 
 case "${1:-status}" in
   start)
@@ -37,6 +68,37 @@ case "${1:-status}" in
       echo "daemon not running" >&2
       exit 1
     fi
+    ;;
+  interrupt)
+    # Cut the reply short. A no-op when the daemon is idle, so this is safe to
+    # bind to a key you might hit at any time.
+    if [[ -r $PIDFILE ]]; then
+      pid=$(cat "$PIDFILE")
+      if handles_interrupt "$pid"; then
+        kill -USR2 "$pid"
+      else
+        echo "this daemon predates the interrupt; restart it:" >&2
+        echo "  agentvoice stop && agentvoice start" >&2
+        exit 1
+      fi
+    else
+      echo "daemon not running" >&2
+      exit 1
+    fi
+    ;;
+  talk)
+    # The push-to-talk key going down. Mid-reply that means "stop talking";
+    # otherwise it means "listen to me now", skipping the wake word.
+    case "$(vstate)" in
+      off)                 echo "daemon not running" >&2; exit 1 ;;
+      thinking|speaking)   exec "$0" interrupt ;;
+      *)                   send_command talk ;;
+    esac
+    ;;
+  talk-end)
+    # The key coming back up ends the turn. Ignored by the daemon unless a
+    # push-to-talk capture is actually open.
+    active && send_command talk-end
     ;;
   permit)
     # Answer a pending permission request. The overlay calls this; so can you.
@@ -72,7 +134,7 @@ case "${1:-status}" in
     active && echo yes || echo no
     ;;
   *)
-    echo "usage: agentvoice [start|stop|toggle|mic|monitor|permit|pending|status|is-active]" >&2
+    echo "usage: agentvoice [start|stop|toggle|mic|talk|talk-end|interrupt|monitor|permit|pending|status|is-active]" >&2
     exit 2
     ;;
 esac

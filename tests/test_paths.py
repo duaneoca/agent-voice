@@ -1,6 +1,8 @@
 """Where things live, and the dev-versus-installed fallback."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import paths
 
 
@@ -40,3 +42,32 @@ def test_config_toml_prefers_a_user_override(tmp_path, monkeypatch):
     shipped = paths.config_toml()
     (tmp_path / "agentvoice.toml").write_text("")
     assert paths.config_toml() != shipped
+
+
+class TestSuiteIsolation:
+    """The suite must not read the machine it runs on.
+
+    This exists because it did. `SHELL_JSON` was `Path.home() / ".config/..."`,
+    which conftest's XDG redirection could not reach, so the permission tests
+    answered according to whatever level was set on the developer's desktop --
+    and `decide("Bash", {"command": "rm -rf /"})` returned "allow" on a run
+    that reported 104 passed.
+    """
+
+    def test_shell_json_is_not_the_real_one(self):
+        import runtime
+        real = Path.home() / ".config/omarchy/shell.json"
+        assert runtime.SHELL_JSON != real
+
+    def test_a_subprocess_also_sees_the_sandbox(self):
+        """In-process patching does not reach the hook, which Claude spawns."""
+        import subprocess
+        import sys
+
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, %r); "
+             "from paths import SHELL_JSON; print(SHELL_JSON)"
+             % str(Path(__file__).resolve().parent.parent / "daemon")],
+            capture_output=True, text=True, check=True).stdout.strip()
+        assert out != str(Path.home() / ".config/omarchy/shell.json")

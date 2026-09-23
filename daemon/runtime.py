@@ -16,10 +16,11 @@ import threading
 import tomllib
 from pathlib import Path
 
-from paths import RUNTIME_DIR, ROOT, config_toml, piper_voices  # noqa: F401
+from paths import (  # noqa: F401
+    RUNTIME_DIR, ROOT, SHELL_JSON, config_toml, piper_voices,
+)
 
 PLUGIN_ID = "duaneoca.agentvoice"
-SHELL_JSON = Path.home() / ".config/omarchy/shell.json"
 
 # Mirrors manifest.json's barWidget.defaults. Duplicated deliberately: the
 # daemon has to run with no plugin installed and no config file present.
@@ -42,7 +43,8 @@ DEFAULTS = {
     "model": "tiny.en",
     "speakReplies": True,
     "livePartials": "auto",
-    "askPermission": True,
+    "permissionLevel": "ask",
+    "projectDir": "",
     "conversationMode": True,
     "followUpMs": 7000,
     "voice": "lessac-medium",
@@ -65,7 +67,8 @@ TOML_ALIASES = {
     "refractoryMs": ("wake", "refractory_ms"),
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
-    "askPermission": ("agent", "ask_permission"),
+    "permissionLevel": ("agent", "permission_level"),
+    "projectDir": ("agent", "project_dir"),
     "conversationMode": ("wake", "conversation_mode"),
     "followUpMs": ("timing", "follow_up_ms"),
 }
@@ -166,6 +169,11 @@ class StateFile:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload))
         tmp.replace(self.path)
+
+    @property
+    def current(self) -> str:
+        """The last state published, for code that must not act out of turn."""
+        return str(self._last.get("state", "off"))
 
     def clear(self) -> None:
         self.publish("off")

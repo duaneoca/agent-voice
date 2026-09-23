@@ -23,6 +23,15 @@ for var in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR"):
 
 sys.path.insert(0, str(ROOT / "daemon"))
 
+# shell.json is found through Path.home(), not through XDG_CONFIG_HOME, so
+# redirecting the XDG variables above does not cover it. Without this the
+# suite reads the developer's own settings: the permission tests then pass or
+# fail according to whatever level happens to be set on the machine, which is
+# how a `decide()` that answered "allow" to `rm -rf /` got a green run.
+import runtime  # noqa: E402
+
+runtime.SHELL_JSON = _SANDBOX / "shell.json"
+
 import pytest  # noqa: E402
 
 
