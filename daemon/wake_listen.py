@@ -576,7 +576,10 @@ class Daemon:
         # mean nothing. Only Claude Code can raise a prompt from here; the
         # others are held in whatever read-only or ask-first mode their CLI
         # has, which is weaker and worth saying out loud.
-        if self.agent and self.level() != "trusted":
+        if self.agent and not getattr(self.agent, "has_tools", True):
+            print(f"  {DIM}permission: nothing to permit — {self.agent.name} "
+                  f"has no tools and cannot read or change anything{OFF}")
+        elif self.agent and self.level() != "trusted":
             if getattr(self.agent, "guards_permissions", False):
                 print(f"  {DIM}permission: prompts on screen{OFF}")
             else:
@@ -586,9 +589,12 @@ class Daemon:
         elif self.agent:
             print(f"  {YEL}permission: not asking. {self.agent.name} can change"
                   f" files and run commands unchallenged.{OFF}")
-        if self.agent:
+        if self.agent and getattr(self.agent, "has_tools", True):
             print(f"  {DIM}project: {getattr(self.agent, 'cwd', '?')}"
                   f" · {self.posture()}{OFF}")
+        elif self.agent:
+            # No cwd to speak of: it never touches the filesystem.
+            print(f"  {DIM}{self.posture()}{OFF}")
         print(f"  {DIM}agent: {who} · voice: "
               f"{self.speaker.name if self.speaker else 'off'}"
               f"   (ctrl-c to stop){OFF}\n")

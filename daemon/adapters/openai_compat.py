@@ -35,6 +35,7 @@ class OpenAICompatible(Adapter):
     #: saying about it is where the words go, which posture() does.
     levels = ("ask",)
     guards_permissions = False
+    has_tools = False
 
     def __init__(self, base_url: str, model: str,
                  api_key: str | None = None,

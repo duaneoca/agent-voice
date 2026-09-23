@@ -132,6 +132,13 @@ class Adapter(ABC):
     #: one is a lie.
     levels: tuple[str, ...] = ("ask", "trusted")
 
+    #: False for a backend that can only produce words. Distinct from being
+    #: unable to *ask*: an agent held read-only would act if it were allowed
+    #: to and refuses because it is not, while this one has nothing to refuse
+    #: with. Saying "it may refuse work rather than ask" about a chat
+    #: completion describes a restraint that is not doing any work.
+    has_tools: bool = True
+
     #: Seconds of silence before this backend is presumed hung.
     idle_timeout_s: float = IDLE_TIMEOUT_S
 
