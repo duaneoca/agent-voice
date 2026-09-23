@@ -477,7 +477,8 @@ class Daemon:
                                   level=want_level, endpoint=endpoint)
         self.session_id = None
         self.publish_agent()
-        print(f"  {CYA}agent: {want_name or 'nobody'} · {want_cwd}{OFF}"
+        where = f" · {want_cwd}" if getattr(self.agent, "has_tools", True) else ""
+        print(f"  {CYA}agent: {want_name or 'nobody'}{where}{OFF}"
               f"  {DIM}({self.posture()}){OFF}")
 
     def endpoint_spec(self) -> dict | None:
