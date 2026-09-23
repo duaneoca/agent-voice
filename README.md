@@ -1,5 +1,7 @@
 # agentvoice
 
+[![check](https://github.com/duaneoca/agent-voice/actions/workflows/check.yml/badge.svg)](https://github.com/duaneoca/agent-voice/actions/workflows/check.yml)
+
 A drop in voice extension for Omarchy. Gives whatever AI agent is
 installed on the box a natural voice interface: wake word or push to
 talk in, spoken replies out. Claude Code is the first target, not the

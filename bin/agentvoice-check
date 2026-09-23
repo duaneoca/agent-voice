@@ -10,6 +10,14 @@ fail=0
 
 say() { printf '  %-46s %s\n' "$1" "$2"; }
 
+# Several checks below iterate `git ls-files`. Outside a repository that is
+# empty, and every one of them would pass having examined nothing -- the same
+# shape of false green as a skipped test suite.
+if ! git -C "$ROOT" ls-files --error-unmatch manifest.json >/dev/null 2>&1; then
+  say "repository" "FAIL: not a git checkout, so the file checks would be vacuous"
+  exit 1
+fi
+
 # 1. every schema key is rendered somewhere in the overlay
 out=$(python3 - "$ROOT" <<'PY'
 import json, pathlib, re, sys
@@ -51,7 +59,30 @@ for f in $(git -C "$ROOT" ls-files 'bin/*' 'install.sh' 'bench/*.sh'); do
 done
 if [[ -n ${bad// } ]]; then say "shell syntax" "FAIL:$bad"; fail=1; else say "shell syntax" "ok"; fi
 
-# 5. the behavioural tests, when pytest is available
+# 5. nothing that would stop `omarchy plugin add` installing this. It refuses
+# symlinks inside a plugin folder, and the manifest is the first thing the
+# shell reads -- an entry point naming a file that is not there installs a
+# widget that silently does nothing.
+out=$(git -C "$ROOT" ls-files -s | awk '$1 == "120000" {print $4}')
+if [[ -n ${out// } ]]; then say "tracked symlinks (plugin add refuses them)" "FAIL: $out"; fail=1
+else say "no tracked symlinks" "ok"; fi
+
+out=$(python3 - "$ROOT" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+m = json.loads((root / "manifest.json").read_text())
+missing = [k for k in ("id", "name", "version", "license", "schemaVersion",
+                       "kinds", "entryPoints") if not m.get(k)]
+for kind, rel in (m.get("entryPoints") or {}).items():
+    if not (root / rel).exists():
+        missing.append(f"{kind}->{rel}")
+print(" ".join(missing))
+PY
+)
+if [[ -n ${out// } ]]; then say "manifest is installable" "FAIL: $out"; fail=1
+else say "manifest is installable" "ok"; fi
+
+# 6. the behavioural tests, when pytest is available
 PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
 [[ -x $PY ]] || PY="$ROOT/bench/.venv/bin/python"
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
@@ -62,6 +93,11 @@ if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
     echo "$out" | tail -20 | sed 's/^/    /'
     fail=1
   fi
+elif [[ -n ${AGENTVOICE_STRICT:-}${CI:-} ]]; then
+  # A skip is a green run that proved nothing. Acceptable on a laptop with no
+  # dev venv; never acceptable on a machine whose whole job is to check.
+  say "tests" "FAIL: pytest missing, and this is a strict run"
+  fail=1
 else
   say "tests" "skipped (pip install -r requirements-dev.txt)"
 fi

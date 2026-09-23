@@ -1,0 +1,40 @@
+# The same gate CLAUDE.md asks for before every commit, run where it cannot
+# be forgotten. It needs nothing but pytest: the daemon imports numpy, piper,
+# onnxruntime and the rest lazily, inside the functions that use them, so the
+# suite runs in seconds without a single machine-learning wheel.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # install.sh pins 3.13 because openWakeWord's wheels stop there, not
+        # because the code needs it. Testing the range keeps that true, and
+        # keeps the pin an honest statement about dependencies.
+        python-version: ['3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run checks
+        env:
+          # Without this a missing pytest is reported as "skipped" and the run
+          # exits 0 -- a green build that tested nothing, which is worse than
+          # a red one.
+          AGENTVOICE_STRICT: "1"
+        run: AGENTVOICE_PYTHON="$(command -v python)" ./bin/agentvoice-check
