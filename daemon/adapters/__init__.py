@@ -59,8 +59,13 @@ def load(name: str | None = None, level: str | None = None,
 
     def finish(adapter: Adapter) -> Adapter | None:
         # Applied after construction so every adapter takes the same call,
-        # whether or not it can do anything with the level.
-        if level:
+        # whether or not it can do anything with the level -- but only when
+        # the backend says it can honour it. A level stored before a backend
+        # withdrew support for it must not keep taking effect: agy dropped
+        # "edits" once it turned out not to confine writes to the project,
+        # and a stale value would otherwise have gone on selecting the very
+        # mode that was withdrawn.
+        if level and level in getattr(adapter, "levels", ()):
             adapter.level = level
         return adapter if adapter.available() else None
 

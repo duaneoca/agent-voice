@@ -320,3 +320,38 @@ anyway. Upstream issue #1053, open against 1.2.7. A hook there can restrict
 and never permit, so it cannot be the thing that asks -- the same shape of
 trap as `--permission-prompt-tool`, and worth re-testing before any adapter
 depends on it.
+
+## 13. `--add-dir` adds to a workspace; it does not restrict to one
+
+Antigravity was given the `edits` level on the strength of its flags:
+`--mode accept-edits` with `--add-dir <project>` reads exactly like "files
+in the project change without asking". Tested on 2026-09-23 against agy
+1.2.8, it is not:
+
+    project:  /tmp/.../proj      --add-dir points here
+    target:   /tmp/.../outside/target.txt
+    prompt:   "write CHANGED into <target>, then say done"
+
+    result:   status SUCCESS, "Done. Updated target.txt"
+    target:   CHANGED
+
+Repeated with `allowNonWorkspaceAccess: false` in
+`~/.gemini/antigravity-cli/settings.json` -- the setting the docs describe
+as restricting access outside project directories -- with the same result.
+The workspace had also been trusted wholesale at login
+(`trustedWorkspaces: ["/home/duaneo"]`), which is the likeliest reason, and
+there is no per-invocation flag that restricts: `--sandbox` is terminal
+restrictions, not file ones.
+
+So the level was withdrawn. Our `edits` means *inside the project*, and the
+same screen shows Claude Code honouring exactly that, so a user would read
+across. A permission name that means one thing on one row and something
+broader on the next is worse than having one fewer option.
+
+Two locks, because a stored setting outlives the reasoning behind it: an
+adapter only accepts a level it still declares, and the flag is chosen
+defensively at the call site as well.
+
+**What would bring it back:** a demonstration that writes outside the
+project are refused. That is a measurement, not a reading of the flags --
+the flags said it already.
