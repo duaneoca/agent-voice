@@ -74,13 +74,12 @@ class TestEnvelope:
 
 
 class TestLevelsBecomeFlags:
-    """The reason this backend can honour "edits" without being able to ask:
-    the level is declared as a flag before the turn, not as a question during
-    it."""
+    """The level is declared as a flag before the turn rather than asked
+    during it -- which is why a backend that cannot prompt can still have
+    more than one honest posture."""
 
     @pytest.mark.parametrize("level,expected", [
         ("ask", ["--mode", "plan"]),
-        ("edits", ["--mode", "accept-edits"]),
         ("trusted", ["--dangerously-skip-permissions"]),
     ])
     def test_each_level_maps_to_its_flag(self, level, expected):
@@ -89,6 +88,28 @@ class TestLevelsBecomeFlags:
             assert token in argv
         if level != "trusted":
             assert "--dangerously-skip-permissions" not in argv
+
+    def test_edits_is_not_offered(self):
+        """Measured, not assumed: asked to write outside the project at
+        --mode accept-edits --add-dir <project>, agy did it and reported
+        SUCCESS -- with default settings and with allowNonWorkspaceAccess
+        off. Our "edits" means confined to the project, so offering it here
+        would import a guarantee from the Claude Code row of the same screen.
+        """
+        assert "edits" not in Antigravity().levels
+
+    def test_a_stale_stored_edits_cannot_reach_the_flag(self):
+        """Someone who chose edits before it was withdrawn must not keep
+        getting accept-edits."""
+        from adapters import load
+        a = load("agy", level="edits", cwd="/tmp")
+        assert a is None or a.level == "ask"
+        argv = Antigravity(cwd="/tmp")
+        argv.level = "edits"          # forced past every constructor guard
+        assert "accept-edits" not in argv._argv("hi", None)
+
+    def test_the_posture_does_not_claim_confinement(self):
+        assert "not confined" in Antigravity().posture("trusted")
 
     def test_the_project_is_the_workspace(self):
         argv = Antigravity(cwd="/tmp/project")._argv("hi", None)

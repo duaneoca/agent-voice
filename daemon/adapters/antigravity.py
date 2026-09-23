@@ -43,9 +43,17 @@ class Antigravity(Adapter):
     name = "agy"
     # No hook that can grant, so nothing can be asked mid-call.
     guards_permissions = False
-    # ...but the levels are still honest, because the CLI takes them as flags
-    # before the turn starts rather than as a question during it.
-    levels = ("ask", "edits", "trusted")
+    # "edits" is deliberately absent, and it was offered here until it was
+    # tested. Our "edits" means files *inside the project* change without
+    # asking. `--mode accept-edits --add-dir <project>` does not mean that:
+    # asked to write outside the project it did so and reported SUCCESS, both
+    # with the default settings and with allowNonWorkspaceAccess turned off.
+    # --add-dir adds to a workspace rather than restricting to one, and there
+    # is no flag that restricts. Offering the level under a name that means
+    # confinement elsewhere would import a guarantee that is not here; a user
+    # would read it as the Claude Code behaviour, because that is what it says
+    # on the same screen. It can come back when confinement can be shown.
+    levels = ("ask", "trusted")
 
     def __init__(self, model: str | None = None, cwd: str | None = None,
                  spoken: bool = True, ask_permission: bool = True,
@@ -71,9 +79,7 @@ class Antigravity(Adapter):
 
     def posture(self, level: str) -> str:
         if level == "trusted":
-            return "trusted — never asks"
-        if level == "edits":
-            return "edits here · commands sandboxed"
+            return "trusted — never asks, not confined to the project"
         return "read-only — agy plans but does not act"
 
     def _argv(self, text: str, session_id: str | None) -> list[str]:
@@ -88,7 +94,10 @@ class Antigravity(Adapter):
         if self.level == "trusted":
             argv.append("--dangerously-skip-permissions")
         else:
-            argv += ["--mode", "accept-edits" if self.level == "edits" else "plan"]
+            # accept-edits only if this adapter still claims to support it.
+            # It does not today, so this is the second lock on the same door.
+            accepts = self.level == "edits" and "edits" in self.levels
+            argv += ["--mode", "accept-edits" if accepts else "plan"]
         if self.model:
             argv += ["--model", self.model]
         if session_id:
