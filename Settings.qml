@@ -79,8 +79,40 @@ Item {
   readonly property var modelOptions: ["tiny.en", "base.en", "small.en"]
 
   readonly property bool conversation: setting("conversationMode", true)
-  readonly property string permissionLevel: setting("permissionLevel", "ask")
+  // Published by the daemon, because what a level means depends on what the
+  // running agent can honour and only the daemon knows that.
+  property string vAgent: ""
+  property string permissionLevel: "ask"
+  property string vPosture: ""
+  property var agentLevels: ["ask", "trusted"]
   readonly property string projectDir: setting("projectDir", "")
+
+  //: Levels are stored per agent: trust is a judgement about one program's
+  //: capabilities, and letting it survive `omarchy default agent` would hand
+  //: the next one a decision nobody made about it.
+  function setLevel(value) {
+    var all = {}
+    var current = cfg["permissions"]
+    if (current && typeof current === "object")
+      for (var k in current) all[k] = current[k]
+    if (root.vAgent === "") return
+    all[root.vAgent] = value
+    persist("permissions", JSON.stringify(all), true)
+  }
+
+  function levelOption(value) {
+    if (value === "trusted") return { label: "Trust everything here", value: "trusted" }
+    if (value === "edits") return { label: "Edits here are fine, ask for commands", value: "edits" }
+    return { label: root.agentLevels.indexOf("edits") >= 0
+                    ? "Ask before every change" : "Read-only, never act unasked",
+             value: "ask" }
+  }
+  readonly property var levelOptions: {
+    var out = []
+    for (var i = 0; i < root.agentLevels.length; i++)
+      out.push(levelOption(String(root.agentLevels[i])))
+    return out
+  }
   readonly property bool speakReplies: setting("speakReplies", true)
   readonly property string engine: setting("engine", "vosk")
   readonly property bool usingOww: engine === "openwakeword"
@@ -220,6 +252,10 @@ Item {
         var d = JSON.parse(text())
         root.vState = String(d.state || "off")
         if (d.level_db !== undefined) root.levelDb = d.level_db
+        if (d.agent !== undefined) root.vAgent = String(d.agent)
+        if (d.level !== undefined) root.permissionLevel = String(d.level)
+        if (d.posture !== undefined) root.vPosture = String(d.posture)
+        if (d.levels !== undefined) root.agentLevels = d.levels
       } catch (e) {}
     }
   }
@@ -444,30 +480,32 @@ Item {
             Dropdown {
               width: parent.width
               showLabel: true
-              label: "Permission level"
+              label: root.vAgent === "" ? "Permission level"
+                                        : "Permission level for " + root.vAgent
               fontFamily: root.fontFamily
               foreground: root.foreground
-              options: [
-                { label: "Ask before every change", value: "ask" },
-                { label: "Edits here are fine, ask for commands", value: "edits" },
-                { label: "Trust everything here", value: "trusted" }
-              ]
+              options: root.levelOptions
               value: root.permissionLevel
-              onChanged: function(v) { root.persist("permissionLevel", v, false) }
+              onChanged: function(v) { root.setLevel(v) }
             }
 
             Text {
               width: parent.width
               wrapMode: Text.WordWrap
-              text: root.permissionLevel === "edits"
-                    ? "Files inside the project can be edited without asking. " +
-                      "Commands, web fetches and anything outside the project " +
-                      "still prompt."
-                    : root.permissionLevel === "trusted"
-                    ? "Nothing is asked. A spoken sentence can edit files and " +
-                      "run commands here with nothing able to stop it."
-                    : "Every change is prompted. Read-only tools are never asked " +
-                      "about, and an unanswered prompt is denied."
+              text: (root.vPosture !== "" ? "In force: " + root.vPosture + ".  " : "")
+                    + (root.agentLevels.indexOf("edits") < 0
+                       ? (root.vAgent === "" ? "" : root.vAgent + " cannot put a " +
+                          "question on screen, so it is held read-only instead and " +
+                          "may refuse work rather than ask. Only the trusted level " +
+                          "changes that.")
+                       : root.permissionLevel === "edits"
+                       ? "Files inside the project can be edited without asking. " +
+                         "Commands, web fetches and anything outside it still prompt."
+                       : root.permissionLevel === "trusted"
+                       ? "Nothing is asked. A spoken sentence can edit files and run " +
+                         "commands here with nothing able to stop it."
+                       : "Every change is prompted. Read-only tools are never asked " +
+                         "about, and an unanswered prompt is denied.")
               color: root.permissionLevel === "trusted" ? Color.urgent : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

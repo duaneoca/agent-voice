@@ -169,15 +169,31 @@ Autodetect on install; choose the active one in config.
 
 **Project and permissions**
 The agent works in one directory, and what it may do is a property of
-that directory -- the two are one setting, shown together on the panel so
-you can see before you speak what you are about to affect and how much it
-can do without asking. Empty means your home directory, which is what a
-bare `claude` does.
+that directory and of the agent -- shown together on the panel so you can
+see before you speak what you are about to affect and how much it can do
+without asking. Empty means your home directory, which is what a bare
+`claude` does.
 
   ask       every change is prompted
   edits     files inside the project may be edited without asking;
             commands, web fetches and anything outside it still prompt
   trusted   nothing is asked
+
+**The level is per agent, and absence is never permission.** Trust is a
+judgement about one program's capabilities, and those differ enormously:
+Claude Code can be stopped mid-call by a hook we answer, Codex cannot be
+stopped at all. A single global level meant that trusting Claude Code
+silently handed the same trust to whatever `omarchy default agent` was
+switched to next. Levels are stored per agent, an agent nobody has
+decided about reads as `ask`, and switching agents at the desktop is
+picked up live rather than at the next restart.
+
+Each backend offers only the levels it can honour, and the panel names
+what is actually in force -- `claude · edits here · commands ask`, or
+`codex · read-only (codex cannot ask)`. `edits` needs somewhere to put
+the question or a flag that means it, so today only Claude Code has it.
+Offering three levels where one is a lie is how a screen ends up
+promising a guarantee that is not running.
 
 `edits` is the level that stops you approving reflexively: editing files
 is frequent and legible, running shell commands is rare and dangerous, so

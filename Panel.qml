@@ -136,7 +136,13 @@ Panel {
   // rather than behind the gear because it is the thing to check *before*
   // speaking -- what am I about to change, and can it act without asking.
   readonly property string projectDir: voice.setting("projectDir", "")
-  readonly property string permissionLevel: voice.setting("permissionLevel", "ask")
+  // Agent, level and posture come from the daemon's state file rather than
+  // from shell.json: what a level *means* depends on what the running agent
+  // can honour, and only the daemon knows that. Keeping a second copy here
+  // is how a screen ends up promising a guarantee that is not in force.
+  property string vAgent: ""
+  property string permissionLevel: "ask"
+  property string vPosture: ""
   readonly property string projectLabel: {
     var d = String(voice.projectDir).trim()
     if (d === "") return "~"
@@ -146,11 +152,9 @@ Panel {
   }
   readonly property color permissionColor:
     voice.permissionLevel === "trusted" ? voice.urgent : voice.dim
-  readonly property string permissionLabel: {
-    if (voice.permissionLevel === "trusted") return "trusted — never asks"
-    if (voice.permissionLevel === "edits") return "edits here · commands ask"
-    return "asks before every change"
-  }
+  readonly property string permissionLabel:
+    (voice.vAgent === "" ? "" : voice.vAgent + " · ")
+    + (voice.vPosture !== "" ? voice.vPosture : "asks before every change")
 
   // systemd is the authority on whether the daemon exists; the state file only
   // says what it is doing. Both are needed: a stale state file outlives a
@@ -189,6 +193,9 @@ Panel {
         if (d.audio_s !== undefined) voice.lastAudioS = d.audio_s
         if (d.level_db !== undefined) voice.levelDb = d.level_db
         if (d.reply !== undefined) voice.lastReply = String(d.reply)
+        if (d.agent !== undefined) voice.vAgent = String(d.agent)
+        if (d.level !== undefined) voice.permissionLevel = String(d.level)
+        if (d.posture !== undefined) voice.vPosture = String(d.posture)
       } catch (e) {
         voice.vState = "off"
       }

@@ -18,6 +18,10 @@ GUARDED_TOOLS = "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|KillShell"
 class ClaudeCode(Adapter):
     name = "claude"
     guards_permissions = True
+    # The only backend with somewhere to put the question: a PreToolUse hook
+    # receives the pending call and blocks on the verdict, so "edits" can be
+    # decided per call against the project path.
+    levels = ("ask", "edits", "trusted")
 
     # `auto` is the mode Omarchy's own `omarchy agent` uses for unattended
     # launches. Until the permission overlay exists there is nothing to answer
@@ -35,8 +39,8 @@ class ClaudeCode(Adapter):
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
-    @staticmethod
-    def _hook_settings() -> str:
+    @classmethod
+    def _hook_settings(cls) -> str:
         """A PreToolUse hook, passed inline as JSON.
 
         `--settings` takes a JSON string and loads it *in addition to* the
@@ -55,8 +59,11 @@ class ClaudeCode(Adapter):
         hook = Path(__file__).resolve().parent.parent / "permission_hook.py"
         return json.dumps({"hooks": {"PreToolUse": [{
             "matcher": GUARDED_TOOLS,
+            # The agent's own name travels with the hook: permission levels
+            # are per agent now, and the hook is a separate process that
+            # cannot otherwise know which one spawned it.
             "hooks": [{"type": "command",
-                       "command": f"{sys.executable} {hook}"}],
+                       "command": f"{sys.executable} {hook} {cls.name}"}],
         }]}})
 
     def available(self) -> bool:

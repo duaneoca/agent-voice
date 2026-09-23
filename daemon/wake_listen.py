@@ -445,18 +445,47 @@ class Daemon:
         in Claude Code, so carrying an id across a directory change would
         resume the wrong conversation, or none.
         """
-        if self.agent is None:
-            return
+        want_name = omarchy_default()
         want_cwd = str(project_dir(self.cfg.str("projectDir")))
-        want_ask = self.cfg.str("permissionLevel") != "trusted"
-        if (getattr(self.agent, "cwd", None) == want_cwd
+        want_level = self.cfg.level_for(want_name)
+        want_ask = want_level != "trusted"
+        if (self.agent is not None
+                and getattr(self.agent, "name", None) == want_name
+                and getattr(self.agent, "cwd", None) == want_cwd
                 and getattr(self.agent, "ask_permission", None) == want_ask):
+            self.publish_agent()
             return
-        self.agent.cancel()
+        if self.agent is not None:
+            self.agent.cancel()
         self.agent = load_adapter(ask_permission=want_ask, cwd=want_cwd)
         self.session_id = None
-        print(f"  {CYA}project: {want_cwd}{OFF}  {DIM}"
-              f"({self.cfg.str('permissionLevel')}){OFF}")
+        self.publish_agent()
+        print(f"  {CYA}agent: {want_name or 'nobody'} · {want_cwd}{OFF}"
+              f"  {DIM}({self.posture()}){OFF}")
+
+    def level(self) -> str:
+        return self.cfg.level_for(getattr(self.agent, "name", None))
+
+    def posture(self) -> str:
+        """What the level means for the agent actually running."""
+        if self.agent is None:
+            return "no agent"
+        return self.agent.posture(self.level())
+
+    def publish_agent(self) -> None:
+        """Tell the panel which agent is up and what it can honour.
+
+        The panel could not work this out for itself without keeping its own
+        copy of every adapter's capabilities, which would drift the first time
+        one changed. It is published instead, so the screen and the daemon
+        cannot disagree about a permission guarantee.
+        """
+        self.state.describe(
+            agent=getattr(self.agent, "name", "") or "",
+            level=self.level(),
+            levels=list(getattr(self.agent, "levels", ("ask", "trusted"))),
+            posture=self.posture(),
+        )
 
     def _on_interrupt(self, *_):
         """Cut the current reply short and go back to listening.
@@ -510,7 +539,7 @@ class Daemon:
         # mean nothing. Only Claude Code can raise a prompt from here; the
         # others are held in whatever read-only or ask-first mode their CLI
         # has, which is weaker and worth saying out loud.
-        if self.agent and self.cfg.str("permissionLevel") != "trusted":
+        if self.agent and self.level() != "trusted":
             if getattr(self.agent, "guards_permissions", False):
                 print(f"  {DIM}permission: prompts on screen{OFF}")
             else:
@@ -522,17 +551,20 @@ class Daemon:
                   f" files and run commands unchallenged.{OFF}")
         if self.agent:
             print(f"  {DIM}project: {getattr(self.agent, 'cwd', '?')}"
-                  f" · permission {self.cfg.str('permissionLevel')}{OFF}")
+                  f" · {self.posture()}{OFF}")
         print(f"  {DIM}agent: {who} · voice: "
               f"{self.speaker.name if self.speaker else 'off'}"
               f"   (ctrl-c to stop){OFF}\n")
 
     def refresh(self):
         """Between turns, re-read config and re-announce if it moved."""
+        # Outside the reload guard: `omarchy default agent` writes its own
+        # file, which cfg.reload() does not watch, so a switch at the desktop
+        # would otherwise not reach the daemon until it restarted.
+        self.reconcile_agent()
         if not self.cfg.reload():
             return
         self.pipe.apply(self.cfg)
-        self.reconcile_agent()
 
         # A voice swap means loading a different model, so it happens here
         # between turns rather than mid-sentence.
@@ -873,7 +905,7 @@ def main() -> int:
 
     agent = None
     if not args.no_agent:
-        level = cfg.str("permissionLevel")
+        level = cfg.level_for(omarchy_default())
         agent = load_adapter(ask_permission=level != "trusted",
                              cwd=str(project_dir(cfg.str("projectDir"))))
         if agent is None:

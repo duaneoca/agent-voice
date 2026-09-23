@@ -52,7 +52,11 @@ def _settings() -> tuple[str, Path]:
     try:
         from runtime import Config
         cfg = Config()
-        return cfg.str("permissionLevel"), project_dir(cfg.str("projectDir"))
+        # argv[1] is the agent that installed this hook. Without it the level
+        # cannot be resolved, and an unresolved level is "ask" -- a hook that
+        # does not know who it is guarding must not stop guarding.
+        agent = sys.argv[1] if len(sys.argv) > 1 else ""
+        return cfg.level_for(agent), project_dir(cfg.str("projectDir"))
     except Exception:
         return "ask", project_dir("")
 
