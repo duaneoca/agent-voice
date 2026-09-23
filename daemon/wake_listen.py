@@ -49,6 +49,12 @@ from paths import (  # noqa: F401
 
 RATE, CHUNK = 16_000, 3200          # 100ms frames
 
+
+def _host(url: str) -> str:
+    """The hostname of an endpoint URL, for looking its key up by."""
+    import urllib.parse
+    return (urllib.parse.urlparse(url).hostname or "").lower()
+
 DIM, RED, GRN, YEL, CYA, BLD, OFF = (
     "\033[2m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[1m", "\033[0m")
 
@@ -473,6 +479,8 @@ class Daemon:
             return
         if self.agent is not None:
             self.agent.cancel()
+        if endpoint:
+            endpoint = {**endpoint, "key": endpoint_key(_host(endpoint["url"]))}
         self.agent = load_adapter(ask_permission=want_ask, cwd=want_cwd,
                                   level=want_level, endpoint=endpoint)
         self.session_id = None
@@ -492,7 +500,10 @@ class Daemon:
         model = self.cfg.str("endpointModel").strip()
         if not url or not model:
             return None
-        return {"url": url, "model": model, "key": endpoint_key()}
+        # No key here: this runs on the idle poll, every couple of seconds,
+        # and reading the keyring means spawning secret-tool. The key is
+        # fetched once, where the adapter is actually built.
+        return {"url": url, "model": model}
 
     def level(self) -> str:
         return self.cfg.level_for(getattr(self.agent, "name", None))
@@ -952,7 +963,7 @@ def main() -> int:
         level = cfg.level_for(omarchy_default())
         url = cfg.str("endpointUrl").strip()
         model = cfg.str("endpointModel").strip()
-        spec = ({"url": url, "model": model, "key": endpoint_key()}
+        spec = ({"url": url, "model": model, "key": endpoint_key(_host(url))}
                 if url and model else None)
         agent = load_adapter(ask_permission=level != "trusted", level=level,
                              cwd=str(project_dir(cfg.str("projectDir"))),

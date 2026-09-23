@@ -234,3 +234,64 @@ class TestKeyFileShape:
         (keyfile.CONFIG_DIR / "endpoint.key").write_text("sk-from-file")
         monkeypatch.setenv("AGENTVOICE_ENDPOINT_KEY", "sk-from-env")
         assert keyfile.endpoint_key() == "sk-from-env"
+
+
+class TestKeySources:
+    """Where a key comes from, in order of how well the machine protects it.
+
+    Omarchy has no key store to borrow: it installs each agent CLI and lets
+    it handle its own authentication. So the order here is ours to choose,
+    and it runs environment, then login keyring by host, then keyring
+    generic, then a plaintext file for machines with no keyring.
+    """
+
+    @pytest.fixture
+    def fresh(self, tmp_path, monkeypatch):
+        import importlib
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        for var in ("AGENTVOICE_ENDPOINT_KEY", "OPENAI_API_KEY", "XAI_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        import paths
+        importlib.reload(paths)
+        paths.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        yield paths, monkeypatch
+        importlib.reload(paths)
+
+    def test_the_environment_beats_everything(self, fresh):
+        paths, mp = fresh
+        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        mp.setattr(paths, "_keyring", lambda **k: "from-keyring")
+        mp.setenv("AGENTVOICE_ENDPOINT_KEY", "from-env")
+        assert paths.endpoint_key("api.openai.com") == "from-env"
+
+    def test_the_keyring_beats_the_file(self, fresh):
+        paths, mp = fresh
+        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        mp.setattr(paths, "_keyring", lambda **k: "from-keyring")
+        assert paths.endpoint_key("api.openai.com") == "from-keyring"
+
+    def test_the_file_is_the_fallback(self, fresh):
+        paths, mp = fresh
+        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        mp.setattr(paths, "_keyring", lambda **k: "")
+        mp.setattr(paths, "_keyring_has_hosts", lambda: False)
+        assert paths.endpoint_key("api.openai.com") == "from-file"
+
+    def test_one_vendors_key_is_never_sent_to_another(self, fresh):
+        """The leak this closes: with an OpenAI key in the file and the
+        endpoint switched to xAI, the OpenAI credential would have gone to
+        api.x.ai. Once anything is filed by host, a miss means no key."""
+        paths, mp = fresh
+        (paths.CONFIG_DIR / "endpoint.key").write_text("openai-key")
+        mp.setattr(paths, "_keyring",
+                   lambda **k: "openai-key" if k.get("endpoint") == "api.openai.com" else "")
+        mp.setattr(paths, "_keyring_has_hosts", lambda: True)
+        assert paths.endpoint_key("api.openai.com") == "openai-key"
+        assert paths.endpoint_key("api.x.ai") == ""
+
+    def test_a_missing_secret_tool_is_not_an_error(self, fresh):
+        """Most machines have a keyring; a headless one may not."""
+        paths, mp = fresh
+        mp.setattr(paths.shutil, "which", lambda _: None)
+        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        assert paths.endpoint_key("api.openai.com") == "from-file"
