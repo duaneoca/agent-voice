@@ -93,7 +93,40 @@ PY
 if [[ -n ${out// } ]]; then say "manifest is installable" "FAIL: $out"; fail=1
 else say "manifest is installable" "ok"; fi
 
-# 6. the behavioural tests, when pytest is available
+# 6. no test imports a heavy dependency before it can be skipped. The runner
+# installs pytest and nothing else -- that is what keeps it at fifteen
+# seconds -- so `import numpy` at the top of a test file passes here and
+# fails there. Three times in one week, each found by CI rather than by this.
+out=$("$PY" - "$ROOT" <<'PY'
+import ast, pathlib, sys
+# Only the wheels the runner does not install. The project's own modules are
+# fine: they are stdlib-only at import time, which is why the suite runs at
+# all. A test needing one of these must reach it through pytest.importorskip.
+heavy = {"numpy", "onnxruntime", "sounddevice", "torch", "openwakeword",
+         "vosk", "piper", "scipy", "sklearn", "faster_whisper", "soundfile",
+         "joblib", "barge", "verifier", "monitor"}
+bad = []
+for path in sorted((pathlib.Path(sys.argv[1]) / "tests").glob("test_*.py")):
+    for node in ast.parse(path.read_text()).body:      # module level only
+        names = []
+        if isinstance(node, ast.Import):
+            names = [a.name.split(".")[0] for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names = [node.module.split(".")[0]]
+        for n in names:
+            if n in heavy:
+                bad.append(f"{path.name}:{node.lineno} {n}")
+print(" ".join(bad))
+PY
+)
+if [[ -n ${out// } ]]; then
+  say "tests import heavy deps at module level" "FAIL: $out"
+  fail=1
+else
+  say "no test imports a heavy dep too early" "ok"
+fi
+
+# 7. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"
