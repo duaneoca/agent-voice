@@ -421,35 +421,43 @@ Done:
 7. A project directory the agent works in, and permission levels that
    are per agent, because trust is a judgement about one program's
    capabilities and cannot survive swapping the program.
-8. Four backends answering live turns: Claude Code, Codex, Gemini and
-   Antigravity.
+8. Eight backends answering live turns: Claude Code, Codex, Gemini,
+   Antigravity, and -- through one OpenAI-compatible adapter -- Ollama,
+   OpenAI, Groq and xAI Grok. The endpoint path was 114 lines that had
+   never run; it is now the fastest backend here and the only one whose
+   wire format never had to be guessed.
+9. Keys in the login keyring rather than a file, looked up by endpoint
+   host so several providers coexist.
 
 Next, roughly in order of how much they matter:
 
 9. Run the remaining adapters against live agents. The ten sharing the
-   CLI adapter never have, and their permission posture is inferred
-   from flags rather than tested. They are Omarchy mise stubs on this
-   machine, so each needs a real install first.
+   CLI adapter never have, and every one is an Omarchy mise stub here,
+   so each needs a real install first. Their `remembers = False` is an
+   inference from our own adapter yielding no session id, not a
+   measurement of the CLI -- if one is ever installed, check whether it
+   hands back a handle we are throwing away.
 
    The rate of wrong guesses so far: three in Gemini's adapter, none in
-   Codex's, and one security claim withdrawn from Antigravity's after
-   testing. Assume flags read off `--help` are a hypothesis.
-10. Decide what to do about `OpenAICompatible`. It covers Ollama, LM
-    Studio, vLLM and anything else speaking that dialect -- the one
-    wire format here that never had to be guessed -- but it takes a
-    base URL and a model as required arguments, so `load()` cannot
-    construct it and nothing can select it. Either it earns two
-    settings and becomes the local-model path, or it goes. Google
-    withdrawing free Gemini access is an argument for having one.
-11. Antigravity is in Omarchy's default branch (`quattro`) but not in
+   Codex's, one security claim withdrawn from Antigravity's, and one
+   Cloudflare block that made every Groq model unreachable. Flags read
+   off `--help` are a hypothesis.
+10. Antigravity is in Omarchy's default branch (`quattro`) but not in
     any release: `gemini` and `gemini-cli` alias to `agy` there, which
     is the name this already registers. Until that ships, selecting it
     means writing `~/.config/omarchy/defaults/agent` directly.
-12. Widen the tests. `bin/agentvoice-check` runs 152, covering the
+11. Hermes, once its Python is reinstalled. Two routes -- its CLI, or
+    its HTTP API through the endpoint adapter, which the CLI templates
+    already recommend preferring.
+12. Widen the tests. `bin/agentvoice-check` runs 217, covering the
     speakable-text rules, the permission hook and its levels, config
-    precedence, the adapter contract and the recorded envelopes of the
-    backends that have answered. The wake loop and the QML are still
-    exercised only by hand.
+    precedence, key resolution, the adapter contract, process-tree
+    teardown, and the recorded envelopes of the backends that have
+    answered. The wake loop and the QML are still exercised only by
+    hand, and conversation mode has never been driven end to end on a
+    backend that forgets -- only its warning has.
+13. A stranger at the microphone. The verifier's 0/12 against other
+    speakers was synthetic.
 
 ## Development
 
