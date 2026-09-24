@@ -28,6 +28,12 @@ BINDIR="$HOME/.local/bin"
 UNITDIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 PYTHON_VERSION=3.13
 
+# True when this script is the installed copy rather than a checkout or the
+# plugin directory -- which changes what it is safe to delete. Both sides are
+# resolved because either can be a symlink.
+SELF_IS_APP=0
+[[ "$(readlink -f "$ROOT")" == "$(readlink -f "$APP")" ]] && SELF_IS_APP=1
+
 ASSUME_YES=0
 WANT_OWW=""
 UNINSTALL=0
@@ -103,7 +109,10 @@ if [[ $UNINSTALL == 1 ]]; then
   rm -rf "$VENV" "$MODELS"
   ok "Removed the environment and the models"
 
-  # Last, because this script may be running from inside it.
+  # Last, because this script is usually running from inside it. That is
+  # safe: bash holds the script's fd open, so the unlinked inode lives
+  # until the last line runs. Measured, not assumed -- tests/test_uninstall.py
+  # runs the installed copy and checks it reaches the end.
   if [[ -L $APP ]]; then rm -f "$APP"; else rm -rf "$APP"; fi
   ok "Removed the installed daemon"
 
@@ -242,11 +251,18 @@ fi
 # a running service, and so the uninstaller survives to be run. In a checkout
 # --dev links instead, because editing a copy and restarting the original is
 # a bad afternoon.
-rm -rf "$APP"
-if [[ $DEV == 1 ]]; then
+# When $APP *is* where this script lives, `rm -rf "$APP"` deletes the source it
+# is about to copy from; the cp then fails and set -e leaves an empty app/ and
+# a broken install. That is reachable: the widget's Remove button runs
+# $APP/install.sh, and a mis-passed flag once turned that into an install.
+if (( SELF_IS_APP )); then
+  ok "The daemon in $APP is already the one being installed"
+elif [[ $DEV == 1 ]]; then
+  rm -rf "$APP"
   ln -s "$ROOT" "$APP"
   ok "Linked $APP -> $ROOT (development)"
 else
+  rm -rf "$APP"
   mkdir -p "$APP"
   cp -r "$ROOT/daemon" "$ROOT/bin" "$ROOT/desktop" "$APP/"
   cp "$ROOT/install.sh" "$ROOT/requirements.txt" \

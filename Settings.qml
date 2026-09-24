@@ -616,39 +616,6 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
-
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-
-            // Removal lives here because nothing runs on the way out:
-            // `omarchy plugin remove` is an rm -rf with no hook, so the only
-            // moment this can clean up after itself is while it still exists.
-            Button {
-              text: "Remove Agent Voice…"
-              fontFamily: root.fontFamily
-              onClicked: {
-                remover.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                   "bash", "-c",
-                                   "\"$HOME/.local/share/agentvoice/app/install.sh\" " +
-                                   "--uninstall && omarchy plugin remove " +
-                                   "duaneoca.agentvoice --yes"]
-                remover.running = true
-                root.dismiss()
-              }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Removes the engine, the service and the widget in one go. " +
-                    "Your trained verifiers, recordings and API keys are kept, " +
-                    "and it says where they are on the way out."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Process { id: remover }
-
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             // --- talking and interrupting -----------------------------------
@@ -1158,6 +1125,43 @@ Item {
               value: root.setting("model", "tiny.en")
               onChanged: function(v) { root.persist("model", v, false) }
             }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            // Last on the page, and the only red control on it. Removal lives
+            // inside the settings it removes because nothing runs on the way
+            // out: `omarchy plugin remove` is an rm -rf with no hook, so the
+            // only moment this can clean up after itself is while it exists.
+            Button {
+              text: "Remove Agent Voice…"
+              fontFamily: root.fontFamily
+              foreground: Color.urgent
+              accent: Color.urgent
+              onClicked: {
+                // No nested `bash -c` here. The launcher already does
+                // `cmd="$*"` and re-wraps it, and a second one swallowed the
+                // flag as $0 -- which ran this as a fresh *install* instead.
+                remover.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                   "\"$HOME/.local/share/agentvoice/app/install.sh\" " +
+                                   "--uninstall && omarchy plugin remove " +
+                                   "duaneoca.agentvoice --yes"]
+                remover.running = true
+                root.dismiss()
+              }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Removes the engine, the service and the widget in one go. " +
+                    "Your trained verifiers, recordings and API keys are kept, " +
+                    "and it says where they are on the way out."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Process { id: remover }
 
             Item { width: 1; height: Style.space(12) }
           }
