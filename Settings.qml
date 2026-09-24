@@ -68,7 +68,35 @@ Item {
     { label: "Vosk — any phrase, weaker rejection", value: "vosk" },
     { label: "openWakeWord — four phrases, better rejection", value: "openwakeword" }
   ]
-  readonly property var voiceOptions: [
+  //: Which voices are actually on disk. install.sh fetches one by default
+  //: and the one the settings ask for; the rest are 60MB each and arrive
+  //: only if chosen. Offering all six without saying which are present let
+  //: someone pick a voice that does not exist, and the only symptom was
+  //: silence with the reason in a log.
+  property var voicesOnDisk: []
+  Process {
+    id: scanVoices
+    command: ["bash", "-c",
+      "d=\"${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice/models/piper\"; " +
+      "[ -d \"$d\" ] && for f in \"$d\"/en_US-*.onnx; do " +
+      "[ -e \"$f\" ] && basename \"$f\" .onnx | sed 's/^en_US-//'; done || true"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var out = []
+        var lines = String(text).trim().split("\n")
+        for (var i = 0; i < lines.length; i++)
+          if (lines[i].trim() !== "") out.push(lines[i].trim())
+        root.voicesOnDisk = out
+      }
+    }
+  }
+
+  function voiceLabel(label, value) {
+    return root.voicesOnDisk.indexOf(value) >= 0 ? label
+                                                 : label + "  (not downloaded)"
+  }
+
+  readonly property var rawVoiceOptions: [
     { label: "Lessac — female, medium", value: "lessac-medium" },
     { label: "Lessac — female, low",    value: "lessac-low" },
     { label: "Amy — female, medium",    value: "amy-medium" },
@@ -76,6 +104,15 @@ Item {
     { label: "Joe — male, medium",      value: "joe-medium" },
     { label: "HFC — male, medium",      value: "hfc_male-medium" }
   ]
+
+  readonly property var voiceOptions: {
+    var out = []
+    for (var i = 0; i < root.rawVoiceOptions.length; i++) {
+      var v = root.rawVoiceOptions[i]
+      out.push({ label: root.voiceLabel(v.label, v.value), value: v.value })
+    }
+    return out
+  }
   readonly property var modelOptions: ["tiny.en", "base.en", "small.en"]
 
   readonly property bool conversation: setting("conversationMode", true)
@@ -141,6 +178,7 @@ Item {
     } else {
       cfgReload.running = true
       scanCustom.running = true
+      scanVoices.running = true
       stateFile.reload()
     }
   }

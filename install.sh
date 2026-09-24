@@ -44,6 +44,16 @@ for arg in "$@"; do
 done
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Checked up front rather than discovered at the download step, with the
+# environment already built and the models missing.
+missing=""
+for tool in curl bsdtar jq; do have "$tool" || missing="$missing $tool"; done
+if [[ -n ${missing// } ]]; then
+  echo "  missing required tools:$missing" >&2
+  echo "  install them with: omarchy pkg add$missing" >&2
+  exit 1
+fi
 say()  { if have gum; then gum style --foreground 4 "  $*"; else echo "  $*"; fi; }
 ok()   { if have gum; then gum style --foreground 2 "  $*"; else echo "  $*"; fi; }
 warn() { if have gum; then gum style --foreground 3 "  $*"; else echo "  $*" >&2; fi; }
@@ -69,6 +79,10 @@ ask() {
 # yours rather than ours.
 if [[ $UNINSTALL == 1 ]]; then
   echo
+  if ! (( ASSUME_YES )) && ! ask "Remove the agentvoice engine, service and commands?"; then
+    echo "  Left alone."
+    exit 0
+  fi
   say "Removing agentvoice."
 
   if systemctl --user list-unit-files agentvoice.service &>/dev/null; then
@@ -143,6 +157,23 @@ mkdir -p "$DATA" "$MODELS" "$DATA/verifiers" "$DATA/wakewords"
 say "Installing dependencies…"
 VIRTUAL_ENV="$VENV" uv pip install --quiet -r "$ROOT/requirements.txt"
 
+# Settings decide before the prompt does: if the wake engine is already set
+# to openWakeWord, installing without it produces a daemon that cannot start
+# the engine it is configured for.
+if [[ -z $WANT_OWW ]] && have jq; then
+  if [[ "$(jq -r '[.bar.layout[]?[]? | select(.id=="duaneoca.agentvoice")][0].engine // empty' \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null)" == "openwakeword" ]]; then
+    say "Settings already use openWakeWord; installing it."
+    WANT_OWW=1
+  fi
+fi
+
+if [[ -z $WANT_OWW ]] && (( ASSUME_YES )); then
+  # --yes means yes. It used to reach ask(), which declines under --yes, so
+  # the unattended install quietly skipped the engine with real rejection.
+  WANT_OWW=1
+fi
+
 if [[ -z $WANT_OWW ]]; then
   echo
   cat <<'WHY'
@@ -182,8 +213,26 @@ fetch_voice() {
   curl -fL --progress-bar -o "$dir/$file.json" "$base/$file.json"
 }
 
+# What the settings already ask for. An uninstall leaves shell.json alone,
+# so a reinstall that fetched only the default would leave the voice set to
+# something that is not there -- which degrades to silence with the reason in
+# a log nobody reads.
+configured() {
+  local key="$1"
+  have jq || return 1
+  jq -r --arg k "$key" \
+    '[.bar.layout[]?[]? | select(.id=="duaneoca.agentvoice")][0][$k] // empty' \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null
+}
+
 fetch_vosk
 fetch_voice lessac medium
+
+WANT_VOICE="$(configured voice)"
+if [[ -n ${WANT_VOICE:-} && $WANT_VOICE != lessac-medium ]]; then
+  say "Settings ask for the voice $WANT_VOICE; fetching it too."
+  fetch_voice "${WANT_VOICE%-*}" "${WANT_VOICE##*-}"
+fi
 
 # --- the daemon itself -----------------------------------------------------
 # Copied out of the plugin directory so removing the bar widget cannot delete
