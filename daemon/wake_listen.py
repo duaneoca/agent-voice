@@ -51,9 +51,25 @@ RATE, CHUNK = 16_000, 3200          # 100ms frames
 
 
 def _host(url: str) -> str:
-    """The hostname of an endpoint URL, for looking its key up by."""
+    """The host of an endpoint URL, for looking its key up by.
+
+    Port included when there is one, because one machine can run more than
+    one endpoint and they do not share a key: Ollama on :11434 needs none,
+    while Hermes on :8642 takes a bearer token that its own documentation
+    describes as equivalent to a root password. Keying on the hostname alone
+    would hand the second one's key to the first.
+
+    A URL with no port keeps the bare hostname, so entries filed before this
+    -- api.openai.com and the rest -- still resolve.
+    """
     import urllib.parse
-    return (urllib.parse.urlparse(url).hostname or "").lower()
+    parts = urllib.parse.urlparse(url)
+    host = (parts.hostname or "").lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return f"{host}:{port}" if host and port else host
 
 DIM, RED, GRN, YEL, CYA, BLD, OFF = (
     "\033[2m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[1m", "\033[0m")
