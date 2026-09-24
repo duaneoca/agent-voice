@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import importlib.util
+
 import pytest
 
 import paths
@@ -100,6 +102,9 @@ class TestCustomWakeWords:
         assert path.name == "hey_claude.onnx"
         assert key == "hey_claude", "the verifier is keyed by this exact stem"
 
+    @pytest.mark.skipif(importlib.util.find_spec("openwakeword") is None,
+                        reason="the bundled models ship with openWakeWord, "
+                               "which the test runner deliberately lacks")
     def test_a_bundled_phrase_still_resolves(self, custom):
         path, key = custom.resolve_model("hey_jarvis")
         assert key.startswith("hey_jarvis")
@@ -111,8 +116,25 @@ class TestCustomWakeWords:
         assert path.parent == custom.WAKEWORDS
         assert key == "hey_jarvis"
 
-    def test_an_unknown_name_names_both_places_it_looked(self, custom):
-        with pytest.raises(Exception) as caught:
+    def test_an_unknown_name_says_where_it_looked(self, custom):
+        """Including when openWakeWord is not installed to look in."""
+        with pytest.raises(custom.ClipProblem) as caught:
             custom.resolve_model("hey_nonsuch")
         message = str(caught.value)
-        assert "wakewords" in message and "resources/models" in message
+        assert "wakewords" in message
+        assert "resources/models" in message or "not installed" in message
+
+    def test_yours_resolves_without_openwakeword_at_all(self, custom, monkeypatch):
+        """A trained phrase must not need the optional extra to be importable:
+        this is what broke CI, which installs pytest and nothing else."""
+        import builtins
+        real = builtins.__import__
+
+        def refuse(name, *a, **k):
+            if name == "openwakeword":
+                raise ImportError("no openwakeword here")
+            return real(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+        path, key = custom.resolve_model("hey_claude")
+        assert key == "hey_claude"
