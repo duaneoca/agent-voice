@@ -5,6 +5,8 @@ audio, and nothing in the voice loop knows which agent answered.
 """
 from __future__ import annotations
 
+import os
+import signal
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -19,6 +21,41 @@ from typing import Iterator
 #: a 503 by retrying with backoff rather than failing, so a turn can block
 #: indefinitely while the panel sits on "thinking" and the room stays silent.
 IDLE_TIMEOUT_S = 90.0
+
+
+def stop_tree(proc, sig=signal.SIGKILL) -> None:
+    """Signal a child and everything it spawned.
+
+    Killing the process alone is not enough and the difference is not
+    academic: every agent CLI here is a shim that execs something else, and
+    the grandchild inherits the stdout pipe. Kill the parent and the pipe
+    stays open, so the read loop waiting on it never returns -- a timeout
+    that fires, reports, and changes nothing. Measured against gemini: the
+    parent died, node lived, and stdout was still open twenty seconds later.
+
+    Requires the child to have been started with start_new_session=True so
+    that it leads a group of its own; falls back to the bare process when it
+    was not, which is still better than nothing.
+    """
+    try:
+        pid = proc.pid
+        # Only when the child actually leads a group of its own. Without this
+        # check getpgid returns *our* group for a child started without
+        # start_new_session, and the killpg below takes down the caller and
+        # everything beside it -- which is exactly what it did the first time,
+        # killing the test run that was meant to be checking it.
+        if pid and os.getpgid(pid) == pid:
+            os.killpg(pid, sig)
+            return
+    except (OSError, ProcessLookupError, AttributeError):
+        pass
+    try:
+        if sig == signal.SIGKILL:
+            proc.kill()
+        else:
+            proc.terminate()
+    except Exception:
+        pass
 
 
 class Watchdog:
@@ -62,7 +99,10 @@ class Watchdog:
             if time.monotonic() - self._last >= self.idle_s:
                 self.fired = True
                 try:
-                    (self._on_timeout or self._proc.kill)()
+                    if self._on_timeout:
+                        self._on_timeout()
+                    else:
+                        stop_tree(self._proc)
                 except Exception:
                     pass
                 return

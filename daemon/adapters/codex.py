@@ -29,12 +29,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
 
 # Keys that have carried assistant text in this family of protocols. Checked
 # in order; the first non-empty string wins.
@@ -112,7 +113,7 @@ class Codex(Adapter):
         try:
             # stdin must be closed: `codex exec` otherwise waits on it
             # ("Reading additional input from stdin...") and never returns.
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
@@ -192,4 +193,4 @@ class Codex(Adapter):
         with self._lock:
             proc = self._proc
         if proc and proc.poll() is None:
-            proc.terminate()
+            stop_tree(proc, signal.SIGTERM)
