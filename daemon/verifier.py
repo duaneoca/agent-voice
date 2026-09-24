@@ -68,22 +68,31 @@ def resolve_model(name: str) -> tuple[Path, str]:
     at it either. Trained wake words are the whole reason that directory is
     documented; they should not be second-class to the four in the wheel.
     """
-    import openwakeword
-    base = Path(openwakeword.__file__).parent / "resources/models"
     if name.endswith(".onnx"):
         path = Path(name)
-    else:
-        mine = WAKEWORDS / f"{name}.onnx"
-        if mine.exists():
-            path = mine
-        else:
-            matches = (sorted(base.glob(f"{name}_v*.onnx"))
-                       or sorted(base.glob(f"{name}.onnx")))
-            if not matches:
-                raise ClipProblem(
-                    f"no wake model named {name!r} in {WAKEWORDS} or {base}")
-            path = matches[0]
-    return path, path.stem
+        return path, path.stem
+
+    mine = WAKEWORDS / f"{name}.onnx"
+    if mine.exists():
+        return mine, mine.stem
+
+    # Imported here rather than at the top, and only once the bundled models
+    # are actually needed: a phrase you trained yourself is resolved without
+    # openWakeWord being importable at all, which is true of any machine that
+    # installed without the optional extra -- and of the test runner.
+    try:
+        import openwakeword
+    except ImportError:
+        raise ClipProblem(
+            f"no wake model named {name!r} in {WAKEWORDS}, and openWakeWord "
+            f"is not installed to look for a bundled one") from None
+
+    base = Path(openwakeword.__file__).parent / "resources/models"
+    matches = (sorted(base.glob(f"{name}_v*.onnx"))
+               or sorted(base.glob(f"{name}.onnx")))
+    if not matches:
+        raise ClipProblem(f"no wake model named {name!r} in {WAKEWORDS} or {base}")
+    return matches[0], matches[0].stem
 
 
 class ClipProblem(Exception):
