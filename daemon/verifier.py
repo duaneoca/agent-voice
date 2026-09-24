@@ -36,7 +36,9 @@ import shutil
 import wave
 from pathlib import Path
 
-from paths import DATA_DIR, VERIFIERS as VERIFIER_DIR, piper_voices  # noqa: F401
+from paths import (  # noqa: F401
+    DATA_DIR, VERIFIERS as VERIFIER_DIR, WAKEWORDS, piper_voices,
+)
 
 RATE = 16_000
 
@@ -58,16 +60,29 @@ def resolve_model(name: str) -> tuple[Path, str]:
     agentvoice always loads by explicit path (loading by name pulls in all
     five bundled models), so the key is the file stem. Training is given the
     same path, so both sides agree.
+
+    A phrase the user trained themselves is looked for first, in
+    ~/.local/share/agentvoice/wakewords. The settings screen has always
+    offered those in its dropdown, and this did not know they existed -- so
+    choosing one failed here, and the verifier trainer could not be pointed
+    at it either. Trained wake words are the whole reason that directory is
+    documented; they should not be second-class to the four in the wheel.
     """
     import openwakeword
     base = Path(openwakeword.__file__).parent / "resources/models"
     if name.endswith(".onnx"):
         path = Path(name)
     else:
-        matches = sorted(base.glob(f"{name}_v*.onnx")) or sorted(base.glob(f"{name}.onnx"))
-        if not matches:
-            raise ClipProblem(f"no wake model named {name!r} in {base}")
-        path = matches[0]
+        mine = WAKEWORDS / f"{name}.onnx"
+        if mine.exists():
+            path = mine
+        else:
+            matches = (sorted(base.glob(f"{name}_v*.onnx"))
+                       or sorted(base.glob(f"{name}.onnx")))
+            if not matches:
+                raise ClipProblem(
+                    f"no wake model named {name!r} in {WAKEWORDS} or {base}")
+            path = matches[0]
     return path, path.stem
 
 
@@ -317,6 +332,9 @@ def main() -> int:
         return 0 if found else 1
 
     if args.cmd == "models":
+        # Your own first: if you trained one, it is the one you mean.
+        for path in sorted(WAKEWORDS.glob("*.onnx")):
+            print(path.stem)
         for name in PRETRAINED:
             print(name)
         return 0
