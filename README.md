@@ -37,11 +37,26 @@ after an `omarchy update`.
 Roughly 750MB with the default engine, or 900MB with openWakeWord as well;
 the installer says what the second engine costs before installing it.
 
+The widget and the engine are two installs, because Omarchy runs
+nothing on a plugin's behalf: `plugin add` clones a directory and
+`plugin remove` deletes one, with no hook in between. So the widget owns
+both halves instead. Add it, open it, and it offers to install the
+engine; the settings screen has a **Remove Agent Voice** button that
+takes the engine, the service and the widget off in one go.
+
+The engine installs into `~/.local/share/agentvoice/app` rather than
+running from the plugin directory, because `plugin remove` is an `rm -rf`
+and would otherwise delete the code a running service is executing --
+and the uninstaller with it, leaving no way to finish. Use `--dev` to
+link a checkout there instead of copying it.
+
 ### Removing it
 
+The button in the settings screen is the whole thing. By hand:
+
 ```bash
-./install.sh --uninstall              # daemon, service, commands, models
-omarchy plugin remove duaneoca.agentvoice   # the bar widget
+~/.local/share/agentvoice/app/install.sh --uninstall
+omarchy plugin remove duaneoca.agentvoice
 ```
 
 The uninstall deliberately leaves your voice behind -- trained verifiers

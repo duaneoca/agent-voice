@@ -11,12 +11,19 @@
 #   ./install.sh --yes        no prompts, core engine only
 #   ./install.sh --yes --oww  no prompts, both wake engines
 #   ./install.sh --uninstall  take it all back off again
+#   ./install.sh --dev        run from this checkout instead of a copy
+#
+# The daemon installs into ~/.local/share/agentvoice/app rather than running
+# from the plugin directory, because `omarchy plugin remove` is an rm -rf and
+# would otherwise delete the code a running service is executing -- and this
+# script with it, leaving no way to finish the job.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice"
 VENV="$DATA/venv"
 MODELS="$DATA/models"
+APP="$DATA/app"
 BINDIR="$HOME/.local/bin"
 UNITDIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 PYTHON_VERSION=3.13
@@ -24,10 +31,12 @@ PYTHON_VERSION=3.13
 ASSUME_YES=0
 WANT_OWW=""
 UNINSTALL=0
+DEV=0
 for arg in "$@"; do
   case "$arg" in
     --yes|-y) ASSUME_YES=1 ;;
     --uninstall|--remove) UNINSTALL=1 ;;
+    --dev) DEV=1 ;;
     --oww|--openwakeword) WANT_OWW=1 ;;
     --no-oww) WANT_OWW=0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
@@ -76,6 +85,10 @@ if [[ $UNINSTALL == 1 ]]; then
 
   rm -rf "$VENV" "$MODELS"
   ok "Removed the environment and the models"
+
+  # Last, because this script may be running from inside it.
+  if [[ -L $APP ]]; then rm -f "$APP"; else rm -rf "$APP"; fi
+  ok "Removed the installed daemon"
 
   rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agentvoice"
 
@@ -172,17 +185,34 @@ fetch_voice() {
 fetch_vosk
 fetch_voice lessac medium
 
+# --- the daemon itself -----------------------------------------------------
+# Copied out of the plugin directory so removing the bar widget cannot delete
+# a running service, and so the uninstaller survives to be run. In a checkout
+# --dev links instead, because editing a copy and restarting the original is
+# a bad afternoon.
+rm -rf "$APP"
+if [[ $DEV == 1 ]]; then
+  ln -s "$ROOT" "$APP"
+  ok "Linked $APP -> $ROOT (development)"
+else
+  mkdir -p "$APP"
+  cp -r "$ROOT/daemon" "$ROOT/bin" "$ROOT/desktop" "$APP/"
+  cp "$ROOT/install.sh" "$ROOT/requirements.txt" \
+     "$ROOT/requirements-openwakeword.txt" "$APP/"
+  ok "Installed the daemon into $APP"
+fi
+
 # --- commands on PATH ------------------------------------------------------
 mkdir -p "$BINDIR"
 for cmd in agentvoice agentvoice-train-verifier; do
-  ln -sf "$ROOT/bin/$cmd" "$BINDIR/$cmd"
+  ln -sf "$APP/bin/$cmd" "$BINDIR/$cmd"
 done
 ok "Installed agentvoice and agentvoice-train-verifier into $BINDIR"
 
 # --- service ---------------------------------------------------------------
 # Written rather than copied, so the unit carries this checkout's real path.
 mkdir -p "$UNITDIR"
-sed -e "s|@ROOT@|$ROOT|g" -e "s|@VENV@|$VENV|g" \
+sed -e "s|@ROOT@|$APP|g" -e "s|@VENV@|$VENV|g" \
     "$ROOT/desktop/agentvoice.service.in" > "$UNITDIR/agentvoice.service"
 systemctl --user daemon-reload
 ok "Installed the user service"
