@@ -19,6 +19,7 @@ GUARDED_TOOLS = "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|KillShell"
 class ClaudeCode(Adapter):
     name = "claude"
     guards_permissions = True
+    remembers = True          # --resume <session-id>
     # The only backend with somewhere to put the question: a PreToolUse hook
     # receives the pending call and blocks on the verdict, so "edits" can be
     # decided per call against the project path.

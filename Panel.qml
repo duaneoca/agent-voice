@@ -143,6 +143,10 @@ Panel {
   property string vAgent: ""
   property string permissionLevel: "ask"
   property string vPosture: ""
+  // Shown because conversation mode fails quietly on a backend that does
+  // not remember: the window opens, it listens, it answers, and every turn
+  // starts from nothing.
+  property bool vRemembers: true
   readonly property string projectLabel: {
     var d = String(voice.projectDir).trim()
     if (d === "") return "~"
@@ -155,6 +159,7 @@ Panel {
   readonly property string permissionLabel:
     (voice.vAgent === "" ? "" : voice.vAgent + " · ")
     + (voice.vPosture !== "" ? voice.vPosture : "asks before every change")
+    + (voice.vRemembers ? "" : " · does not remember")
 
   // systemd is the authority on whether the daemon exists; the state file only
   // says what it is doing. Both are needed: a stale state file outlives a
@@ -196,6 +201,7 @@ Panel {
         if (d.agent !== undefined) voice.vAgent = String(d.agent)
         if (d.level !== undefined) voice.permissionLevel = String(d.level)
         if (d.posture !== undefined) voice.vPosture = String(d.posture)
+        if (d.remembers !== undefined) voice.vRemembers = (d.remembers === true)
       } catch (e) {
         voice.vState = "off"
       }

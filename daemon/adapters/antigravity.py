@@ -42,6 +42,7 @@ from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
 
 class Antigravity(Adapter):
     name = "agy"
+    remembers = True          # --conversation <id>, verified across two turns
     # No hook that can grant, so nothing can be asked mid-call.
     guards_permissions = False
     # "edits" is deliberately absent, and it was offered here until it was

@@ -85,6 +85,7 @@ Item {
   property string permissionLevel: "ask"
   property string vPosture: ""
   property var agentLevels: ["ask", "trusted"]
+  property bool vRemembers: true
   readonly property string projectDir: setting("projectDir", "")
 
   //: Levels are stored per agent: trust is a judgement about one program's
@@ -256,6 +257,7 @@ Item {
         if (d.level !== undefined) root.permissionLevel = String(d.level)
         if (d.posture !== undefined) root.vPosture = String(d.posture)
         if (d.levels !== undefined) root.agentLevels = d.levels
+        if (d.remembers !== undefined) root.vRemembers = (d.remembers === true)
       } catch (e) {}
     }
   }
@@ -428,6 +430,23 @@ Item {
               fontFamily: root.fontFamily
               onClicked: root.persist("conversationMode",
                                       root.conversation ? "false" : "true", true)
+            }
+
+            // Left on rather than switched off for a backend that forgets:
+            // it still saves the wake word, which is half of what it is for.
+            // What it cannot do is follow on, and that failure is silent --
+            // the window opens, it listens, it answers from nothing.
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              visible: root.conversation && !root.vRemembers
+              text: (root.vAgent === "" ? "This agent" : root.vAgent) +
+                    " starts fresh on every turn, so this saves you the wake " +
+                    "word and nothing more. Asking \"what did you mean by " +
+                    "that?\" will get an answer to a question it has never seen."
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
 
             KnobRow {

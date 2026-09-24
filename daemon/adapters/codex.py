@@ -61,6 +61,7 @@ def _harvest_text(node: Any, depth: int = 0) -> str:
 
 class Codex(Adapter):
     name = "codex"
+    remembers = True          # resume <thread_id>, verified across two turns
 
     # Codex's own spelling of "do not stop to ask", as used by omarchy-agent.
     def __init__(self, model: str | None = None, spoken: bool = True,

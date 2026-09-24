@@ -30,6 +30,7 @@ USER_AGENT = "agentvoice/0.2 (+https://github.com/duaneoca/agent-voice)"
 
 class OpenAICompatible(Adapter):
     name = "endpoint"
+    remembers = True          # client-side: the transcript is replayed
 
     #: There are no tools on this path. It is a chat completion and nothing
     #: else: it cannot read a file, write one, or run a command, whatever it
