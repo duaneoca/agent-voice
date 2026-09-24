@@ -81,7 +81,10 @@ if [[ $UNINSTALL == 1 ]]; then
   echo
   if ! (( ASSUME_YES )) && ! ask "Remove the agentvoice engine, service and commands?"; then
     echo "  Left alone."
-    exit 0
+    # Non-zero on purpose. The widget's Remove button chains this with
+    # `&& omarchy plugin remove`, so exiting 0 here would decline the engine
+    # and delete the user interface anyway -- the opposite of the answer.
+    exit 1
   fi
   say "Removing agentvoice."
 
