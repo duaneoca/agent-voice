@@ -174,6 +174,36 @@ def test_uninstall_works_without_the_tools_only_the_install_needs(tmp_path):
     assert not app.exists()
 
 
+def test_uninstall_names_a_key_left_in_a_file(tmp_path):
+    """The keyring is named on the way out; the file fallback was not.
+
+    daemon/paths.py documents ~/.config/agentvoice/endpoint.key for machines
+    with no keyring, so it is exactly the kind of thing a removal should say
+    it kept rather than leave for the user to find.
+    """
+    app = _install_tree(tmp_path)
+    cfg = tmp_path / "config" / "agentvoice"
+    cfg.mkdir(parents=True)
+    (cfg / "endpoint.key").write_text("sk-not-a-real-key")
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert done.returncode == 0, done.stderr
+    assert (cfg / "endpoint.key").read_text() == "sk-not-a-real-key"
+    assert str(cfg) in done.stdout, "kept a key without saying so"
+
+
+def test_uninstall_removes_the_config_dir_when_it_holds_nothing(tmp_path):
+    app = _install_tree(tmp_path)
+    cfg = tmp_path / "config" / "agentvoice"
+    cfg.mkdir(parents=True)
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert done.returncode == 0, done.stderr
+    assert not cfg.exists()
+
+
 # --- the other half of the same accident -----------------------------------
 # Once the flag was lost, what ran was an install, from $APP, whose very first
 # act is `rm -rf "$APP"` -- deleting the tree it is about to copy from. The cp
