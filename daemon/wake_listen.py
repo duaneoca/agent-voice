@@ -574,6 +574,11 @@ class Daemon:
             posture=self.posture(),
             remembers=bool(getattr(self.agent, "remembers", False)),
             overriding=chosen if endpoint_wins else "",
+            # Whether the project directory and permission level reach the
+            # running backend at all. They govern a CLI started here, in a
+            # directory we choose, under flags we pass. They govern nothing
+            # about a machine down the hall.
+            governed=bool(getattr(self.agent, "cwd", None)),
         )
 
     def _on_interrupt(self, *_):

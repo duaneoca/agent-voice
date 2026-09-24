@@ -458,3 +458,22 @@ class TestWhatIsBehindTheUrlIsUnknown:
         from adapters.gemini import Gemini
         for cls in (ClaudeCode, Codex, Gemini, Antigravity):
             assert cls().can_be_gated is True, cls.__name__
+
+
+class TestWhereItActs:
+    """A local agent and a remote one are not the same risk in a smaller size.
+
+    The project directory and permission level govern a CLI started here, in
+    a directory we choose, under flags we pass. They reach nothing on a
+    machine down the hall, so showing them beside a remote agent invites the
+    conclusion that they constrain it.
+    """
+
+    def test_an_endpoint_has_no_local_directory_to_govern(self):
+        a = OpenAICompatible(base_url="http://192.168.1.10:8642/v1", model="m",
+                             is_agent=True)
+        assert getattr(a, "cwd", None) is None
+
+    def test_a_cli_backend_does(self):
+        from adapters.claude_code import ClaudeCode
+        assert ClaudeCode(cwd="/tmp/project").cwd == "/tmp/project"

@@ -87,6 +87,7 @@ Item {
   property var agentLevels: ["ask", "trusted"]
   property bool vRemembers: true
   property string vOverriding: ""
+  property bool vGoverned: true
   readonly property string projectDir: setting("projectDir", "")
 
   //: Levels are stored per agent: trust is a judgement about one program's
@@ -260,6 +261,7 @@ Item {
         if (d.levels !== undefined) root.agentLevels = d.levels
         if (d.remembers !== undefined) root.vRemembers = (d.remembers === true)
         if (d.overriding !== undefined) root.vOverriding = String(d.overriding)
+        if (d.governed !== undefined) root.vGoverned = (d.governed === true)
       } catch (e) {}
     }
   }
@@ -468,6 +470,19 @@ Item {
             // two: a permission level with no root to apply to means nothing,
             // and changing where the agent works without revisiting what it
             // may do there is how you end up trusting the wrong folder.
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              visible: !root.vGoverned
+              text: "⚠  Not in use right now. The endpoint answering works on " +
+                    "its own machine, in a directory it chooses — these two " +
+                    "settings govern an agent started here, and reach nothing " +
+                    "over there. Restrain that one where it runs."
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
             Text {
               width: parent.width
               text: "PROJECT"
