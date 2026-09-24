@@ -88,6 +88,14 @@ Item {
   property bool vRemembers: true
   property string vOverriding: ""
   property bool vGoverned: true
+  property bool vVerifier: false
+
+  //: The phrase actually being listened for. Both engines keep their own
+  //: key and the inactive one stays in shell.json, so reading the raw
+  //: setting would name a phrase nothing is listening for.
+  readonly property string activePhrase:
+    root.usingOww ? String(root.setting("owwModel", "hey_jarvis")).replace(/_/g, " ")
+                  : String(root.setting("phrase", "hey computer"))
   readonly property string projectDir: setting("projectDir", "")
 
   //: Levels are stored per agent: trust is a judgement about one program's
@@ -262,6 +270,7 @@ Item {
         if (d.remembers !== undefined) root.vRemembers = (d.remembers === true)
         if (d.overriding !== undefined) root.vOverriding = String(d.overriding)
         if (d.governed !== undefined) root.vGoverned = (d.governed === true)
+        if (d.verifier !== undefined) root.vVerifier = (d.verifier === true)
       } catch (e) {}
     }
   }
@@ -559,79 +568,6 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
-            Text {
-              width: parent.width
-              text: "ENDPOINT (optional)"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            TextField {
-              width: parent.width
-              text: root.setting("endpointUrl", "")
-              placeholderText: "http://your-machine:11434/v1"
-              foreground: root.foreground
-              font.family: root.fontFamily
-              onEditingFinished: {
-                if (text !== root.setting("endpointUrl", ""))
-                  root.persist("endpointUrl", text, false)
-              }
-            }
-
-            TextField {
-              width: parent.width
-              text: root.setting("endpointModel", "")
-              placeholderText: "model name, e.g. llama3.2"
-              foreground: root.foreground
-              font.family: root.fontFamily
-              onEditingFinished: {
-                if (text !== root.setting("endpointModel", ""))
-                  root.persist("endpointModel", text, false)
-              }
-            }
-
-            Toggle {
-              width: parent.width
-              visible: root.setting("endpointUrl", "") !== ""
-              label: "This endpoint is an agent"
-              description: "Tick when it can run commands or change files on " +
-                           "its own host, as Hermes can. agentvoice cannot tell " +
-                           "from the URL, so it claims nothing about the far " +
-                           "end unless you say — and gives it longer to answer, " +
-                           "because an agent goes quiet while it runs tools."
-              checked: root.setting("endpointIsAgent", false) === true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("endpointIsAgent",
-                  root.setting("endpointIsAgent", false) === true
-                    ? "false" : "true", true)
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, " +
-                    "OpenAI, xAI, Hermes. Set both boxes and it answers instead " +
-                    "of the desktop's agent.\n" +
-                    "agentvoice offers it no tools and gates nothing, so the " +
-                    "permission level above does not reach it. What the endpoint " +
-                    "itself can do is not visible from here: Ollama cannot touch " +
-                    "anything, while Hermes has a terminal and a filesystem on " +
-                    "its host. That is what the tickbox is for.\n" +
-                    "Ollama and LM Studio need no key. For one that does, the " +
-                    "login keyring is the best place — it unlocks when you log " +
-                    "in and only this session can read it:\n" +
-                    "  secret-tool store --label=agentvoice \\\n" +
-                    "      service agentvoice endpoint api.openai.com\n" +
-                    "Keyed by host and port, so two services on one machine do " +
-                    "not share a key. Failing that, " +
-                    "~/.config/agentvoice/endpoint.key. Never in this settings " +
-                    "file — it is the desktop's config and gets copied around."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
 
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
@@ -772,6 +708,24 @@ Item {
                     "or phone saying the phrase gets through. A verifier trained " +
                     "on your voice is the only layer that knows who is talking."
               color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            // Whether one is in force was known only to a log line. Training
+            // one and seeing the screen unchanged reads as the training
+            // having failed.
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              visible: root.usingOww
+              text: root.vVerifier
+                    ? "\u2713  In use for “" + root.activePhrase + "”. Only your " +
+                      "voice saying it gets through."
+                    : "No verifier for “" + root.activePhrase + "” yet — anyone " +
+                      "saying the phrase can wake it. Verifiers are per phrase, " +
+                      "so training a new wake word means training a new one."
+              color: root.vVerifier ? root.foreground : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
@@ -972,6 +926,81 @@ Item {
 
 
             // --- speech ---------------------------------------------------
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
+            Text {
+              width: parent.width
+              text: "ENDPOINT (optional)"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            TextField {
+              width: parent.width
+              text: root.setting("endpointUrl", "")
+              placeholderText: "http://your-machine:11434/v1"
+              foreground: root.foreground
+              font.family: root.fontFamily
+              onEditingFinished: {
+                if (text !== root.setting("endpointUrl", ""))
+                  root.persist("endpointUrl", text, false)
+              }
+            }
+
+            TextField {
+              width: parent.width
+              text: root.setting("endpointModel", "")
+              placeholderText: "model name, e.g. llama3.2"
+              foreground: root.foreground
+              font.family: root.fontFamily
+              onEditingFinished: {
+                if (text !== root.setting("endpointModel", ""))
+                  root.persist("endpointModel", text, false)
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              visible: root.setting("endpointUrl", "") !== ""
+              label: "This endpoint is an agent"
+              description: "Tick when it can run commands or change files on " +
+                           "its own host, as Hermes can. agentvoice cannot tell " +
+                           "from the URL, so it claims nothing about the far " +
+                           "end unless you say — and gives it longer to answer, " +
+                           "because an agent goes quiet while it runs tools."
+              checked: root.setting("endpointIsAgent", false) === true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("endpointIsAgent",
+                  root.setting("endpointIsAgent", false) === true
+                    ? "false" : "true", true)
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, " +
+                    "OpenAI, xAI, Hermes. Set both boxes and it answers instead " +
+                    "of the desktop's agent.\n" +
+                    "agentvoice offers it no tools and gates nothing, so the " +
+                    "permission level above does not reach it. What the endpoint " +
+                    "itself can do is not visible from here: Ollama cannot touch " +
+                    "anything, while Hermes has a terminal and a filesystem on " +
+                    "its host. That is what the tickbox is for.\n" +
+                    "Ollama and LM Studio need no key. For one that does, the " +
+                    "login keyring is the best place — it unlocks when you log " +
+                    "in and only this session can read it:\n" +
+                    "  secret-tool store --label=agentvoice \\\n" +
+                    "      service agentvoice endpoint api.openai.com\n" +
+                    "Keyed by host and port, so two services on one machine do " +
+                    "not share a key. Failing that, " +
+                    "~/.config/agentvoice/endpoint.key. Never in this settings " +
+                    "file — it is the desktop's config and gets copied around."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
             PanelSeparator { width: parent.width; foreground: root.foreground }
             PanelSectionHeader {
               text: "SPEECH"; foreground: root.dim; fontFamily: root.fontFamily

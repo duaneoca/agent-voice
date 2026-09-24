@@ -579,6 +579,11 @@ class Daemon:
             # directory we choose, under flags we pass. They govern nothing
             # about a machine down the hall.
             governed=bool(getattr(self.agent, "cwd", None)),
+            # The daemon has always known this and only ever said it in a log
+            # line nobody reads. A verifier is the one layer that knows who is
+            # talking, so whether it is in force belongs on screen.
+            verifier=bool(getattr(getattr(self.pipe, "_oww", None),
+                                  "verifier", None)),
         )
 
     def _on_interrupt(self, *_):
