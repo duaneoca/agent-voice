@@ -126,7 +126,30 @@ else
   say "no test imports a heavy dep too early" "ok"
 fi
 
-# 7. the behavioural tests, when pytest is available
+# 7. no QML command nests a `bash -c` inside the floating-terminal launcher.
+# That launcher already does `cmd="$*"` and re-wraps the result in its own
+# `bash -c`, so a second one turns the first following word into $0 instead of
+# an argument. The Remove button's `--uninstall` landed in $0 and vanished;
+# what ran was a plain install, which then deleted its own source directory.
+out=$(python3 - "$ROOT" <<'QQ'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+bad = []
+for name in ("Settings.qml", "Panel.qml"):
+    lines = (root / name).read_text().splitlines()
+    for i, line in enumerate(lines):
+        if "omarchy-launch-floating-terminal-with-presentation" not in line:
+            continue
+        window = " ".join(lines[i:i + 6])
+        if re.search(r'"bash"\s*,\s*"-c"', window):
+            bad.append(f"{name}:{i + 1}")
+print(" ".join(bad))
+QQ
+)
+if [[ -n ${out// } ]]; then say "nested bash -c eats the launcher's args" "FAIL: $out"; fail=1
+else say "no nested bash -c in a launcher command" "ok"; fi
+
+# 8. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"
