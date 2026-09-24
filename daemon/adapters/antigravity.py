@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import threading
 from typing import Iterator
 
-from .base import SPOKEN_STYLE, Adapter, Chunk, Watchdog, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
 
 
 class Antigravity(Adapter):
@@ -107,7 +108,7 @@ class Antigravity(Adapter):
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         argv = self._argv(text, session_id)
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
@@ -171,6 +172,6 @@ class Antigravity(Adapter):
             proc = self._proc
         if proc and proc.poll() is None:
             try:
-                proc.terminate()
+                stop_tree(proc, signal.SIGTERM)
             except Exception:
                 pass

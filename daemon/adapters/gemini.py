@@ -32,11 +32,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 from typing import Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
 
 
 class Gemini(Adapter):
@@ -110,7 +111,7 @@ class Gemini(Adapter):
         # controls; without this the turn does not start at all.
         env = {**os.environ, "GEMINI_CLI_TRUST_WORKSPACE": "true"}
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1, env=env)
         except OSError as e:
@@ -166,4 +167,4 @@ class Gemini(Adapter):
         with self._lock:
             proc = self._proc
         if proc and proc.poll() is None:
-            proc.terminate()
+            stop_tree(proc, signal.SIGTERM)

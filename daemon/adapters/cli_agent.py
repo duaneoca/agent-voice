@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 from typing import Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
 
 #: agent id -> (argv template, verified?). "{prompt}" is substituted.
 #: Confirmed non-interactive by omarchy-agent's own table:
@@ -87,7 +88,7 @@ class CliAgent(Adapter):
         argv = [prompt if part == "{prompt}" else part.replace("{prompt}", prompt)
                 for part in parts]
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
@@ -132,4 +133,4 @@ class CliAgent(Adapter):
         with self._lock:
             proc = self._proc
         if proc and proc.poll() is None:
-            proc.terminate()
+            stop_tree(proc, signal.SIGTERM)

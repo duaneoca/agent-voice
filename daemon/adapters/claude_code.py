@@ -4,11 +4,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 from typing import Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed
+from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
 
 #: Tools that can change something or reach the network. Read-only tools are
 #: not listed: asking about every Read would train you to say yes.
@@ -91,7 +92,8 @@ class ClaudeCode(Adapter):
         argv = self._argv(text, session_id)
         try:
             proc = subprocess.Popen(argv, cwd=self.cwd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True, bufsize=1)
+                                    stderr=subprocess.PIPE, text=True, bufsize=1,
+                                    start_new_session=True)
         except OSError as e:
             yield Chunk(error=f"could not start claude: {e}")
             return
@@ -166,4 +168,4 @@ class ClaudeCode(Adapter):
         with self._lock:
             proc = self._proc
         if proc and proc.poll() is None:
-            proc.terminate()
+            stop_tree(proc, signal.SIGTERM)
