@@ -123,11 +123,20 @@ if [[ $UNINSTALL == 1 ]]; then
 
   rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agentvoice"
 
+  # Existing and holding something are different questions, and the first one
+  # is the wrong one: install.sh creates these directories itself, so asking
+  # `-d` meant promising to have kept twenty-five recordings that were never
+  # made, and leaving two empty directories and a parent behind to prove it.
   KEPT=""
-  [[ -d "$DATA/verifiers" ]] && KEPT="$KEPT\n    $DATA/verifiers"
-  [[ -d "$DATA/verifier-training" ]] && KEPT="$KEPT\n    $DATA/verifier-training"
-  [[ -d "$DATA/wakewords" ]] && KEPT="$KEPT\n    $DATA/wakewords"
-  # rmdir, not rm -rf: it goes only if nothing above was kept.
+  for d in verifiers verifier-training wakewords; do
+    [[ -d "$DATA/$d" ]] || continue
+    if [[ -n "$(ls -A "$DATA/$d" 2>/dev/null)" ]]; then
+      KEPT="$KEPT\n    $DATA/$d"
+    else
+      rmdir "$DATA/$d" 2>/dev/null || true
+    fi
+  done
+  # rmdir, not rm -rf: it goes only if something above was genuinely kept.
   rmdir "$DATA" 2>/dev/null || true
 
   echo
