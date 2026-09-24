@@ -147,6 +147,9 @@ Panel {
   // not remember: the window opens, it listens, it answers, and every turn
   // starts from nothing.
   property bool vRemembers: true
+  // Non-empty when an endpoint is configured and is answering instead of
+  // the agent chosen in Omarchy's settings.
+  property string vOverriding: ""
   readonly property string projectLabel: {
     var d = String(voice.projectDir).trim()
     if (d === "") return "~"
@@ -160,6 +163,7 @@ Panel {
     (voice.vAgent === "" ? "" : voice.vAgent + " · ")
     + (voice.vPosture !== "" ? voice.vPosture : "asks before every change")
     + (voice.vRemembers ? "" : " · does not remember")
+    + (voice.vOverriding === "" ? "" : " · instead of " + voice.vOverriding)
 
   // systemd is the authority on whether the daemon exists; the state file only
   // says what it is doing. Both are needed: a stale state file outlives a
@@ -202,6 +206,7 @@ Panel {
         if (d.level !== undefined) voice.permissionLevel = String(d.level)
         if (d.posture !== undefined) voice.vPosture = String(d.posture)
         if (d.remembers !== undefined) voice.vRemembers = (d.remembers === true)
+        if (d.overriding !== undefined) voice.vOverriding = String(d.overriding)
       } catch (e) {
         voice.vState = "off"
       }

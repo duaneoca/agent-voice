@@ -86,6 +86,7 @@ Item {
   property string vPosture: ""
   property var agentLevels: ["ask", "trusted"]
   property bool vRemembers: true
+  property string vOverriding: ""
   readonly property string projectDir: setting("projectDir", "")
 
   //: Levels are stored per agent: trust is a judgement about one program's
@@ -258,6 +259,7 @@ Item {
         if (d.posture !== undefined) root.vPosture = String(d.posture)
         if (d.levels !== undefined) root.agentLevels = d.levels
         if (d.remembers !== undefined) root.vRemembers = (d.remembers === true)
+        if (d.overriding !== undefined) root.vOverriding = String(d.overriding)
       } catch (e) {}
     }
   }
@@ -526,6 +528,18 @@ Item {
                        : "Every change is prompted. Read-only tools are never asked " +
                          "about, and an unanswered prompt is denied.")
               color: root.permissionLevel === "trusted" ? Color.urgent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              visible: root.vOverriding !== ""
+              text: "⚠  This endpoint is answering instead of " + root.vOverriding +
+                    ", which is what Omarchy's own settings are set to. Clear " +
+                    "both boxes below to go back to it."
+              color: Color.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }

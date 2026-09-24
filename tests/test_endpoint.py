@@ -369,3 +369,28 @@ class TestUserAgent:
         agent = RECEIVED[-1]["agent"]
         assert agent and "agentvoice" in agent
         assert "urllib" not in agent.lower()
+
+
+class TestOverrideIsVisible:
+    """An endpoint takes precedence over the desktop's agent.
+
+    A reasonable rule and an unreasonable surprise: choosing Claude in
+    Omarchy's settings and having nothing change is indistinguishable from
+    the setting being broken. Found by the user doing exactly that.
+    """
+
+    def test_the_endpoint_still_wins(self):
+        a = load("claude", endpoint={"url": "http://x/v1", "model": "m"})
+        assert a is not None and a.name == "endpoint"
+
+    def test_clearing_it_returns_to_the_desktop_agent(self):
+        """Both boxes empty means follow omarchy default agent again."""
+        a = load("claude", endpoint={"url": "", "model": ""})
+        assert a is None or a.name == "claude"
+
+    def test_a_half_filled_endpoint_does_not_override(self):
+        """A URL with no model is a half-typed setting, not a choice."""
+        for endpoint in ({"url": "http://x/v1", "model": ""},
+                         {"url": "", "model": "m"}):
+            a = load("claude", endpoint=endpoint)
+            assert a is None or a.name == "claude", endpoint

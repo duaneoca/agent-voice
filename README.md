@@ -164,7 +164,11 @@ win -- see *Known risks*.
 One contract: take text plus a session ID, stream text back. Which agent
 answers follows `omarchy default agent`, unless an endpoint URL is set,
 which wins because the desktop has no entry for "the model on my other
-machine".
+machine". That rule is reasonable and surprising in equal measure --
+choosing an agent in Omarchy's settings and having nothing change looks
+exactly like a broken setting -- so the panel names what is being
+overridden (`endpoint · … · instead of claude`) and clearing both
+endpoint boxes hands control back.
 
 Eight have answered a live turn. The columns that decide how it feels to
 talk to are not the ones that decide how capable it is:
