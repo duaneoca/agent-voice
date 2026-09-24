@@ -641,7 +641,7 @@ Item {
               width: parent.width
               visible: root.setting("bargeIn", false) === true
               label: "How much louder you must be"
-              suffix: "%"
+              unit: "%"
               description: "Above its own voice, before it stops. Higher is " +
                            "harder to trigger by accident and on purpose."
               value: root.setting("bargeFactor", 150)
