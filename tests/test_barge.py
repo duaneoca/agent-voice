@@ -8,11 +8,13 @@ being usable everywhere -- the second is a property of the room.
 """
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
+# Both skips before any heavy import: the runner installs pytest and nothing
+# else, and an import above the skip fails before the skip can help.
+np = pytest.importorskip("numpy", reason="the runner carries pytest only")
 barge = pytest.importorskip("barge", reason="needs openWakeWord for Silero")
-from barge import BargeIn, VAD_FRAME
+BargeIn, VAD_FRAME = barge.BargeIn, barge.VAD_FRAME
 
 
 def tone(seconds: float, amplitude: float, rate: int = 16000) -> bytes:
