@@ -185,6 +185,30 @@ talk to are not the ones that decide how capable it is:
 | **Gemini** | CLI | **no** | yes | — |
 | the ten on the shared CLI adapter | CLI | **no** | yes | untested |
 
+**Two of these act here, and one acts somewhere else.** Claude Code,
+Codex, Antigravity and Gemini are started by this daemon, in a directory
+it chooses, under flags it passes -- so the project and permission
+settings mean something, and what they protect is this machine. An
+endpoint is a URL. agentvoice gives it no flags, no hook and no sandbox,
+and cannot see what is behind it.
+
+Usually that is a chat completion which can do nothing at all. Sometimes
+it is an agent: Hermes speaks the same wire format, and its own
+documentation calls its bearer token equivalent to a root password --
+terminal and filesystem on the Hermes host. Asked for the hostname it was
+running on, it answered with it.
+
+The difference is not how dangerous it is, it is *where*. Nothing this
+machine holds is at risk from Hermes; the Mac mini it runs on is. Which
+also means the project directory and permission level do not apply --
+they govern an agent started here, and reach nothing over there, so the
+panel drops them and the settings screen says why. Restrain a remote
+agent where it runs.
+
+Tick **This endpoint is an agent** when the endpoint can act. agentvoice
+cannot tell from the URL, so until you say, it claims nothing about the
+far end -- only that it offers no tools itself.
+
 **Remembering is three different mechanisms, and one absence.** Claude
 Code, Codex and Antigravity each keep the conversation themselves and
 hand back a handle -- `--resume`, a `thread_id`, `--conversation`. The

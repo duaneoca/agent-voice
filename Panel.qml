@@ -150,6 +150,9 @@ Panel {
   // Non-empty when an endpoint is configured and is answering instead of
   // the agent chosen in Omarchy's settings.
   property string vOverriding: ""
+  // False when the project and permission settings do not reach the running
+  // backend, because it acts somewhere we do not control.
+  property bool vGoverned: true
   readonly property string projectLabel: {
     var d = String(voice.projectDir).trim()
     if (d === "") return "~"
@@ -207,6 +210,7 @@ Panel {
         if (d.posture !== undefined) voice.vPosture = String(d.posture)
         if (d.remembers !== undefined) voice.vRemembers = (d.remembers === true)
         if (d.overriding !== undefined) voice.vOverriding = String(d.overriding)
+        if (d.governed !== undefined) voice.vGoverned = (d.governed === true)
       } catch (e) {
         voice.vState = "off"
       }
@@ -296,6 +300,7 @@ Panel {
           Row {
             width: parent.width
             spacing: Style.spacing.sm
+            visible: voice.vGoverned
             Text {
               text: "\uf07b"
               color: voice.dim
