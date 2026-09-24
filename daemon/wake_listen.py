@@ -447,6 +447,7 @@ class Daemon:
         # of continuous output to converge, which is longer than a reply. So
         # an interrupt is an explicit act -- a keybind, or the Stop button.
         self._interrupt = threading.Event()
+        self._barge = None
         signal.signal(signal.SIGUSR1, self._on_toggle)
         signal.signal(signal.SIGUSR2, self._on_interrupt)
 
@@ -719,10 +720,47 @@ class Daemon:
         """Say something, then make sure we did not hear ourselves say it."""
         if not self.speaker or self._interrupt.is_set():
             return
+        watch = self._barge_watch()
         try:
-            self.speaker.say(speech_safe(text))
+            self.speaker.say(speech_safe(text), watch=watch)
         finally:
             self.deafen(tail_ms)
+
+    def _barge_watch(self):
+        """A callable Speaker checks between chunks, or None when off.
+
+        Off by default and for a measured reason: where the microphone sits
+        beside the speaker, every gate that hears the user also fires on our
+        own output, because the two arrive at the same level. `agentvoice
+        calibrate` says which kind of room this is.
+        """
+        if not self.cfg.bool("bargeIn") or self._frames is None:
+            return None
+        if self._barge is None:
+            try:
+                from barge import BargeIn
+                self._barge = BargeIn(factor=self.cfg.int("bargeFactor") / 100.0)
+            except Exception as e:
+                print(f"  {YEL}barge-in unavailable: {e}{OFF}")
+                return None
+        self._barge.factor = self.cfg.int("bargeFactor") / 100.0
+        self._barge.reset()
+
+        def watch() -> bool:
+            # Drain whatever the microphone captured while that chunk played.
+            while True:
+                try:
+                    pcm = self._frames.get_nowait()
+                except Exception:
+                    return False
+                if self._barge.feed(pcm):
+                    print(f"  {YEL}heard you over us — stopping{OFF}")
+                    self._interrupt.set()
+                    if self.agent:
+                        self.agent.cancel()
+                    return True
+
+        return watch
 
     def answer(self, text: str, last: dict) -> None:
         """Hand the transcript to the agent and speak the reply as it lands.

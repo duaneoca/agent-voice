@@ -25,9 +25,21 @@ class FakeSpeaker:
         self.name = "test"
         self.said: list[str] = []
         self.cancelled = False
+        self.watched = False
+        self.interrupted_by_watch = False
 
-    def say(self, text: str) -> float:
+    def say(self, text: str, watch=None) -> float:
+        """Signature follows the real Speaker, including the barge-in hook.
+
+        It drifted once: `watch` was added to Speaker.say and this fake was
+        not updated, so five tests failed with a TypeError that said nothing
+        about barge-in.
+        """
         self.said.append(text)
+        if watch is not None:
+            self.watched = True
+            if watch():
+                self.interrupted_by_watch = True
         return 0.0
 
     def cancel(self) -> None:

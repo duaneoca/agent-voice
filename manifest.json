@@ -47,7 +47,9 @@
       "permissions": {},
       "endpointUrl": "",
       "endpointModel": "",
-      "endpointIsAgent": false
+      "endpointIsAgent": false,
+      "bargeIn": false,
+      "bargeFactor": 150
     },
     "schema": [
       {
@@ -262,6 +264,22 @@
         "label": "This endpoint is an agent",
         "defaultValue": false,
         "description": "Tick when the endpoint can run commands or change files on its host, as Hermes can. agentvoice cannot tell from the URL, so it says nothing about the far end unless you do. Also gives it longer to answer, because an agent goes quiet while it runs tools."
+      },
+      {
+        "key": "bargeIn",
+        "type": "bool",
+        "label": "Let me interrupt by talking",
+        "defaultValue": false,
+        "description": "Stop speaking when it hears you talk over it. Off by default and worth measuring first: where the microphone sits beside the speaker, every setting that hears you also fires on its own voice. Run `agentvoice calibrate` to find out which room you have."
+      },
+      {
+        "key": "bargeFactor",
+        "type": "integer",
+        "label": "How much louder you must be (%)",
+        "defaultValue": 150,
+        "minimum": 110,
+        "maximum": 400,
+        "description": "How far above its own bleed your voice has to reach before it stops. 150 means half again as loud. Higher is harder to trigger by accident and harder to trigger on purpose."
       }
     ]
   },
