@@ -111,6 +111,51 @@ def test_the_flag_reaches_the_script(tmp_path, flag):
     assert not app.exists()
 
 
+def test_uninstall_works_without_the_tools_only_the_install_needs(tmp_path):
+    """Removal downloads nothing, so curl/bsdtar/jq must not gate it.
+
+    The dependency check sat above the uninstall block, so a machine that
+    never had bsdtar -- or stopped having it -- could install agentvoice and
+    then not remove it. CI runners have no bsdtar, which is how this surfaced.
+    """
+    app = _install_tree(tmp_path)
+
+    # The real environment with exactly three tools taken out of it, which
+    # is what a CI runner looks like. Listing what to keep instead was worse:
+    # the first attempt forgot dirname and failed on line 22 for the wrong
+    # reason, and any such list rots the next time the script calls something.
+    slim = tmp_path / "slimbin"
+    slim.mkdir()
+    withheld = {"curl", "bsdtar", "jq"}
+    for entry in os.environ["PATH"].split(os.pathsep):
+        d = Path(entry)
+        if not d.is_dir():
+            continue
+        for tool in d.iterdir():
+            if tool.name in withheld or (slim / tool.name).exists():
+                continue
+            try:
+                (slim / tool.name).symlink_to(tool)
+            except OSError:
+                pass
+    for tool in withheld:
+        assert shutil.which(tool, path=str(slim)) is None
+
+    done = subprocess.run(
+        [str(app / "install.sh"), "--uninstall", "--yes"],
+        env={
+            "PATH": str(slim),
+            "HOME": str(tmp_path),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        },
+        capture_output=True, text=True, timeout=120,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not app.exists()
+
+
 # --- the other half of the same accident -----------------------------------
 # Once the flag was lost, what ran was an install, from $APP, whose very first
 # act is `rm -rf "$APP"` -- deleting the tree it is about to copy from. The cp

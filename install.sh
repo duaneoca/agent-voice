@@ -52,13 +52,18 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Checked up front rather than discovered at the download step, with the
-# environment already built and the models missing.
-missing=""
-for tool in curl bsdtar jq; do have "$tool" || missing="$missing $tool"; done
-if [[ -n ${missing// } ]]; then
-  echo "  missing required tools:$missing" >&2
-  echo "  install them with: omarchy pkg add$missing" >&2
-  exit 1
+# environment already built and the models missing. Not for an uninstall:
+# removal downloads nothing, and refusing to run because a tool the *install*
+# needs has since been removed strands the user with something they cannot
+# take off. CI found that one -- its runners have no bsdtar.
+if [[ $UNINSTALL == 0 ]]; then
+  missing=""
+  for tool in curl bsdtar jq; do have "$tool" || missing="$missing $tool"; done
+  if [[ -n ${missing// } ]]; then
+    echo "  missing required tools:$missing" >&2
+    echo "  install them with: omarchy pkg add$missing" >&2
+    exit 1
+  fi
 fi
 say()  { if have gum; then gum style --foreground 4 "  $*"; else echo "  $*"; fi; }
 ok()   { if have gum; then gum style --foreground 2 "  $*"; else echo "  $*"; fi; }
