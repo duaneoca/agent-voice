@@ -182,12 +182,8 @@ Panel {
       onStreamFinished: voice.engineInstalled = String(text).trim() === "yes"
     }
   }
-  Process {
-    id: installer
-    command: ["omarchy-launch-floating-terminal-with-presentation",
-              "bash", "-c",
-              "cd \"$(dirname \"$0\")\" 2>/dev/null; ./install.sh"]
-  }
+  // The command is set at the call site, which knows the plugin's path.
+  Process { id: installer }
 
   Process {
     id: probe
@@ -203,8 +199,16 @@ Panel {
     repeat: true
     triggeredOnStart: true
     onTriggered: {
-      if (!probe.running) probe.running = true
       if (!enginePresent.running) enginePresent.running = true
+      // Only probe a command that is on PATH. Quickshell logs a warning for
+      // every spawn of a missing binary, so a half-removed engine otherwise
+      // writes to the journal twice a second for as long as the bar runs --
+      // which is how the broken uninstall was found.
+      if (voice.engineInstalled) {
+        if (!probe.running) probe.running = true
+      } else {
+        voice.serviceActive = false
+      }
       // A watch never attaches to a file that was not there, and on a first
       // install it is not: the widget arrives with `plugin add`, the daemon
       // minutes later. Without this retry the panel reads "off" from a
