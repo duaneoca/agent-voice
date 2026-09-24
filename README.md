@@ -455,7 +455,12 @@ Done:
    never run; it is now the fastest backend here and the only one whose
    wire format never had to be guessed.
 9. Keys in the login keyring rather than a file, looked up by endpoint
-   host so several providers coexist.
+   host and port so two services on one machine do not share one.
+10. A remote agent: Hermes, over the same endpoint adapter, turning
+    office lights on and off through Home Assistant by voice. Its
+    tool-activity chunks passed through the parser, speech started
+    before the tool finished and resumed after it, and the follow-up
+    window carried the second command without a wake word.
 
 Next, roughly in order of how much they matter:
 
@@ -474,18 +479,18 @@ Next, roughly in order of how much they matter:
     any release: `gemini` and `gemini-cli` alias to `agy` there, which
     is the name this already registers. Until that ships, selecting it
     means writing `~/.config/omarchy/defaults/agent` directly.
-11. Hermes, once its Python is reinstalled. Two routes -- its CLI, or
-    its HTTP API through the endpoint adapter, which the CLI templates
-    already recommend preferring.
-12. Widen the tests. `bin/agentvoice-check` runs 217, covering the
+11. Widen the tests. `bin/agentvoice-check` runs 230, covering the
     speakable-text rules, the permission hook and its levels, config
-    precedence, key resolution, the adapter contract, process-tree
-    teardown, and the recorded envelopes of the backends that have
-    answered. The wake loop and the QML are still exercised only by
-    hand, and conversation mode has never been driven end to end on a
-    backend that forgets -- only its warning has.
-13. A stranger at the microphone. The verifier's 0/12 against other
-    speakers was synthetic.
+    precedence, key resolution and scope, the adapter contract,
+    process-tree teardown, and the recorded envelopes of the backends
+    that have answered. The wake loop and the QML are still exercised
+    only by hand.
+12. A stranger at the microphone. The verifier's 0/12 against other
+    speakers was synthetic, and a second voice in the room is the one
+    failure mode that cannot be tested alone.
+13. Conversation mode on a backend that forgets. The warning is
+    verified; the behaviour behind it is not, because the only forgetful
+    backend installed here is 503ing.
 
 ## Development
 
