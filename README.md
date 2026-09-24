@@ -67,6 +67,29 @@ model cache under `~/.cache/huggingface`, which other things share. All
 three are named on the way out, with the commands to remove them, so the
 choice is yours rather than the script's.
 
+### A wake word of your own
+
+openWakeWord ships four phrases. For anything else, train one --
+[LiveKit's trainer](https://livekit.com/blog/livekit-wakeword) generates
+its own synthetic speech, so there is nothing to record, and exports ONNX
+that openWakeWord loads unchanged. Take the `.onnx`, not the `.tflite`:
+this pins openwakeword 0.4.0, the last release that is ONNX-only, because
+0.5+ depend on tflite-runtime which publishes no wheel past cp311.
+
+```bash
+cp hey_claude.onnx ~/.local/share/agentvoice/wakewords/
+```
+
+That is the whole install. The phrase appears in the settings dropdown,
+named after the file, and the daemon picks it up without a restart.
+
+Two things worth knowing. The filename is the model's key, and a verifier
+is bound to it exactly -- rename the file later and it fails at runtime
+saying only "some were not matched with a base model". And the detection
+threshold is tuned for whichever phrase it was set on, so measure the new
+one with `agentvoice monitor`: say the phrase, then say something that
+rhymes with it, and put the threshold between the two peaks.
+
 ## Principles
 
 1. **Baseline, not bolted on.** Installs like any Omarchy extension:
