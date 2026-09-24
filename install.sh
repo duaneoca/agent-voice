@@ -139,6 +139,20 @@ if [[ $UNINSTALL == 1 ]]; then
   # rmdir, not rm -rf: it goes only if something above was genuinely kept.
   rmdir "$DATA" 2>/dev/null || true
 
+  # The key file fallback, for machines with no keyring. The keyring gets
+  # named on the way out and this did not, so a key left here survived
+  # unmentioned -- and when there was none, an empty directory survived
+  # instead. Same question as above, asked of the other parent.
+  CFGDIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentvoice"
+  KEPT_KEY=""
+  if [[ -d $CFGDIR ]]; then
+    if [[ -n "$(ls -A "$CFGDIR" 2>/dev/null)" ]]; then
+      KEPT_KEY="$CFGDIR"
+    else
+      rmdir "$CFGDIR" 2>/dev/null || true
+    fi
+  fi
+
   echo
   ok "Done."
   cat <<NEXT
@@ -150,6 +164,7 @@ if [[ $UNINSTALL == 1 ]]; then
   want them again:
 NEXT
   [[ -n $KEPT ]] && printf "  Your voice — recordings and trained verifiers:%b\n\n" "$KEPT"
+  [[ -n $KEPT_KEY ]] && printf "  An API key you put in a file:\n    %s\n\n" "$KEPT_KEY"
   cat <<NEXT
   API keys in the login keyring:
     secret-tool search --all service agentvoice
