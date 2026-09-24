@@ -488,6 +488,10 @@ class Daemon:
         where = f" · {want_cwd}" if getattr(self.agent, "has_tools", True) else ""
         print(f"  {CYA}agent: {want_name or 'nobody'}{where}{OFF}"
               f"  {DIM}({self.posture()}){OFF}")
+        chosen = omarchy_default()
+        if want_name == "endpoint" and chosen:
+            print(f"  {YEL}the endpoint setting is answering instead of "
+                  f"{chosen} — clear it to use the desktop's agent{OFF}")
         # Said here as well as in the banner, because the banner only reprints
         # when our own config changes and switching agents writes Omarchy's
         # file -- so on the one occasion this matters most, it would not run.
@@ -538,12 +542,19 @@ class Daemon:
             self.state.describe(agent=name, level="ask", levels=["ask"],
                                 posture=explain_agent(name) or "no agent")
             return
+        # An endpoint takes precedence over the desktop's agent, which is a
+        # reasonable rule and an unreasonable surprise: choosing Claude in
+        # Omarchy's settings and having nothing change is indistinguishable
+        # from the setting being broken. Name what is being overridden.
+        chosen = omarchy_default() or ""
+        endpoint_wins = getattr(self.agent, "name", "") == "endpoint" and chosen
         self.state.describe(
             agent=getattr(self.agent, "name", "") or "",
             level=self.level(),
             levels=list(getattr(self.agent, "levels", ("ask", "trusted"))),
             posture=self.posture(),
             remembers=bool(getattr(self.agent, "remembers", False)),
+            overriding=chosen if endpoint_wins else "",
         )
 
     def _on_interrupt(self, *_):
