@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import paths
 
 
@@ -71,3 +73,46 @@ class TestSuiteIsolation:
              % str(Path(__file__).resolve().parent.parent / "daemon")],
             capture_output=True, text=True, check=True).stdout.strip()
         assert out != str(Path.home() / ".config/omarchy/shell.json")
+
+
+class TestCustomWakeWords:
+    """A phrase you trained yourself must be usable everywhere the four in
+    the wheel are.
+
+    The settings screen has always listed models from
+    ~/.local/share/agentvoice/wakewords in its dropdown, and resolve_model
+    did not know the directory existed. So choosing one failed, and the
+    verifier trainer would not offer it either -- which is the combination
+    the README actively encourages, since it links to a training notebook.
+    """
+
+    @pytest.fixture
+    def custom(self, monkeypatch, tmp_path):
+        import verifier
+        wakewords = tmp_path / "wakewords"
+        wakewords.mkdir()
+        (wakewords / "hey_claude.onnx").write_bytes(b"not a real model")
+        monkeypatch.setattr(verifier, "WAKEWORDS", wakewords)
+        return verifier
+
+    def test_a_trained_phrase_resolves(self, custom):
+        path, key = custom.resolve_model("hey_claude")
+        assert path.name == "hey_claude.onnx"
+        assert key == "hey_claude", "the verifier is keyed by this exact stem"
+
+    def test_a_bundled_phrase_still_resolves(self, custom):
+        path, key = custom.resolve_model("hey_jarvis")
+        assert key.startswith("hey_jarvis")
+
+    def test_yours_wins_over_a_bundled_name(self, custom):
+        """If you trained one called hey_jarvis, you meant yours."""
+        (custom.WAKEWORDS / "hey_jarvis.onnx").write_bytes(b"mine")
+        path, key = custom.resolve_model("hey_jarvis")
+        assert path.parent == custom.WAKEWORDS
+        assert key == "hey_jarvis"
+
+    def test_an_unknown_name_names_both_places_it_looked(self, custom):
+        with pytest.raises(Exception) as caught:
+            custom.resolve_model("hey_nonsuch")
+        message = str(caught.value)
+        assert "wakewords" in message and "resources/models" in message
