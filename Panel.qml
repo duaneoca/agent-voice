@@ -205,6 +205,12 @@ Panel {
     onTriggered: {
       if (!probe.running) probe.running = true
       if (!enginePresent.running) enginePresent.running = true
+      // A watch never attaches to a file that was not there, and on a first
+      // install it is not: the widget arrives with `plugin add`, the daemon
+      // minutes later. Without this retry the panel reads "off" from a
+      // failed load, the service starts, and the label sits on STARTING
+      // until the shell is restarted. Only fires while actually stuck.
+      if (voice.serviceActive && voice.vState === "off") stateFile.reload()
     }
   }
 

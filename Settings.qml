@@ -289,6 +289,16 @@ Item {
     }
   }
 
+  // Same recovery as the panel: a first install has no state file to watch,
+  // so the watch never attaches and the screen never updates. A sibling of
+  // the FileView, not a child -- its default property takes an adapter.
+  Timer {
+    interval: 2000
+    running: root.opened && root.vState === "off"
+    repeat: true
+    onTriggered: stateFile.reload()
+  }
+
   FileView {
     id: stateFile
     path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/agentvoice/state"
