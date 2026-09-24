@@ -576,23 +576,43 @@ Item {
               }
             }
 
+            Toggle {
+              width: parent.width
+              visible: root.setting("endpointUrl", "") !== ""
+              label: "This endpoint is an agent"
+              description: "Tick when it can run commands or change files on " +
+                           "its own host, as Hermes can. agentvoice cannot tell " +
+                           "from the URL, so it claims nothing about the far " +
+                           "end unless you say — and gives it longer to answer, " +
+                           "because an agent goes quiet while it runs tools."
+              checked: root.setting("endpointIsAgent", false) === true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("endpointIsAgent",
+                  root.setting("endpointIsAgent", false) === true
+                    ? "false" : "true", true)
+            }
+
             Text {
               width: parent.width
               wrapMode: Text.WordWrap
               text: "Any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, " +
-                    "OpenAI, xAI. Set both and it answers instead of the " +
-                    "desktop's agent. It is chat only: it cannot read files, " +
-                    "change them or run commands, whatever it is asked, so the " +
-                    "permission level above does not apply to it.\n" +
+                    "OpenAI, xAI, Hermes. Set both boxes and it answers instead " +
+                    "of the desktop's agent.\n" +
+                    "agentvoice offers it no tools and gates nothing, so the " +
+                    "permission level above does not reach it. What the endpoint " +
+                    "itself can do is not visible from here: Ollama cannot touch " +
+                    "anything, while Hermes has a terminal and a filesystem on " +
+                    "its host. That is what the tickbox is for.\n" +
                     "Ollama and LM Studio need no key. For one that does, the " +
                     "login keyring is the best place — it unlocks when you log " +
                     "in and only this session can read it:\n" +
                     "  secret-tool store --label=agentvoice \\\n" +
                     "      service agentvoice endpoint api.openai.com\n" +
-                    "Keyed by host, so several endpoints can each have their " +
-                    "own. Failing that, ~/.config/agentvoice/endpoint.key. " +
-                    "Never in this settings file — it is the desktop's config " +
-                    "and gets copied around."
+                    "Keyed by host and port, so two services on one machine do " +
+                    "not share a key. Failing that, " +
+                    "~/.config/agentvoice/endpoint.key. Never in this settings " +
+                    "file — it is the desktop's config and gets copied around."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

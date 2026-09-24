@@ -417,3 +417,44 @@ class TestKeyScope:
     def test_a_malformed_port_does_not_raise(self):
         from wake_listen import _host
         _host("http://host:notaport/v1")
+
+
+class TestWhatIsBehindTheUrlIsUnknown:
+    """The adapter cannot see what it is talking to, so it stopped claiming.
+
+    The same code serves Ollama, which genuinely cannot touch anything, and
+    Hermes, whose own documentation calls its bearer token equivalent to a
+    root password. Asked for the hostname it was running on, Hermes answered
+    with it -- while the panel said "cannot read or change anything".
+    """
+
+    def test_it_no_longer_claims_the_far_end_is_harmless(self):
+        posture = OpenAICompatible(base_url="http://x/v1", model="m").posture("ask")
+        assert "cannot read or change anything" not in posture
+        assert "no tools from here" in posture
+
+    def test_an_agent_endpoint_says_it_can_act(self):
+        a = OpenAICompatible(base_url="http://192.168.1.10:8642/v1", model="m",
+                             is_agent=True)
+        assert "can act on 192.168.1.10" in a.posture("ask")
+        assert a.has_tools is True
+
+    def test_an_agent_endpoint_is_given_longer_to_answer(self):
+        """Hermes sets its own read timeout to 300s and says why: the agent
+        goes quiet while it runs tools. The chat limit would cut it short."""
+        plain = OpenAICompatible(base_url="http://x/v1", model="m")
+        agent = OpenAICompatible(base_url="http://x/v1", model="m", is_agent=True)
+        assert agent.idle_timeout_s > plain.idle_timeout_s
+
+    def test_no_endpoint_claims_agentvoice_can_restrain_it(self):
+        """A CLI held in its safest mode is at least being held -- we choose
+        the flags it starts with. An endpoint gets no flags at all."""
+        assert OpenAICompatible(base_url="http://x/v1", model="m").can_be_gated is False
+
+    def test_every_cli_backend_can_be_gated(self):
+        from adapters.antigravity import Antigravity
+        from adapters.claude_code import ClaudeCode
+        from adapters.codex import Codex
+        from adapters.gemini import Gemini
+        for cls in (ClaudeCode, Codex, Gemini, Antigravity):
+            assert cls().can_be_gated is True, cls.__name__

@@ -32,20 +32,35 @@ class OpenAICompatible(Adapter):
     name = "endpoint"
     remembers = True          # client-side: the transcript is replayed
 
-    #: There are no tools on this path. It is a chat completion and nothing
-    #: else: it cannot read a file, write one, or run a command, whatever it
-    #: is asked. So the permission levels have nothing to govern, and offering
-    #: them would invite a choice that changes nothing. The one thing worth
-    #: saying about it is where the words go, which posture() does.
+    #: agentvoice offers this path no tools: it sends messages and reads text
+    #: back, with no hook, no sandbox and nothing to gate. What sits behind
+    #: the URL is another matter entirely, and not something that can be known
+    #: from here -- the same adapter serves Ollama, which genuinely cannot
+    #: touch anything, and Hermes, whose own documentation calls its bearer
+    #: token equivalent to a root password. Asked for the hostname it was
+    #: running on, Hermes answered with it.
+    #:
+    #: So the claim was withdrawn rather than guessed. `is_agent` is the
+    #: user's statement about their own endpoint, and until they make it this
+    #: says what it knows -- that agentvoice adds no tools -- and not what it
+    #: cannot.
     levels = ("ask",)
     guards_permissions = False
-    has_tools = False
+    can_be_gated = False
 
     def __init__(self, base_url: str, model: str,
                  api_key: str | None = None,
                  spoken: bool = True,
+                 is_agent: bool = False,
                  history_turns: int = DEFAULT_HISTORY_TURNS,
                  timeout: float = 120.0):
+        self.is_agent = is_agent
+        self.has_tools = is_agent
+        if is_agent:
+            # An agent goes quiet while it runs tools. Hermes sets its own
+            # read timeout to 300s for exactly this reason and says so, so
+            # the chat-endpoint limit would cut a working turn short.
+            self.idle_timeout_s = 300.0
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -90,7 +105,13 @@ class OpenAICompatible(Adapter):
 
     def posture(self, level: str) -> str:
         where = "on your network" if self._is_local() else "sent off this machine"
-        return f"chat only — cannot read or change anything · {where}"
+        if self.is_agent:
+            import urllib.parse
+            host = urllib.parse.urlparse(self.base_url).hostname or "the endpoint"
+            return f"an agent — it can act on {host} · {where}"
+        # Deliberately not "cannot read or change anything": that is a claim
+        # about the far end, which this cannot see.
+        return f"no tools from here · {where}"
 
     def _messages(self, text: str, session_id: str | None) -> tuple[str, list[dict]]:
         sid = session_id or str(uuid.uuid4())

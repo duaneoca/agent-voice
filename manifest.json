@@ -46,7 +46,8 @@
       "projectDir": "",
       "permissions": {},
       "endpointUrl": "",
-      "endpointModel": ""
+      "endpointModel": "",
+      "endpointIsAgent": false
     },
     "schema": [
       {
@@ -254,6 +255,13 @@
         "label": "Endpoint model",
         "defaultValue": "",
         "description": "The model name that endpoint expects, such as llama3.2 or gpt-4o-mini."
+      },
+      {
+        "key": "endpointIsAgent",
+        "type": "bool",
+        "label": "This endpoint is an agent",
+        "defaultValue": false,
+        "description": "Tick when the endpoint can run commands or change files on its host, as Hermes can. agentvoice cannot tell from the URL, so it says nothing about the far end unless you do. Also gives it longer to answer, because an agent goes quiet while it runs tools."
       }
     ]
   },
