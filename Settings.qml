@@ -593,6 +593,30 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
+            Toggle {
+              width: parent.width
+              label: "Let me interrupt by talking"
+              description: "Stop speaking when it hears you over it. Measure " +
+                           "first with: agentvoice calibrate"
+              checked: root.setting("bargeIn", false) === true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.persist("bargeIn",
+                  root.setting("bargeIn", false) === true ? "false" : "true", true)
+            }
+
+            KnobRow {
+              width: parent.width
+              visible: root.setting("bargeIn", false) === true
+              label: "How much louder you must be"
+              suffix: "%"
+              description: "Above its own voice, before it stops. Higher is " +
+                           "harder to trigger by accident and on purpose."
+              value: root.setting("bargeFactor", 150)
+              minimum: 110; maximum: 400; stepSize: 10
+              onCommitted: function(v) { root.persist("bargeFactor", v, true) }
+            }
+
             Text {
               width: parent.width
               wrapMode: Text.WordWrap

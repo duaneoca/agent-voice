@@ -10,7 +10,8 @@
 #                                  is mid-reply, stop it
 #   agentvoice talk-end            push-to-talk released: that was the turn
 #   agentvoice status              JSON, for scripts and the bar
-#   agentvoice monitor             live wake-word scores, for calibration
+#   agentvoice status              JSON, for scripts and the bar
+#   agentvoice calibrate           can this room support barge-in?
 #   agentvoice permit <id> allow|deny   answer a pending permission request
 #   agentvoice pending             the request waiting for an answer, as JSON
 set -euo pipefail
@@ -118,6 +119,13 @@ case "${1:-status}" in
     f=$(ls -t "$D"/*.request 2>/dev/null | head -1)
     [[ -n ${f:-} ]] && cat "$f" || echo '{}'
     ;;
+  calibrate)
+    # Whether the user can be heard over the speaker is a property of the
+    # room, not of the code, so it is measured rather than assumed.
+    REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+    PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
+    exec "$PY" -c "import sys; sys.path.insert(0, '$REPO/daemon'); import barge; sys.exit(barge.calibrate())"
+    ;;
   monitor)
     # Live wake-word scores. Safe to run alongside the daemon: PipeWire allows
     # several readers on one microphone.
@@ -134,7 +142,7 @@ case "${1:-status}" in
     active && echo yes || echo no
     ;;
   *)
-    echo "usage: agentvoice [start|stop|toggle|mic|talk|talk-end|interrupt|monitor|permit|pending|status|is-active]" >&2
+    echo "usage: agentvoice [start|stop|toggle|mic|talk|talk-end|interrupt|monitor|calibrate|permit|pending|status|is-active]" >&2
     exit 2
     ;;
 esac

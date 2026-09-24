@@ -43,6 +43,8 @@ DEFAULTS = {
     "model": "tiny.en",
     "speakReplies": True,
     "livePartials": "auto",
+    "bargeIn": False,
+    "bargeFactor": 150,
     "permissions": {},
     "projectDir": "",
     "endpointUrl": "",
@@ -70,6 +72,8 @@ TOML_ALIASES = {
     "refractoryMs": ("wake", "refractory_ms"),
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
+    "bargeIn": ("audio", "barge_in"),
+    "bargeFactor": ("audio", "barge_factor"),
     "permissions": ("agent", "permissions"),
     "projectDir": ("agent", "project_dir"),
     "endpointUrl": ("agent", "endpoint_url"),
@@ -244,8 +248,17 @@ class Speaker:
     def cancel(self) -> None:
         self._stop.set()
 
-    def say(self, text: str) -> float:
-        """Speak, sentence by sentence. Returns seconds of audio produced."""
+    def say(self, text: str, watch=None) -> float:
+        """Speak, sentence by sentence. Returns seconds of audio produced.
+
+        `watch` is called between audio chunks and stops the speech when it
+        returns true -- which is how barge-in listens while we are talking.
+        Called here rather than from a thread on purpose: this opens a
+        PortAudio output stream while an input stream is already running, and
+        driving two of those from two threads is what crashed every benchmark
+        script that tried it (libasound, use-after-free, SEGV). One thread,
+        one interleaved loop, no shared PCM handles.
+        """
         import numpy as np
         import sounddevice as sd
 
@@ -262,4 +275,7 @@ class Speaker:
                     pcm = np.frombuffer(chunk.audio_int16_bytes, dtype=np.int16)
                     out.write(pcm)
                     total += len(pcm) / self._rate
+                    if watch is not None and watch():
+                        self._stop.set()
+                        break
         return total

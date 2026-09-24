@@ -154,8 +154,31 @@ levels, to be cancelling beautifully. And the adaptive filter needs
 roughly 30 seconds of continuous output to converge -- far longer than a
 spoken reply -- so it is unconverged exactly when a short answer needs it.
 
-Half duplex with an explicit interrupt is honest about the hardware;
-acoustic barge-in is an open question, not a feature.
+Half duplex with an explicit interrupt is honest about *this* hardware.
+Whether it is honest about yours is a property of the room, so there is a
+way to find out:
+
+  agentvoice calibrate
+
+It speaks, measures how loudly its own voice comes back through your
+microphone, then listens while you talk and reports the gap. Nine dB of
+headroom or more and barge-in works; here it is negative, because the
+microphone sits beside the speaker.
+
+The mechanism, when it does work, is not wake-word detection through the
+bleed -- that needs about 24 dB and was measured at 5/20. It is the
+question telephony has always asked: is that speech, and is it louder
+than the echo? A voice activity detector answers the first half and an
+energy gate calibrated to our own output answers the second, with only
+sub-gate frames updating the estimate so your voice can never raise the
+bar it has to clear. Detection measured 8/10 here -- the trouble is that
+every setting which hears the user also fires on us.
+
+The approach is [Atzingen/hey-jarvis](https://github.com/Atzingen/hey-jarvis)'s,
+found while checking whether this duplicated existing work. It does. Its
+defaults floor the gate at -38.4 dBFS, which is below the bleed measured
+here, so out of the box it interrupts itself within a second -- which is
+a fact about this laptop, not about their code.
 
 ## Architecture
 
