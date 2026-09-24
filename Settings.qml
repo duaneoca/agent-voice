@@ -571,6 +571,38 @@ Item {
 
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
+            // Removal lives here because nothing runs on the way out:
+            // `omarchy plugin remove` is an rm -rf with no hook, so the only
+            // moment this can clean up after itself is while it still exists.
+            Button {
+              text: "Remove Agent Voice…"
+              fontFamily: root.fontFamily
+              onClicked: {
+                remover.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                   "bash", "-c",
+                                   "\"$HOME/.local/share/agentvoice/app/install.sh\" " +
+                                   "--uninstall && omarchy plugin remove " +
+                                   "duaneoca.agentvoice --yes"]
+                remover.running = true
+                root.dismiss()
+              }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Removes the engine, the service and the widget in one go. " +
+                    "Your trained verifiers, recordings and API keys are kept, " +
+                    "and it says where they are on the way out."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Process { id: remover }
+
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+
             // --- talking and interrupting -----------------------------------
             // Not settings: the keys. They are here because the feature was
             // built, bound and still undiscoverable -- the first question

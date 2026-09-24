@@ -171,6 +171,24 @@ Panel {
   // systemd is the authority on whether the daemon exists; the state file only
   // says what it is doing. Both are needed: a stale state file outlives a
   // crashed daemon, and would otherwise leave the switch stuck on.
+  // The daemon is a separate install: the widget arrives with `omarchy
+  // plugin add`, the engine behind it is a few hundred megabytes and does
+  // not. Rather than show a dead switch, ask.
+  property bool engineInstalled: true
+  Process {
+    id: enginePresent
+    command: ["bash", "-c", "command -v agentvoice >/dev/null && echo yes || echo no"]
+    stdout: StdioCollector {
+      onStreamFinished: voice.engineInstalled = String(text).trim() === "yes"
+    }
+  }
+  Process {
+    id: installer
+    command: ["omarchy-launch-floating-terminal-with-presentation",
+              "bash", "-c",
+              "cd \"$(dirname \"$0\")\" 2>/dev/null; ./install.sh"]
+  }
+
   Process {
     id: probe
     command: ["agentvoice", "is-active"]
@@ -184,7 +202,10 @@ Panel {
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: if (!probe.running) probe.running = true
+    onTriggered: {
+      if (!probe.running) probe.running = true
+      if (!enginePresent.running) enginePresent.running = true
+    }
   }
 
   FileView {
@@ -332,6 +353,39 @@ Panel {
               font.family: voice.fontFamily
               font.pixelSize: Style.font.caption
             }
+          }
+        }
+      }
+
+      // The engine is a separate, larger install. Offer it rather than
+      // showing a switch that cannot turn anything on -- and say the size,
+      // because consent to "install" and consent to "download 700MB and run
+      // a background service" are not the same consent.
+      Column {
+        width: parent.width
+        spacing: Style.space(6)
+        visible: !voice.engineInstalled
+
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: "The voice engine is not installed yet. It is about 700MB — " +
+                "speech recognition, a voice, and the wake word — and runs as " +
+                "a background service you can stop at any time."
+          color: voice.dim
+          font.family: voice.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        Button {
+          text: "Install the voice engine…"
+          fontFamily: voice.fontFamily
+          onClicked: {
+            installer.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                 Quickshell.env("HOME") +
+                                 "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh"]
+            installer.running = true
+            voice.close()
           }
         }
       }
