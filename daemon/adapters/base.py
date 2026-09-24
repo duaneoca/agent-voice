@@ -189,6 +189,14 @@ class Adapter(ABC):
     #: completion describes a restraint that is not doing any work.
     has_tools: bool = True
 
+    #: True when a second turn can follow on from the first. False is the
+    #: default because it is the safe direction to be wrong in: a backend
+    #: that does remember and says it does not merely looks modest, while the
+    #: reverse invites a conversation the backend cannot have. Conversation
+    #: mode fails quietly here -- the window opens, it listens, it answers,
+    #: and every turn starts from nothing -- so the screen has to say it.
+    remembers: bool = False
+
     #: Seconds of silence before this backend is presumed hung.
     idle_timeout_s: float = IDLE_TIMEOUT_S
 

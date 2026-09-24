@@ -488,6 +488,15 @@ class Daemon:
         where = f" · {want_cwd}" if getattr(self.agent, "has_tools", True) else ""
         print(f"  {CYA}agent: {want_name or 'nobody'}{where}{OFF}"
               f"  {DIM}({self.posture()}){OFF}")
+        # Said here as well as in the banner, because the banner only reprints
+        # when our own config changes and switching agents writes Omarchy's
+        # file -- so on the one occasion this matters most, it would not run.
+        if (self.agent is not None and self.pipe is not None
+                and getattr(self.pipe, "conversation", False)
+                and not getattr(self.agent, "remembers", False)):
+            print(f"  {YEL}conversation is on, but {self.agent.name} starts "
+                  f"fresh every turn — it saves you the wake word and "
+                  f"nothing more{OFF}")
 
     def endpoint_spec(self) -> dict | None:
         """The configured OpenAI-compatible endpoint, or None.
@@ -534,6 +543,7 @@ class Daemon:
             level=self.level(),
             levels=list(getattr(self.agent, "levels", ("ask", "trusted"))),
             posture=self.posture(),
+            remembers=bool(getattr(self.agent, "remembers", False)),
         )
 
     def _on_interrupt(self, *_):
@@ -580,9 +590,15 @@ class Daemon:
               f"   {DIM}lead-in {p.lead_in_ms}ms · trailing {p.trailing_ms}ms{OFF}")
         print(f"  {DIM}gate {p.threshold_db:.0f} dBFS · confidence "
               f"{p.wake_confidence:.2f} · {self.cfg.source}{OFF}")
-        print(f"  {DIM}conversation: "
-              f"{f'on, {p.follow_up_ms / 1000:.0f}s follow-up window' if p.conversation else 'off'}"
-              f"{OFF}")
+        forgets = self.agent is not None and not getattr(self.agent, "remembers", False)
+        if p.conversation and forgets:
+            print(f"  {YEL}conversation: on, {p.follow_up_ms / 1000:.0f}s window — but "
+                  f"{self.agent.name} starts fresh every turn, so it saves you the "
+                  f"wake word and nothing else{OFF}")
+        else:
+            print(f"  {DIM}conversation: "
+                  f"{f'on, {p.follow_up_ms / 1000:.0f}s follow-up window' if p.conversation else 'off'}"
+                  f"{OFF}")
         who = f"{self.agent.name}" if self.agent else "nobody (echo mode)"
         # A setting called "ask before it changes anything" must not quietly
         # mean nothing. Only Claude Code can raise a prompt from here; the

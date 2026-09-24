@@ -263,3 +263,47 @@ class TestCodexStream:
         noisy = [self.OBSERVED[0], "not json at all", ""] + self.OBSERVED[1:]
         text = "".join(c.text for c in self.replay(noisy, monkeypatch) if c.text)
         assert "A wake word is a phrase" in text
+
+
+class TestRemembers:
+    """Which backends can carry a conversation, declared where the UI reads it.
+
+    Conversation mode fails quietly on one that cannot: the follow-up window
+    opens, it listens, it answers, and every turn starts from nothing. The
+    setting is deliberately left on for those -- it still saves the wake
+    word, which is half of what it is for -- so the screen has to say it.
+    """
+
+    def test_the_four_that_hand_back_a_handle(self):
+        from adapters.antigravity import Antigravity
+        from adapters.openai_compat import OpenAICompatible
+        for a in (ClaudeCode(), Codex(), Antigravity(),
+                  OpenAICompatible(base_url="http://x/v1", model="m")):
+            assert a.remembers is True, a.name
+
+    def test_gemini_does_not(self):
+        """Its headless mode is one-shot and returns no handle of any kind."""
+        assert Gemini().remembers is False
+
+    @pytest.mark.parametrize("agent", sorted(CLI_TEMPLATES))
+    def test_no_shared_cli_agent_claims_to(self, agent):
+        assert CliAgent(agent).remembers is False
+
+    def test_the_default_is_the_safe_direction(self):
+        """A backend that remembers and says it does not merely looks modest;
+        the reverse invites a conversation it cannot have."""
+        from adapters.base import Adapter
+        assert Adapter.remembers is False
+
+    def test_it_matches_whether_a_session_id_is_ever_yielded(self):
+        """The flag and the mechanism must not drift apart."""
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent / "daemon" / "adapters"
+        for module, remembers in (("claude_code", True), ("codex", True),
+                                  ("antigravity", True), ("openai_compat", True),
+                                  ("gemini", False), ("cli_agent", False)):
+            src = (root / f"{module}.py").read_text()
+            yields_id = "session_id=" in src
+            assert yields_id == remembers, (
+                f"{module} says remembers={remembers} but "
+                f"{'does not yield' if remembers else 'yields'} a session id")
