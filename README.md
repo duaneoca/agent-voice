@@ -161,11 +161,50 @@ drained afterwards, because one microphone beside one speaker cannot
 win -- see *Known risks*.
 
 **Backend adapters**
-One contract: take text plus a session ID, stream text back.
-1. Claude Code: headless mode, streaming JSON, session resume
-2. Other agent CLIs with non interactive modes (Codex, Gemini, etc.)
-3. Generic OpenAI compatible HTTP: OpenAI, Grok, Ollama
-Autodetect on install; choose the active one in config.
+One contract: take text plus a session ID, stream text back. Which agent
+answers follows `omarchy default agent`, unless an endpoint URL is set,
+which wins because the desktop has no entry for "the model on my other
+machine".
+
+Eight have answered a live turn. The columns that decide how it feels to
+talk to are not the ones that decide how capable it is:
+
+| backend | reached by | remembers | tools | a two-sentence answer |
+|---|---|---|---|---|
+| Claude Code | CLI, headless | yes | yes | — |
+| Codex | CLI, `exec --json` | yes | yes | 2.8s |
+| Antigravity (`agy`) | CLI, `-p --output-format json` | yes | yes | 12.2s |
+| Groq | endpoint | yes | no | 0.19s |
+| OpenAI | endpoint | yes | no | 1.9s |
+| xAI Grok | endpoint | yes | no | 3.2-4.6s |
+| Ollama, LM Studio, vLLM | endpoint | yes | no | 7.6s on a LAN 4B |
+| **Gemini** | CLI | **no** | yes | — |
+| the ten on the shared CLI adapter | CLI | **no** | yes | untested |
+
+**Remembering is three different mechanisms, and one absence.** Claude
+Code, Codex and Antigravity each keep the conversation themselves and
+hand back a handle -- `--resume`, a `thread_id`, `--conversation`. The
+endpoint keeps no server-side session at all, so the transcript is ours:
+it is replayed up the wire every turn, capped at eight turns, and every
+replayed turn is re-read and re-billed. Gemini's headless mode is
+one-shot and returns no handle of any kind.
+
+That last row is the one to know about, because it fails quietly.
+Conversation mode still opens its window after a Gemini reply, still
+listens, still answers -- and every turn starts from nothing. Ask "what
+did you mean by that?" and you get an answer to a question it has never
+seen. The same is true of the ten agents sharing the plain-stdout
+adapter, none of which has been run.
+
+Two smaller things that follow from the mechanism. An interrupted
+endpoint turn never enters the history, because the history is written
+when the stream ends -- so the machine forgets its own half of an
+exchange you cut short. And the follow-up window is shortened by
+`echoTailMs`, which is counted from the same moment, so a 4s window with
+a 350ms echo tail is really 3.65s.
+
+Switching agent or project drops the session id, deliberately: a handle
+from one project resumes the wrong conversation in another.
 
 **Project and permissions**
 The agent works in one directory, and what it may do is a property of
@@ -330,15 +369,16 @@ It is not nothing on a 4GB machine, and principle 5 says that matters.
 4. **Phonetic neighbours wake the Vosk engine.** Not a tuning problem: a
    grammar scores `"hey cloud"` exactly as high as `"hey claude"`. Use
    openWakeWord, and a verifier, if anything in the room talks.
-5. **The permission guard is uneven.** Claude Code prompts on screen
-   and has been tested end to end. Every other adapter is held in its
-   CLI's safest mode instead, which is reasoning from their documented
-   flags rather than something that has been run -- none of those CLIs
-   is installed and signed in here.
-6. Agent CLIs differ in headless and permission support. Only the Claude
-   adapter has been run against a live agent; the Codex and Gemini
-   adapters are written against observed flags and an unauthenticated
-   CLI, and the nine others share one plain-stdout adapter.
+5. **The permission guard is uneven.** Only Claude Code can put a
+   question on screen, through a PreToolUse hook that fires whether the
+   model likes it or not. Codex, Gemini and Antigravity are held in
+   their CLI's safest mode instead, so they refuse work rather than ask
+   for it. Antigravity has a hook with a richer vocabulary and it cannot
+   grant: in headless mode `allow` is ignored, so a hook there can
+   restrict and never permit.
+6. **Not every backend remembers the last thing you said.** Gemini and
+   the ten on the shared CLI adapter start from nothing on every turn,
+   and conversation mode gives no sign of it -- see *Backend adapters*.
 7. **Cold stubs look installed.** Omarchy puts a mise stub on PATH for
    every agent it knows, so `command -v` finds all thirteen on a machine
    with none of them. Invoking one triggers a minute-long install.
