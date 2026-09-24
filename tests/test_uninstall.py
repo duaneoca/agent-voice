@@ -76,9 +76,27 @@ def test_uninstall_keeps_the_recordings_it_did_not_create(tmp_path):
     app = _install_tree(tmp_path)
     kept = app.parent / "verifiers" / "hey_jarvis.pkl"
 
-    _run(app, tmp_path, "--uninstall", "--yes")
+    done = _run(app, tmp_path, "--uninstall", "--yes")
 
     assert kept.read_text() == "twenty-five recordings"
+    assert str(kept.parent) in done.stdout, "kept it without saying where"
+
+
+def test_uninstall_leaves_nothing_when_there_was_nothing_to_keep(tmp_path):
+    """install.sh creates verifiers/ and wakewords/ itself, so testing `-d`
+    asked whether it had made them, not whether the user had put anything in
+    them. A first-install-then-remove promised to have kept recordings that
+    were never made, and left two empty directories behind saying so."""
+    app = _install_tree(tmp_path)
+    data = app.parent
+    (data / "verifiers" / "hey_jarvis.pkl").unlink()
+    (data / "wakewords").mkdir(exist_ok=True)
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert done.returncode == 0, done.stderr
+    assert not data.exists(), f"left behind: {list(data.rglob('*'))}"
+    assert "verifiers" not in done.stdout
 
 
 def test_declining_does_not_remove_anything_and_says_no(tmp_path):
