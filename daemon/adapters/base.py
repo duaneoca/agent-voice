@@ -189,6 +189,14 @@ class Adapter(ABC):
     #: completion describes a restraint that is not doing any work.
     has_tools: bool = True
 
+    #: False when agentvoice has no way to restrain this backend at all.
+    #: Distinct from guards_permissions, which is about asking: a CLI held in
+    #: its safest mode cannot ask but is at least being held, because we
+    #: choose the flags it starts with. An endpoint is given no flags, no
+    #: hook and no sandbox -- whatever it is configured to do on its own host,
+    #: it does, and saying it runs "in its safest mode" would be an invention.
+    can_be_gated: bool = True
+
     #: True when a second turn can follow on from the first. False is the
     #: default because it is the safe direction to be wrong in: a backend
     #: that does remember and says it does not merely looks modest, while the

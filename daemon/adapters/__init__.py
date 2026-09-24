@@ -61,6 +61,7 @@ def load(name: str | None = None, level: str | None = None,
         adapter = OpenAICompatible(
             base_url=endpoint["url"], model=endpoint["model"],
             api_key=endpoint.get("key") or None,
+            is_agent=bool(endpoint.get("is_agent")),
             spoken=kwargs.get("spoken", True))
         return adapter if adapter.available() else None
 

@@ -47,6 +47,7 @@ DEFAULTS = {
     "projectDir": "",
     "endpointUrl": "",
     "endpointModel": "",
+    "endpointIsAgent": False,
     "conversationMode": True,
     "followUpMs": 7000,
     "voice": "lessac-medium",
@@ -73,6 +74,7 @@ TOML_ALIASES = {
     "projectDir": ("agent", "project_dir"),
     "endpointUrl": ("agent", "endpoint_url"),
     "endpointModel": ("agent", "endpoint_model"),
+    "endpointIsAgent": ("agent", "endpoint_is_agent"),
     "conversationMode": ("wake", "conversation_mode"),
     "followUpMs": ("timing", "follow_up_ms"),
 }

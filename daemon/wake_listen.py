@@ -483,7 +483,9 @@ class Daemon:
                          or (getattr(self.agent, "base_url", None)
                              == endpoint["url"].rstrip("/")
                              and getattr(self.agent, "model", None)
-                             == endpoint["model"]))
+                             == endpoint["model"]
+                             and getattr(self.agent, "is_agent", False)
+                             == endpoint["is_agent"]))
         if (self.agent is not None
                 and getattr(self.agent, "name", None) == want_name
                 and same_endpoint
@@ -532,7 +534,8 @@ class Daemon:
         # No key here: this runs on the idle poll, every couple of seconds,
         # and reading the keyring means spawning secret-tool. The key is
         # fetched once, where the adapter is actually built.
-        return {"url": url, "model": model}
+        return {"url": url, "model": model,
+                "is_agent": self.cfg.bool("endpointIsAgent")}
 
     def level(self) -> str:
         return self.cfg.level_for(getattr(self.agent, "name", None))
@@ -632,8 +635,12 @@ class Daemon:
         # others are held in whatever read-only or ask-first mode their CLI
         # has, which is weaker and worth saying out loud.
         if self.agent and not getattr(self.agent, "has_tools", True):
-            print(f"  {DIM}permission: nothing to permit — {self.agent.name} "
-                  f"has no tools and cannot read or change anything{OFF}")
+            print(f"  {DIM}permission: agentvoice offers {self.agent.name} no "
+                  f"tools, so there is nothing here to permit{OFF}")
+        elif self.agent and not getattr(self.agent, "can_be_gated", True):
+            print(f"  {YEL}permission: agentvoice cannot restrain this endpoint. "
+                  f"It is given no flags, no hook and no sandbox — whatever it "
+                  f"is allowed to do on its own host, it will do{OFF}")
         elif self.agent and self.level() != "trusted":
             if getattr(self.agent, "guards_permissions", False):
                 print(f"  {DIM}permission: prompts on screen{OFF}")
@@ -644,9 +651,8 @@ class Daemon:
         elif self.agent:
             print(f"  {YEL}permission: not asking. {self.agent.name} can change"
                   f" files and run commands unchallenged.{OFF}")
-        if self.agent and getattr(self.agent, "has_tools", True):
-            print(f"  {DIM}project: {getattr(self.agent, 'cwd', '?')}"
-                  f" · {self.posture()}{OFF}")
+        if self.agent and getattr(self.agent, "cwd", None):
+            print(f"  {DIM}project: {self.agent.cwd} · {self.posture()}{OFF}")
         elif self.agent:
             # No cwd to speak of: it never touches the filesystem.
             print(f"  {DIM}{self.posture()}{OFF}")
@@ -1006,7 +1012,8 @@ def main() -> int:
         level = cfg.level_for(omarchy_default())
         url = cfg.str("endpointUrl").strip()
         model = cfg.str("endpointModel").strip()
-        spec = ({"url": url, "model": model, "key": endpoint_key(_host(url))}
+        spec = ({"url": url, "model": model, "key": endpoint_key(_host(url)),
+                 "is_agent": cfg.bool("endpointIsAgent")}
                 if url and model else None)
         agent = load_adapter(ask_permission=level != "trusted", level=level,
                              cwd=str(project_dir(cfg.str("projectDir"))),
