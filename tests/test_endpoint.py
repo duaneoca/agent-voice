@@ -394,3 +394,26 @@ class TestOverrideIsVisible:
                          {"url": "", "model": "m"}):
             a = load("claude", endpoint=endpoint)
             assert a is None or a.name == "claude", endpoint
+
+
+class TestKeyScope:
+    """One machine can run more than one endpoint, and they do not share a key.
+
+    Ollama on :11434 needs none; Hermes on :8642 takes a bearer token its own
+    documentation calls equivalent to a root password. Keying on the hostname
+    alone would hand the second one's key to the first.
+    """
+
+    def test_a_port_distinguishes_two_services_on_one_host(self):
+        from wake_listen import _host
+        assert _host("http://192.168.1.10:8642/v1") != _host("http://192.168.1.10:11434/v1")
+
+    def test_a_url_without_a_port_keeps_the_bare_hostname(self):
+        """So entries filed before this still resolve."""
+        from wake_listen import _host
+        assert _host("https://api.openai.com/v1") == "api.openai.com"
+        assert _host("https://api.x.ai/v1") == "api.x.ai"
+
+    def test_a_malformed_port_does_not_raise(self):
+        from wake_listen import _host
+        _host("http://host:notaport/v1")
