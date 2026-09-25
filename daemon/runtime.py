@@ -209,7 +209,17 @@ class StateFile:
             return
         self._last = payload
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
+        try:
+            tmp.write_text(json.dumps(payload))
+        except FileNotFoundError:
+            # The state file lives in /run, which is tmpfs, is cleanable, and
+            # is deleted outright by this project's own uninstaller. The
+            # directory was created once in __init__, so when it went the next
+            # publish raised FileNotFoundError out of the run loop and killed
+            # the daemon -- twice, in one session. Losing the readout the bar
+            # watches is a cosmetic failure; it must not be a fatal one.
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(payload))
         tmp.replace(self.path)
 
     @property
@@ -218,7 +228,13 @@ class StateFile:
         return str(self._last.get("state", "off"))
 
     def clear(self) -> None:
-        self.publish("off")
+        """Best effort: this runs on the way out, including while unwinding a
+        failure. It raised the same error as the exception it was cleaning up
+        after, which replaced the traceback that said what really happened."""
+        try:
+            self.publish("off")
+        except OSError:
+            pass
 
 
 class Speaker:
@@ -229,15 +245,59 @@ class Speaker:
     otherwise sit silent while the entire thing renders.
     """
 
+    #: Set when the requested voice was not on disk and another was used
+    #: instead. The caller prints it, because silence with the reason in a log
+    #: is the failure this exists to avoid.
+    substituted_for: str = ""
+
     def __init__(self, voice: str = "lessac-medium") -> None:
         from piper import PiperVoice
+        voice, substituted = self._resolve(voice)
         path = piper_voices() / f"en_US-{voice}.onnx"
-        if not path.exists():
-            raise FileNotFoundError(f"no piper voice at {path}")
         self._voice = PiperVoice.load(str(path))
         self._rate = getattr(self._voice.config, "sample_rate", 22050)
         self.name = voice
+        self.substituted_for = substituted
+        #: What the settings asked for, which is what a later reload compares
+        #: against. Comparing the loaded name would see a substitution as a
+        #: changed setting and reload Piper on every reload.
+        self.requested = substituted or voice
         self._stop = threading.Event()
+
+    def superseded(self) -> bool:
+        """True when the voice originally asked for has since been downloaded.
+
+        Anything a model loads is reconciled rather than constructed once, and
+        a voice file can appear underneath a running daemon -- install.sh
+        fetches it. Without this, a substitution outlived the download and the
+        only cure was changing an unrelated setting to force a rebuild.
+        """
+        if not self.substituted_for:
+            return False
+        return (piper_voices() / f"en_US-{self.substituted_for}.onnx").exists()
+
+    @staticmethod
+    def _resolve(voice: str) -> tuple[str, str]:
+        """The requested voice, or any other one on disk.
+
+        The settings list every voice the project knows, marking the ones not
+        downloaded -- and selecting one used to raise here, leaving the daemon
+        with no speaker at all. Nothing then retried until some unrelated
+        setting changed, so the only cure people found was switching the wake
+        engine and back. Falling back keeps speech working and names the
+        substitution; being wrong out loud beats being silent.
+        """
+        here = piper_voices()
+        if (here / f"en_US-{voice}.onnx").exists():
+            return voice, ""
+        available = sorted(p.stem.removeprefix("en_US-")
+                           for p in here.glob("en_US-*.onnx"))
+        if not available:
+            raise FileNotFoundError(f"no piper voice at {here}")
+        # Prefer the default when it is one of them: it is the voice every
+        # install has, so the substitution is the least surprising one.
+        pick = "lessac-medium" if "lessac-medium" in available else available[0]
+        return pick, voice
 
     @staticmethod
     def sentences(text: str) -> list[str]:
