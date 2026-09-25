@@ -450,3 +450,34 @@ def test_declining_never_reaches_the_widget(tmp_path):
     assert done.returncode != 0
     assert widget.exists()
     assert app.exists(), "the engine must be intact too"
+
+
+def test_a_word_list_is_not_announced_as_an_api_key(tmp_path):
+    """~/.config/agentvoice held only endpoint.key when this was written, so
+    "non-empty" stood in for "has a key". vocab.txt lives there too now, and
+    telling someone an API key survived when none did is the worst subject to
+    be loose about."""
+    app = _install_tree(tmp_path)
+    cfg = tmp_path / "config" / "agentvoice"
+    cfg.mkdir(parents=True)
+    (cfg / "vocab.txt").write_text("kubernetes\n")
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert done.returncode == 0, done.stderr
+    assert "API key you put in a file" not in done.stdout
+    assert str(cfg) in done.stdout, "but it must still say the file was kept"
+    assert (cfg / "vocab.txt").exists()
+
+
+def test_a_real_key_is_still_announced_as_one(tmp_path):
+    app = _install_tree(tmp_path)
+    cfg = tmp_path / "config" / "agentvoice"
+    cfg.mkdir(parents=True)
+    (cfg / "endpoint.key").write_text("sk-not-real")
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert "API key you put in a file" in done.stdout
+    assert str(cfg / "endpoint.key") in done.stdout, "name the file, not the folder"
+    assert (cfg / "endpoint.key").exists()
