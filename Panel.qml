@@ -282,10 +282,11 @@ Panel {
     stateLabel: voice.stateLabel
     icon: voice.icon
     accent: voice.barIconColor
-    // Only once there is something to show. The field holds the previous
-    // utterance until Whisper returns, and showing that next to "hearing you"
-    // reads as though it had misheard the thing you just said.
-    transcript: voice.vState === "capture" ? "" : voice.lastTranscript
+    // Straight through. The daemon clears both at the wake word now, so there
+    // is nothing here to paper over -- and the version that did only blanked
+    // the transcript, which left the previous *answer* on screen while it
+    // listened for the next question.
+    transcript: voice.lastTranscript
     reply: voice.lastReply
   }
 

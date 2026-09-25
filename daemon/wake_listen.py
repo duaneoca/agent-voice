@@ -443,6 +443,22 @@ class Pipeline:
         return text, (time.perf_counter() - t0) * 1000
 
 
+def _empty_turn() -> dict:
+    """Nothing heard yet, nothing answered.
+
+    Published the instant the wake word fires. The capture state used to carry
+    whatever the *previous* turn had left in it, so saying the wake word showed
+    the last question and the last answer while it listened for the next one.
+    A readout of a finished exchange is worse than no readout: it is the right
+    shape in the wrong tense.
+
+    All four keys are always present, because publish() merges what it is given
+    and the widget only updates a field it is sent -- an absent key leaves the
+    old value on screen rather than clearing it.
+    """
+    return {"transcript": "", "ms": 0, "audio_s": 0.0, "reply": ""}
+
+
 class Daemon:
     def __init__(self, cfg: Config, pipe: Pipeline, state: StateFile,
                  speaker: Speaker | None, agent=None):
@@ -882,7 +898,7 @@ class Daemon:
         self._frames = frames
         self.banner()
         self._publish()
-        last = {"transcript": "", "ms": 0, "audio_s": 0.0}
+        last = _empty_turn()
 
         with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16",
                               blocksize=CHUNK, device=device, callback=cb):
@@ -914,6 +930,7 @@ class Daemon:
                     self._deaf_until = 0.0
                     print(f"  {GRN}● talk{OFF}  {DIM}(listening while held){OFF}",
                           flush=True)
+                    last = _empty_turn()
                     self.state.publish("capture", **last)
                 elif cmd == "talk-end" and ptt:
                     ptt_done = True
@@ -955,6 +972,7 @@ class Daemon:
                         woke_at = last_voice = time.time()
                         heard = False
                         active_lead_in = self.pipe.lead_in_ms
+                        last = _empty_turn()
                         self.state.publish("capture", **last)
                     continue
 
@@ -1014,13 +1032,9 @@ class Daemon:
                     print(f"\r{' ' * 120}\r  {BLD}{text or '(nothing)'}{OFF}")
                     print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
                           f"whisper {ms:.0f}ms{OFF}")
-                    # "reply" is cleared explicitly rather than left absent.
-                    # publish() merges what it is given, and the widget only
-                    # updates a field it is sent -- so omitting it left the
-                    # previous turn's answer on screen for the whole of this
-                    # one, beside the sentence that had just been said.
-                    last = {"transcript": text, "ms": round(ms),
-                            "audio_s": round(audio_ms / 1000, 2), "reply": ""}
+                    last = {**_empty_turn(), "transcript": text,
+                            "ms": round(ms),
+                            "audio_s": round(audio_ms / 1000, 2)}
 
                     # "stop", "cancel that", "never mind" and friends discard
                     # the turn instead of sending it. This is not an interrupt

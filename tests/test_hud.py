@@ -80,13 +80,35 @@ def test_the_widget_passes_the_live_state_rather_than_re_reading_it():
     assert "FileView" not in HUD, "the HUD must not open the state file itself"
 
 
-def test_the_transcript_is_not_shown_while_still_capturing():
-    """The field holds the previous utterance until Whisper returns. Showing
-    that beside "hearing you" reads as having misheard what was just said."""
+def test_the_wake_word_clears_the_previous_exchange():
+    """Saying the wake word showed the last question and the last answer while
+    it listened for the next one -- the right shape in the wrong tense.
+
+    Fixed in the daemon, not the widget: the capture state carried whatever the
+    previous turn left in it, and blanking one field in QML left the other.
+    """
+    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
+    assert "def _empty_turn()" in daemon
+    empty = daemon[daemon.index("def _empty_turn()"):]
+    empty = empty[:empty.index("\n\n\n")]
+    for field in ('"transcript": ""', '"reply": ""', '"ms": 0', '"audio_s": 0.0'):
+        assert field in empty, f"{field} must be cleared, not omitted"
+
+    # Every point a turn begins must reset it before publishing capture.
+    for chunk in daemon.split('self.state.publish("capture"')[:-1]:
+        tail = chunk[-260:]
+        assert "_empty_turn()" in tail, \
+            f"a capture publish carries the previous turn:\n{tail}"
+
+
+def test_the_widget_does_not_second_guess_the_state_file():
+    """With the daemon clearing it, a QML guard would be a second version of
+    the same rule -- and the one that existed only covered the transcript."""
     panel = _code(ROOT / "Panel.qml")
     block = panel[panel.index("  Hud {"):]
     block = block[:block.index("\n  }") + 4]
-    assert 'vState === "capture" ? ""' in block
+    assert 'vState === "capture" ? ""' not in block
+    assert "transcript: voice.lastTranscript" in block
 
 
 def test_both_settings_exist_in_all_three_places():
