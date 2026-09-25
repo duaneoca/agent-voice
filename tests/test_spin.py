@@ -43,8 +43,14 @@ def test_spin_can_run_a_shell_function(tmp_path):
     """
     bin_ = tmp_path / "bin"
     bin_.mkdir()
+    # bash, not sh. The real gum is a Go binary and passes the environment
+    # through verbatim; /bin/sh is dash on a Debian runner, and dash drops
+    # environment variables whose names are not valid identifiers -- which is
+    # how exported bash functions are stored (BASH_FUNC_name%%). With sh the
+    # stub silently lost `mine` and the test failed with 127 on CI only, since
+    # /bin/sh here is bash.
     (bin_ / "gum").write_text(
-        '#!/bin/sh\n'
+        '#!/bin/bash\n'
         '# Drop gum\'s own flags, then run whatever followed `--`.\n'
         'while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\n'
         'shift\n'
