@@ -575,7 +575,7 @@ Item {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "WHILE YOU TALK TO IT"
+              title: "WHILE YOU INTERACT WITH IT"
 
               Toggle {
                 width: parent.width
@@ -1140,8 +1140,13 @@ Item {
                 scrollTarget: formScroll
                 foreground: root.foreground; fontFamily: root.fontFamily
                 label: "Time to start speaking"
-                description: "Stops counting the moment you make a sound, so it never " +
-                             "competes with the pause that ends a turn."
+                description: "After the wake word it waits this long for you to " +
+                             "make a sound. If you do not, it gives up quietly " +
+                             "and goes back to listening for the wake word. Once " +
+                             "you start talking this no longer applies — the " +
+                             "pause below ends the turn instead. Err generous: " +
+                             "being cut off before you have started is the most " +
+                             "irritating way this can fail."
                 value: root.setting("leadInMs", 5000)
                 minimum: 1000; maximum: 15000; stepSize: 500
                 onCommitted: function(v) { root.persist("leadInMs", v, true) }
@@ -1174,7 +1179,15 @@ Item {
                 width: parent.width
                 scrollTarget: formScroll
                 foreground: root.foreground; fontFamily: root.fontFamily
-                label: "Discard shorter than"
+                label: "Ignore a turn shorter than"
+                description: "Measured on the whole recording — the wake word to " +
+                             "the end of the pause — not on the speech inside " +
+                             "it. It throws away a turn too short to hold " +
+                             "anything, which in practice means a wake word that " +
+                             "fired on a noise. With the pause above at its " +
+                             "default this rarely triggers, since any finished " +
+                             "turn already contains that much silence; it starts " +
+                             "to matter once you shorten the pause."
                 value: root.setting("minUtteranceMs", 400)
                 minimum: 0; maximum: 2000; stepSize: 100
                 onCommitted: function(v) { root.persist("minUtteranceMs", v, true) }
@@ -1202,49 +1215,12 @@ Item {
               Dropdown {
                 width: parent.width
                 showLabel: true
-                label: "Voice"
+                label: "Transcription model"
                 fontFamily: root.fontFamily
                 foreground: root.foreground
-                options: root.voiceOptions
-                value: root.setting("voice", "lessac-medium")
-                onChanged: function(v) {
-                  root.persist("voice", v, false)
-                  if (root.voicesOnDisk.length > 0
-                      && root.voicesOnDisk.indexOf(v) < 0)
-                    root.fetchNow("--voice=" + v)
-                }
-              }
-
-              // Choosing a voice that is not on disk used to be a dead end: the
-              // list marked it "(not downloaded)" and offered no way to
-              // download it, and the daemon quietly spoke in another one. Only
-              // install.sh fetches voices, so this runs it -- it takes whatever
-              // the settings ask for, which is the voice just chosen.
-              Column {
-                width: parent.width
-                spacing: Style.space(4)
-                visible: root.voicesOnDisk.length > 0
-                         && root.voicesOnDisk.indexOf(
-                              root.setting("voice", "lessac-medium")) < 0
-
-                Text {
-                  width: parent.width
-                  wrapMode: Text.WordWrap
-                  text: "\u201c" + root.setting("voice", "lessac-medium") +
-                        "\u201d is not on this machine, so it is speaking in " +
-                        "one that is. Voices are about 60MB each."
-                  color: Color.urgent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-
-                Button {
-                  text: "Download " + root.setting("voice", "lessac-medium") + "\u2026"
-                  fontFamily: root.fontFamily
-                  onClicked: {
-                    root.fetchNow("--no-keybinds")
-                  }
-                }
+                options: root.modelOptions
+                value: root.setting("model", "tiny.en")
+                onChanged: function(v) { root.persist("model", v, false) }
               }
 
               Dropdown {
@@ -1277,12 +1253,50 @@ Item {
               Dropdown {
                 width: parent.width
                 showLabel: true
-                label: "Transcription model"
+                label: "Spoken voice"
                 fontFamily: root.fontFamily
                 foreground: root.foreground
-                options: root.modelOptions
-                value: root.setting("model", "tiny.en")
-                onChanged: function(v) { root.persist("model", v, false) }
+                options: root.voiceOptions
+                value: root.setting("voice", "lessac-medium")
+                onChanged: function(v) {
+                  root.persist("voice", v, false)
+                  if (root.voicesOnDisk.length > 0
+                      && root.voicesOnDisk.indexOf(v) < 0)
+                    root.fetchNow("--voice=" + v)
+                }
+              }
+
+              // Choosing the voice already starts this. The banner and button are
+              // for afterwards: a download declined, a terminal closed, no network
+              // at the time. Without them the only way back would be to pick a
+              // different voice and pick this one again.
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: root.voicesOnDisk.length > 0
+                         && root.voicesOnDisk.indexOf(
+                              root.setting("voice", "lessac-medium")) < 0
+
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "\u201c" + root.setting("voice", "lessac-medium") +
+                        "\u201d is not on this machine, so it is speaking in " +
+                        "one that is. Voices are about 60MB each."
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Button {
+                  // Names the voice, as the dropdown does. Passing no name left
+                  // it to install.sh to read the setting, which is a race the
+                  // flag exists to avoid.
+                  text: "Try the download again\u2026"
+                  fontFamily: root.fontFamily
+                  onClicked: root.fetchNow(
+                      "--voice=" + root.setting("voice", "lessac-medium"))
+                }
               }
             }
 
