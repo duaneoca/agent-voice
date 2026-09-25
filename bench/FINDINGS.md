@@ -123,6 +123,10 @@ No confidence threshold can fix this; there is nothing to threshold.
 openWakeWord scores the same class of attack at 0.898 against 0.996 for the
 real phrase, which *is* separable — at 0.90.
 
+Correction: that 0.90 is a statement about the **pretrained** phrases only, and
+it shipped as the default for every model including ones you train yourself,
+where it is unreachable. See §15.
+
 ## 9. The personal verifier earns its place
 
 Both detectors fed identical live audio, eleven utterances:
@@ -402,3 +406,46 @@ than a fallback for exotic cases.
 Reasoning models are worth checking individually rather than per
 backend: `grok-4.20-0309-reasoning` and `qwen3:4b` both leaked nothing,
 but a model that emits its thinking would have it read aloud verbatim.
+
+## 15. A locally trained wake model cannot reach the default threshold
+
+`owwThresholdPct` defaults to **90**, which §8 justifies with the
+pretrained phrases (§8): `"hey jarvis"` peaks 0.996, a phonetic attack 0.898.
+That number does not transfer to a model you train yourself, and nothing said so.
+
+Measured against 25 recordings of the owner saying `"hey claude"`, made by
+`agentvoice-train-verifier` on this machine's microphone, using a `hey_claude`
+model trained through LiveKit's notebook:
+
+| threshold | raw model | with the owner's verifier |
+| --------- | --------- | ------------------------ |
+| 0.90      | 1/25      | **0/25**                 |
+| 0.80      | 4/25      | 8/25                     |
+| 0.73      | 5/25      | 17/25                    |
+| 0.63      | 5/25      | 19/25                    |
+| 0.50      | 10/25     | 19/25                    |
+
+Peak score with the verifier: min 0.005, **median 0.775**, max 0.868. So at the
+shipped default the wake word fires on none of the owner's own recordings. The
+reported symptom was not a wake word that misfired; it was a microphone
+indicator that never lit, with no log line to explain it, because nothing had
+happened.
+
+**The lead-in matters, and nearly produced the opposite conclusion.** Fed from
+a reset, the same 25 clips give a median of **0.069**, not 0.775, and 0/25 at
+every threshold down to 0.30. openWakeWord scores from a rolling buffer of 16
+embedding frames, about 1.3s; a 2.0s clip fed cold spends most of itself
+filling that buffer. Measuring that way would have blamed the trained model.
+Two seconds of silence in front of each clip is the honest condition, because
+live audio never stops. Any future measurement of a wake model here must do
+the same.
+
+`agentvoice-train-verifier` now measures this and offers a threshold, since it
+has the recordings in hand. Clips below 0.2 are excluded as not containing the
+phrase at all: 6 of the 25 scored 0.005, and counting them as evidence for a
+lower threshold drove the first version of the suggestion to its floor, which
+would fire on a television.
+
+Unmeasured, and not implied by any of the above: whether this verifier rejects
+a *different* person saying the phrase. Every number here is about waking for
+the right one.

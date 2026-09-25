@@ -198,9 +198,10 @@ mkdir -p "$DATA" "$MODELS" "$DATA/verifiers" "$DATA/wakewords"
 say "Installing dependencies…"
 VIRTUAL_ENV="$VENV" uv pip install --quiet -r "$ROOT/requirements.txt"
 
-# Settings decide before the prompt does: if the wake engine is already set
-# to openWakeWord, installing without it produces a daemon that cannot start
-# the engine it is configured for.
+# Settings still override the default: if the wake engine is already set to
+# openWakeWord, installing without it produces a daemon configured for an
+# engine it cannot start. This used to run ahead of a prompt; it now runs ahead
+# of the default being off.
 if [[ -z $WANT_OWW ]] && have jq; then
   if [[ "$(jq -r '[.bar.layout[]?[]? | select(.id=="duaneoca.agentvoice")][0].engine // empty' \
         "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null)" == "openwakeword" ]]; then
@@ -209,23 +210,33 @@ if [[ -z $WANT_OWW ]] && have jq; then
   fi
 fi
 
-if [[ -z $WANT_OWW ]] && (( ASSUME_YES )); then
-  # --yes means yes. It used to reach ask(), which declines under --yes, so
-  # the unattended install quietly skipped the engine with real rejection.
-  WANT_OWW=1
-fi
-
+# No prompt here any more. openWakeWord is optional -- the default engine is
+# Vosk and the daemon falls back to it -- but this asked during every fresh
+# install, with gum's affirmative preselected, which is a demand wearing a
+# question mark. An optional component belongs where someone goes looking for
+# it, so the settings page offers it: the engine dropdown marks it as not
+# installed, and choosing it explains and installs.
+#
+# `--yes` no longer implies it either. That was added because --yes used to
+# reach ask(), which declines, so unattended installs silently skipped the
+# engine with real rejection -- a sensible fix while this was a prompt. With no
+# prompt, "yes to everything" has nothing to answer, and having --yes install a
+# component the interactive path does not offer is the same inconsistency from
+# the other side. --oww is the way to ask for it.
 if [[ -z $WANT_OWW ]]; then
-  echo
+  WANT_OWW=0
   cat <<'WHY'
-  A second wake-word engine is available. Vosk takes any phrase but scores
-  phonetic neighbours as high as the real one -- measured here, "hey cloud"
-  scores 1.00 against a "hey claude" grammar, which is how a podcast wakes it.
-  openWakeWord has four fixed phrases and real rejection, and can be trained
-  on your own voice afterwards. It costs about 154MB.
+
+  Wake word: Vosk, which takes any phrase. It scores phonetic neighbours as
+  high as the real one -- measured here, "hey cloud" scores 1.00 against a
+  "hey claude" grammar, which is how a podcast wakes it.
+
+  openWakeWord has four fixed phrases, real rejection, and can be trained on
+  your own voice. It is a further 154MB and is not installed by default.
+  Choose it under Engine in the Agent Voice settings, or re-run this with
+  --oww.
 
 WHY
-  if ask "Install openWakeWord as well?"; then WANT_OWW=1; else WANT_OWW=0; fi
 fi
 
 if [[ $WANT_OWW == 1 ]]; then

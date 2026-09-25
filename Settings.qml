@@ -1089,7 +1089,62 @@ Item {
 
 
 
-            // --- speech ---------------------------------------------------
+            // --- speech -------------------------------------------------
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+            PanelSectionHeader {
+              text: "SPEECH"; foreground: root.dim; fontFamily: root.fontFamily
+            }
+
+            Dropdown {
+              width: parent.width
+              showLabel: true
+              label: "Voice"
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              options: root.voiceOptions
+              value: root.setting("voice", "lessac-medium")
+              onChanged: function(v) { root.persist("voice", v, false) }
+            }
+
+            Dropdown {
+              width: parent.width
+              showLabel: true
+              label: "Live transcript while you speak"
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              options: [
+                { label: "auto — only when it is free", value: "auto" },
+                { label: "on — costs 114MB",            value: "on" },
+                { label: "off",                          value: "off" }
+              ]
+              value: root.setting("livePartials", "auto")
+              onChanged: function(v) { root.persist("livePartials", v, false) }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Rough text shown as you talk, before Whisper returns. It " +
+                    "needs the Vosk model resident. On the Vosk wake engine " +
+                    "that model is already loaded, so it is free; on " +
+                    "openWakeWord it is an extra 114MB."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Dropdown {
+              width: parent.width
+              showLabel: true
+              label: "Transcription model"
+              fontFamily: root.fontFamily
+              foreground: root.foreground
+              options: root.modelOptions
+              value: root.setting("model", "tiny.en")
+              onChanged: function(v) { root.persist("model", v, false) }
+            }
+
+            // --- an OpenAI-compatible endpoint instead of a CLI agent ---
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             Text {
@@ -1165,60 +1220,6 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "SPEECH"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Voice"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.voiceOptions
-              value: root.setting("voice", "lessac-medium")
-              onChanged: function(v) { root.persist("voice", v, false) }
-            }
-
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Live transcript while you speak"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: [
-                { label: "auto — only when it is free", value: "auto" },
-                { label: "on — costs 114MB",            value: "on" },
-                { label: "off",                          value: "off" }
-              ]
-              value: root.setting("livePartials", "auto")
-              onChanged: function(v) { root.persist("livePartials", v, false) }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Rough text shown as you talk, before Whisper returns. It " +
-                    "needs the Vosk model resident. On the Vosk wake engine " +
-                    "that model is already loaded, so it is free; on " +
-                    "openWakeWord it is an extra 114MB."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Transcription model"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.modelOptions
-              value: root.setting("model", "tiny.en")
-              onChanged: function(v) { root.persist("model", v, false) }
-            }
-
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             // Last on the page, and the only red control on it. Removal lives
