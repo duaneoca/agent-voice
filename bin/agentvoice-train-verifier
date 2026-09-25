@@ -192,6 +192,34 @@ if [[ "$(current_engine)" != "openwakeword" ]]; then
   fi
 fi
 
+# --- other speakers, fetched if there are none -----------------------------
+# A default install has one Piper voice, and one voice makes four contrast
+# clips where training needs five -- so the stock install could not train a
+# verifier at all. These are the other speakers, most contrasting first, and
+# the URL is the same layout install.sh:fetch_voice uses; the check script
+# asserts the two stay in step.
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US"
+OTHER_SPEAKERS=(ryan-medium amy-medium joe-medium kristin-medium)
+
+# Fetch one voice into the Piper directory. Both files or neither: a voice
+# whose .json never arrived loads as a stack trace inside gum spin.
+fetch_speaker() {
+  local id="$1" dir="$2" name="${1%-*}" quality="${1##*-}"
+  local file="en_US-$id.onnx"
+  [[ -f "$dir/$file" ]] && return 0
+  local base="$PIPER_BASE/$name/$quality"
+  local tmp; tmp="$(mktemp -d)"
+  if curl -fsSL -o "$tmp/$file" "$base/$file" &&
+     curl -fsSL -o "$tmp/$file.json" "$base/$file.json"; then
+    mkdir -p "$dir"
+    mv "$tmp/$file" "$tmp/$file.json" "$dir/"
+    rm -rf "$tmp"
+    return 0
+  fi
+  rm -rf "$tmp"
+  return 1
+}
+
 # --- which wake model ------------------------------------------------------
 MODEL="$("$PY" "$VERIFIER" models | gum choose --header "Which wake word are you training for?")" || cancelled
 [[ -n $MODEL ]] || cancelled
@@ -250,6 +278,42 @@ OTHERS="${OTHERS:-0}"
 # recorded. A gate that lies costs more than one that refuses.
 NEG_COUNT=$(find "$NEG" -name '*.wav' 2>/dev/null | wc -l)
 
+# Not enough to contrast against, because there is only one speaker to
+# synthesise from. Offer the other speakers rather than refusing: a verifier
+# trained against one voice's own parameter jitter is not what this is for.
+if (( NEG_COUNT < 5 )); then
+  VOICES_DIR="$("$PY" "$VERIFIER" voices --path 2>/dev/null)"
+  WANT=()
+  for id in "${OTHER_SPEAKERS[@]}"; do
+    [[ -f "$VOICES_DIR/en_US-$id.onnx" ]] || WANT+=("$id")
+    (( ${#WANT[@]} >= 2 )) && break
+  done
+
+  if (( ${#WANT[@]} > 0 )) && command -v curl >/dev/null 2>&1; then
+    echo
+    printf '%s\n' "The contrast clips are other people saying \"$SPOKEN\", so the verifier learns \"right words, wrong speaker\". You have one voice on disk, which is not enough to contrast against." | wrapw
+    echo
+    if gum confirm "Fetch ${#WANT[@]} more voices (${#WANT[@]}x60MB) to contrast against?" \
+         --affirmative "Fetch them" --negative "Not now"; then
+      for id in "${WANT[@]}"; do
+        FETCH_OUT="$(mktemp)"
+        if spin "Downloading the voice $id — 60MB" "$FETCH_OUT" -- fetch_speaker "$id" "$VOICES_DIR"; then
+          gum style --foreground 2 "  Fetched $id."
+        else
+          gum style --foreground 3 "  Could not fetch $id; carrying on with what is here."
+        fi
+        rm -f "$FETCH_OUT" "${SPIN_ERR:-}"
+      done
+      OTHERS_FILE="$(mktemp)"
+      spin "Synthesising the new voices saying \"$SPOKEN\"" "$OTHERS_FILE" -- \
+        "$PY" "$VERIFIER" synth-negatives "$SPOKEN" "$NEG" || true
+      OTHERS="$(tr -dc '0-9' < "$OTHERS_FILE")"; rm -f "$OTHERS_FILE" "${SPIN_ERR:-}"
+      OTHERS="${OTHERS:-0}"
+      NEG_COUNT=$(find "$NEG" -name '*.wav' 2>/dev/null | wc -l)
+    fi
+  fi
+fi
+
 if (( NEG_COUNT >= 5 )); then
   gum style --foreground 2 \
     "  Contrast set: $NEG_COUNT clips ($OTHERS of other voices saying the phrase)."
@@ -264,7 +328,7 @@ else
   [[ $VOICES_ON_DISK == 1 ]] && VOICE_WORD="voice" || VOICE_WORD="voices"
   printf '%s\n' "The contrast clips are other voices saying \"$SPOKEN\", synthesised from the Piper voices on disk. You have $VOICES_ON_DISK $VOICE_WORD, giving $NEG_COUNT clips — one speaker, so there is nothing yet to contrast your voice against." | wrapw
   echo
-  printf '%s\n' "A second voice is enough. Pick a different one under Voice in the Agent Voice settings, then run the installer again -- it fetches whatever the settings ask for and keeps the one you had:" | wrapw
+  printf '%s\n' "Run this again and accept the download, or add a voice yourself: pick a different one under Voice in the Agent Voice settings and re-run the installer, which fetches what the settings ask for and keeps the one you had." | wrapw
   echo
   gum style --foreground 4 "    ~/.config/omarchy/plugins/duaneoca.agentvoice/install.sh"
   echo

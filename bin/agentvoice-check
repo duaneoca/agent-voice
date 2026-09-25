@@ -149,7 +149,26 @@ QQ
 if [[ -n ${out// } ]]; then say "nested bash -c eats the launcher's args" "FAIL: $out"; fail=1
 else say "no nested bash -c in a launcher command" "ok"; fi
 
-# 8. the behavioural tests, when pytest is available
+# 8. the Piper download URL is written in two places -- install.sh fetches the
+# configured voice, the verifier trainer fetches other speakers to contrast
+# against -- and a silent drift there is a 404 inside a gum spinner.
+out=$(python3 - "$ROOT" <<'QQ'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+inst = (root / "install.sh").read_text()
+train = (root / "bin" / "agentvoice-train-verifier").read_text()
+m = re.search(r'local base="([^"$]*)', inst)
+n = re.search(r'PIPER_BASE="([^"]*)"', train)
+if not m or not n:
+    print("could not find both URLs")
+elif not m.group(1).startswith(n.group(1)):
+    print(f"{n.group(1)} is not a prefix of {m.group(1)}")
+QQ
+)
+if [[ -n ${out// } ]]; then say "Piper URL drifted between the two scripts" "FAIL: $out"; fail=1
+else say "both scripts fetch voices from one URL" "ok"; fi
+
+# 9. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"
