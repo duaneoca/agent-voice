@@ -59,11 +59,13 @@ def test_it_shows_for_exactly_the_states_the_daemon_publishes():
     daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
     published = set(re.findall(r'publish\("([a-z ]+)"', daemon))
     published |= set(re.findall(r'publish\(\s*"([a-z ]+)"', daemon))
-    assert {"capture", "thinking", "speaking", "followup", "listening"} <= published, \
+    assert {"capture", "transcribing", "thinking", "speaking", "followup",
+            "listening"} <= published, \
         f"the daemon's states changed: {sorted(published)}"
 
     busy = set(re.findall(r'vState === "([a-z]+)"', HUD))
-    assert busy == {"capture", "thinking", "speaking", "followup"}, busy
+    assert busy == {"capture", "transcribing", "thinking", "speaking",
+                    "followup"}, busy
     assert busy <= published, f"the HUD waits for states nothing publishes: {busy - published}"
     assert "listening" not in busy, "idle is not busy"
     assert "off" not in busy

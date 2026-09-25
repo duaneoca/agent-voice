@@ -629,7 +629,7 @@ class Daemon:
         deliberately a no-op, so a stray keypress cannot leave it in a state
         the user never asked for.
         """
-        if self.state.current not in ("thinking", "speaking"):
+        if self.state.current not in ("transcribing", "thinking", "speaking"):
             return
         self._interrupt.set()
         if self.speaker:
@@ -1041,7 +1041,12 @@ class Daemon:
                 if audio_ms < self.pipe.min_utterance_ms:
                     print(f"\r  {DIM}(too short, discarded){OFF}{' ' * 40}")
                 else:
-                    self.state.publish("thinking", **last)
+                    # Its own state. This phase and the agent's turn both
+                    # published "thinking", and the panel labelled that
+                    # "TRANSCRIBING" -- so the label was right here and wrong
+                    # for the whole of the agent's turn, which is the part
+                    # people actually wait through.
+                    self.state.publish("transcribing", **last)
                     text, ms = self.pipe.transcribe(buf)
                     print(f"\r{' ' * 120}\r  {BLD}{text or '(nothing)'}{OFF}")
                     print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
@@ -1057,7 +1062,15 @@ class Daemon:
                     # cancelling a wake that fired by mistake. Matched against
                     # the whole transcript, so an ordinary sentence that merely
                     # contains "stop" cannot trigger it.
-                    if text and is_stop_command(text):
+                    if self._interrupt.is_set():
+                        # Stop pressed while Whisper was running. answer()
+                        # clears this flag on entry, so the interrupt was
+                        # accepted here and then thrown away: the reply arrived
+                        # regardless. Discard the turn instead.
+                        self._interrupt.clear()
+                        print(f"  {DIM}(interrupted before sending){OFF}")
+                        follow_up = False
+                    elif text and is_stop_command(text):
                         print(f"  {DIM}(stopping){OFF}")
                         follow_up = False
                     elif text:
