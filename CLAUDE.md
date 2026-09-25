@@ -79,6 +79,23 @@ Release what you replace. Dropping the reference is not enough: glibc keeps
 the arena and RSS barely moves, so call `Pipeline._release()`, which also
 runs `malloc_trim(0)`.
 
+Four bugs of this shape shipped in one evening, so the rule is narrower than
+"re-read your settings" -- an audit found all twenty-five settings reconciled
+already. It is about values that live on a *constructed object*:
+
+- a constructor argument belongs in the spec, because changing it means
+  building the thing again: the wake model, the phrase, `useVerifier`;
+- a plain attribute is assigned after the spec check, because rebuilding
+  ~100MB for a number is waste: `owwThresholdPct`, the gate, the timings;
+- anything read from a **file** is reconciled outside the config-changed
+  guard, because a file changes with no setting change at all: the verifier's
+  mtime, a Piper voice arriving, `vocab.txt`.
+
+Get the first two the wrong way round and the setting either does nothing or
+reloads a model on every poll. Miss the third and the fix waits for something
+unrelated to be touched, which is how "switching engines and back" became
+folklore for "make it notice".
+
 ## Claims in the README and in commits
 
 Measure before asserting. `bench/FINDINGS.md` records what was measured, on

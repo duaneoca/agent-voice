@@ -84,6 +84,22 @@ def frame_db(pcm: bytes) -> float:
     return float(20.0 * np.log10(np.sqrt((x ** 2).mean()) / 32768.0 + 1e-9))
 
 
+def vocab_stamp() -> tuple[str, float]:
+    """Which vocabulary file, and when it last changed.
+
+    Both halves matter. Editing the list rewrites the file, and creating
+    ~/.config/agentvoice/vocab.txt for the first time changes *which* file is
+    used -- the shipped default until then. Either way nothing about the
+    settings changes, so a daemon that read the list once went on prompting
+    Whisper with the old terms until it was restarted.
+    """
+    path = vocab_file()
+    try:
+        return str(path), path.stat().st_mtime
+    except OSError:
+        return str(path), 0.0
+
+
 def load_vocab() -> str | None:
     path = vocab_file()
     if not path.exists():
@@ -164,6 +180,7 @@ class Pipeline:
         self._vosk = vosk
         self._model = None      # loaded on first use; see vosk_model_lazy()
         self._vocab = load_vocab()
+        self._vocab_stamp = vocab_stamp()
         self.phrase = ""
         self.engine = "vosk"
         self._oww = None
@@ -306,6 +323,22 @@ class Pipeline:
         self._wake = None
         self._model = None
         self._release()
+
+    def reconcile_vocab(self) -> None:
+        """Re-read the term list if the file behind it has changed.
+
+        Cheap: one stat, and the prompt is passed per transcription rather than
+        baked into the model, so nothing is rebuilt. Called on the same poll as
+        the voice, not behind the config-changed guard -- editing a file is not
+        a setting change.
+        """
+        stamp = vocab_stamp()
+        if stamp == self._vocab_stamp:
+            return
+        self._vocab_stamp = stamp
+        self._vocab = load_vocab()
+        n = len(self._vocab.split(",")) if self._vocab else 0
+        print(f"  {CYA}vocabulary: {n} terms{OFF}")
 
     def _load_whisper(self, size: str) -> None:
         """(Re)build the transcription model, releasing the previous one."""
@@ -739,6 +772,7 @@ class Daemon:
         # something unrelated was touched -- the same shape of stall as the
         # detection threshold that never reached the running engine.
         self.reconcile_voice()
+        self.pipe.reconcile_vocab()
         if not self.cfg.reload():
             return
         self.pipe.apply(self.cfg)
