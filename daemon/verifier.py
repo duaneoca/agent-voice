@@ -287,7 +287,9 @@ def main() -> int:
     # must not guess the path: models_dir() resolves differently in a checkout
     # and an install, so a hardcoded $STATE/models/piper would be wrong in one
     # of the two.
-    sub.add_parser("voices", help="how many Piper voices are on disk")
+    p = sub.add_parser("voices", help="how many Piper voices are on disk")
+    p.add_argument("--path", action="store_true",
+                   help="print the directory instead of the count")
 
     p = sub.add_parser("negatives", help="collect 'other speech' clips")
     p.add_argument("into", type=Path)
@@ -323,7 +325,10 @@ def main() -> int:
         return 0
 
     if args.cmd == "voices":
-        print(len(list(piper_voices().glob("*.onnx"))))
+        if args.path:
+            print(piper_voices())
+        else:
+            print(len(list(piper_voices().glob("*.onnx"))))
         return 0
 
     if args.cmd == "negatives":

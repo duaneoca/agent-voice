@@ -99,3 +99,32 @@ def test_the_trainer_does_not_send_people_to_files_it_never_installs():
     gate = gate[:gate.index("exit 1")]
     assert "bench/record.py" not in gate
     assert "install.sh" in gate, "must say how to actually fix it"
+
+
+def test_the_trainer_offers_other_speakers_before_it_refuses():
+    """A default install has one voice and cannot reach five clips, so the
+    stock install could not train a verifier at all. The trainer offers to
+    fetch other speakers, and only refuses if that is declined or fails."""
+    script = (ROOT / "bin" / "agentvoice-train-verifier").read_text()
+    offer = script.index("Fetch ${#WANT[@]} more voices")
+    refusal = script.index("Only $NEG_COUNT contrast clips")
+    assert offer < refusal, "refuses before offering a way through"
+
+    # Both-or-neither, so a voice whose .json never arrived cannot load as a
+    # stack trace inside the spinner.
+    fetch = script[script.index("fetch_speaker() {"):]
+    fetch = fetch[:fetch.index("\n}")]
+    assert fetch.count("curl -fsSL") == 2
+    assert "&&" in fetch, "the two downloads must be chained, not independent"
+    assert fetch.count("rm -rf \"$tmp\"") == 2, "must clean up on both paths"
+
+
+def test_the_contrast_voices_are_distinct_speakers():
+    """Four clips from one voice at different speeds is not 'wrong speaker'.
+    The list must name several real Piper speakers, not qualities of one."""
+    script = (ROOT / "bin" / "agentvoice-train-verifier").read_text()
+    line = next(l for l in script.splitlines() if l.startswith("OTHER_SPEAKERS="))
+    ids = line.split("(", 1)[1].rstrip(")").split()
+    speakers = {i.rsplit("-", 1)[0] for i in ids}
+    assert len(speakers) >= 3, f"only {speakers}"
+    assert all("-" in i for i in ids), "each needs a quality suffix for the URL"
