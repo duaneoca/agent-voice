@@ -204,3 +204,29 @@ def test_no_dead_flag_is_left_behind():
     made it write-only, and this project has shipped orphaned code before."""
     daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
     assert "spoke = " not in daemon
+
+
+def test_the_settings_page_scrolls_like_every_other_omarchy_panel():
+    """Reported as the pane scrolling slower than the rest of the desktop.
+
+    Nine scrolling panels in Omarchy attach a ScrollBar to their Flickable;
+    this one did not. A bare Flickable handles the wheel itself with a short,
+    momentum-less step, and with a ScrollBar attached the Controls wheel
+    handling applies instead -- which is what those panels feel like.
+    """
+    settings = _code(ROOT / "Settings.qml")
+    flick = settings[settings.index("Flickable {"):]
+    flick = flick[:flick.index("Column {")]
+    assert "ScrollBar.vertical" in flick, "no scrollbar, so no Controls wheel step"
+    assert "flickableDirection: Flickable.VerticalFlick" in flick
+    assert "interactive: contentHeight > height" in flick
+
+
+def test_controls_is_imported_under_a_namespace():
+    """A plain `import QtQuick.Controls` shadows Omarchy's Button, Toggle and
+    Dropdown with the Controls types of the same names. qs.Ui is imported last
+    so it wins at runtime, but nothing in the file says so -- and qmllint reads
+    it the other way, reporting twelve properties as missing."""
+    raw = (ROOT / "Settings.qml").read_text()
+    assert "import QtQuick.Controls as QQC" in raw
+    assert "\nimport QtQuick.Controls\n" not in raw

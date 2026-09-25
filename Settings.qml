@@ -2,6 +2,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Controls as QQC
 import qs.Commons
 import qs.Ui
 
@@ -506,6 +507,18 @@ Item {
           contentHeight: form.implicitHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
+          // The configuration every other scrolling panel in Omarchy uses --
+          // nine of them attach a ScrollBar, and this one did not. A bare
+          // Flickable handles the wheel itself and moves a short, momentum-less
+          // step; with a ScrollBar attached the Controls wheel handling applies,
+          // which is what those panels feel like. This page was the outlier.
+          flickableDirection: Flickable.VerticalFlick
+          interactive: contentHeight > height
+          // Namespaced: a plain `import QtQuick.Controls` shadows Omarchy's
+          // own Button, Toggle and Dropdown with the Controls types of the
+          // same names. qs.Ui is imported last so it wins at runtime, but
+          // qmllint cannot tell, and neither can a reader.
+          QQC.ScrollBar.vertical: QQC.ScrollBar { policy: QQC.ScrollBar.AsNeeded }
 
           Column {
             id: form
