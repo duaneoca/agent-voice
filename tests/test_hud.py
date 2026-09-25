@@ -164,14 +164,25 @@ def test_the_readout_renders_the_reply():
     assert "reply: voice.lastReply" in block
 
 
-def test_the_switch_has_its_own_section():
-    """It was at the end of TALKING TO IT, which is otherwise about keys, and
-    the person who asked for it could not find it there."""
+def test_the_switch_is_in_the_group_the_page_opens_with():
+    """It began at the end of TALKING TO IT, a section otherwise about keys,
+    where the person who asked for it could not find it. Then its own section.
+    Then, asked for again, first on the page -- which is where a switch people
+    reach for belongs, above anything with a section header.
+    """
     settings = _code(ROOT / "Settings.qml")
-    assert 'text: "ON-SCREEN READOUT"' in settings
-    header = settings.index('text: "ON-SCREEN READOUT"')
-    toggle = settings.index('"hud"')
-    assert header < toggle, "the header must introduce the control"
+    toggle = settings.index('label: "Show what it heard and what it answered"')
+    first_header = min(settings.index('text: "PROJECT"'),
+                       settings.index('text: "ON-SCREEN READOUT"'))
+    assert toggle < first_header, "the switch is below a section header"
+
+    # The duration stays below, and its header and separator go when the
+    # readout is off, or there are two rules with nothing between them.
+    section = settings[settings.index('text: "ON-SCREEN READOUT"'):]
+    section = section[:section.index("PanelSeparator", 40)]
+    assert "hudLingerMs" in section
+    assert settings.count('visible: root.setting("hud", true) === true') >= 3, \
+        "separator, header and knob all follow the switch"
 
 
 def test_no_dead_flag_is_left_behind():
