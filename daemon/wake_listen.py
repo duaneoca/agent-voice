@@ -720,28 +720,42 @@ class Daemon:
         # file, which cfg.reload() does not watch, so a switch at the desktop
         # would otherwise not reach the daemon until it restarted.
         self.reconcile_agent()
+        # Outside the guard for the same reason: a voice arrives on disk when
+        # the installer fetches it, and a file appearing changes no setting.
+        # Behind the guard, a substitution outlived its own download until
+        # something unrelated was touched -- the same shape of stall as the
+        # detection threshold that never reached the running engine.
+        self.reconcile_voice()
         if not self.cfg.reload():
             return
         self.pipe.apply(self.cfg)
-
-        # A voice swap means loading a different model, so it happens here
-        # between turns rather than mid-sentence.
-        wanted = self.cfg.str("voice")
-        speak_on = self.cfg.bool("speakReplies")
-        if not speak_on:
-            self.speaker = None
-        elif (self.speaker is None
-              or self.speaker.requested != wanted
-              or self.speaker.superseded()):
-            try:
-                self.speaker = Speaker(wanted)
-                if self.speaker.substituted_for:
-                    print(f"  {YEL}the voice {self.speaker.substituted_for} is "
-                          f"not downloaded; speaking as {self.speaker.name}{OFF}")
-            except Exception as e:
-                print(f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
-
+        self.reconcile_voice()
         print(f"  {CYA}knobs updated{OFF}")
+
+    def reconcile_voice(self) -> None:
+        """Load the voice the settings ask for, if that is not what is loaded.
+
+        Called between turns rather than mid-sentence, because a voice swap
+        means loading a different model. Cheap when nothing has changed: every
+        branch below is a comparison.
+        """
+        if not self.cfg.bool("speakReplies"):
+            self.speaker = None
+            return
+        wanted = self.cfg.str("voice")
+        if (self.speaker is not None
+                and self.speaker.requested == wanted
+                and not self.speaker.superseded()):
+            return
+        try:
+            self.speaker = Speaker(wanted)
+            if self.speaker.substituted_for:
+                print(f"  {YEL}the voice {self.speaker.substituted_for} is not "
+                      f"downloaded; speaking as {self.speaker.name}{OFF}")
+            else:
+                print(f"  {CYA}voice: {self.speaker.name}{OFF}")
+        except Exception as e:
+            print(f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
         self.banner()
 
     def deafen(self, tail_ms: int) -> None:
