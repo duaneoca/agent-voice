@@ -39,6 +39,7 @@ WANT_OWW=""
 UNINSTALL=0
 WITH_WIDGET=0
 KEYBINDS=""
+WANT_VOICE_ARG=""
 DEV=0
 for arg in "$@"; do
   case "$arg" in
@@ -46,6 +47,10 @@ for arg in "$@"; do
     --uninstall|--remove) UNINSTALL=1 ;;
     --with-widget) WITH_WIDGET=1 ;;
     --keybinds) KEYBINDS=1 ;;
+    # Named explicitly rather than read from settings, so the widget can ask
+    # for a voice the instant it is chosen without waiting for `omarchy bar
+    # set` to land -- reading the setting here would race the write.
+    --voice=*) WANT_VOICE_ARG="${arg#*=}" ;;
     --no-keybinds) KEYBINDS=0 ;;
     --dev) DEV=1 ;;
     --oww|--openwakeword) WANT_OWW=1 ;;
@@ -489,11 +494,14 @@ configured() {
 fetch_vosk
 fetch_voice lessac medium
 
-WANT_VOICE="$(configured voice)"
-if [[ -n ${WANT_VOICE:-} && $WANT_VOICE != lessac-medium ]]; then
-  say "Settings ask for the voice $WANT_VOICE; fetching it too."
-  fetch_voice "${WANT_VOICE%-*}" "${WANT_VOICE##*-}"
-fi
+# Whatever was asked for on the command line, then whatever the settings ask
+# for. Both, because a --voice run is also an install and the configured voice
+# still has to be present afterwards.
+for v in "$WANT_VOICE_ARG" "$(configured voice)"; do
+  [[ -n $v && $v != lessac-medium ]] || continue
+  say "Fetching the voice $v."
+  fetch_voice "${v%-*}" "${v##*-}"
+done
 
 # --- the daemon itself -----------------------------------------------------
 # Copied out of the plugin directory so removing the bar widget cannot delete

@@ -253,6 +253,22 @@ Item {
     else close()
   }
 
+  //: Run the installer for something chosen here that is not on the machine.
+  //: Choosing is the request -- a separate button to confirm it was a step
+  //: nobody looked for. Arguments are passed explicitly rather than read back
+  //: out of settings, because `omarchy bar set` has not necessarily landed by
+  //: the time this runs.
+  function fetchNow(args) {
+    fetcher.command = ["omarchy-launch-floating-terminal-with-presentation",
+                       Quickshell.env("HOME") +
+                       "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh " +
+                       args + " --no-keybinds"]
+    fetcher.running = true
+    root.dismiss()
+  }
+
+  Process { id: fetcher }
+
   function persist(key, value, json) {
     setter.command = ["omarchy", "bar", "set", "duaneoca.agentvoice",
                       key, String(value)].concat(json ? ["--json"] : [])
@@ -769,7 +785,11 @@ Item {
                 foreground: root.foreground
                 options: root.engineOptions
                 value: root.engine
-                onChanged: function(v) { root.persist("engine", v, false) }
+                onChanged: function(v) {
+                  root.persist("engine", v, false)
+                  if (v === "openwakeword" && !root.owwAvailable)
+                    root.fetchNow("--oww")
+                }
               }
 
               // The state that had no representation here at all. Choosing
@@ -795,18 +815,12 @@ Item {
                 }
 
                 Button {
-                  text: "Install openWakeWord…"
+                  text: "Try installing openWakeWord again…"
                   fontFamily: root.fontFamily
                   onClicked: {
-                    owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                            Quickshell.env("HOME") +
-                                            "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
-                    owwInstaller.running = true
-                    root.dismiss()
+                    root.fetchNow("--oww")
                   }
                 }
-
-                Process { id: owwInstaller }
               }
 
               // One dropdown per engine rather than one that swaps its options.
@@ -930,11 +944,7 @@ Item {
                   // a user can see -- the daemon just falls back again. Send them
                   // to the installer instead, which is the actual precondition.
                   if (!root.owwAvailable) {
-                    owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                            Quickshell.env("HOME") +
-                                            "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
-                    owwInstaller.running = true
-                    root.dismiss()
+                    root.fetchNow("--oww")
                     return
                   }
                   if (!root.usingOww) {
@@ -1148,7 +1158,12 @@ Item {
                 foreground: root.foreground
                 options: root.voiceOptions
                 value: root.setting("voice", "lessac-medium")
-                onChanged: function(v) { root.persist("voice", v, false) }
+                onChanged: function(v) {
+                  root.persist("voice", v, false)
+                  if (root.voicesOnDisk.length > 0
+                      && root.voicesOnDisk.indexOf(v) < 0)
+                    root.fetchNow("--voice=" + v)
+                }
               }
 
               // Choosing a voice that is not on disk used to be a dead end: the
@@ -1178,15 +1193,9 @@ Item {
                   text: "Download " + root.setting("voice", "lessac-medium") + "\u2026"
                   fontFamily: root.fontFamily
                   onClicked: {
-                    voiceFetcher.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                            Quickshell.env("HOME") +
-                                            "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --no-keybinds"]
-                    voiceFetcher.running = true
-                    root.dismiss()
+                    root.fetchNow("--no-keybinds")
                   }
                 }
-
-                Process { id: voiceFetcher }
               }
 
               Dropdown {
