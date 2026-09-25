@@ -168,7 +168,48 @@ QQ
 if [[ -n ${out// } ]]; then say "Piper URL drifted between the two scripts" "FAIL: $out"; fail=1
 else say "both scripts fetch voices from one URL" "ok"; fi
 
-# 9. the behavioural tests, when pytest is available
+# 9. the QML references properties that exist. Nothing here runs the overlay,
+# so this is the only automated check the interface gets -- and the interface
+# is where this project's bugs have landed: a KnobRow given `suffix` when it
+# takes `unit`, a `voiceOptions` renamed without its callers, a Timer nested
+# in a FileView. Each was found by reading the shell log after a user noticed.
+# qmllint's other categories are noisy against Quickshell's singletons
+# (170 unqualified accesses, all of them fine), so only missing-property is
+# gated. Verified by reintroducing the `suffix` bug: it is caught.
+QMLLINT="${AGENTVOICE_QMLLINT:-/usr/lib/qt6/bin/qmllint}"
+# Omarchy's own QML modules, when this runs on a machine that has them. They
+# are not needed for the check to bite: `unit` versus `suffix` is a property of
+# a file in this repository, which resolves either way. Verified by removing
+# the path and reintroducing that bug -- still caught, and still zero against
+# clean sources, so CI does not need Omarchy installed to run this honestly.
+QMLARGS=()
+[[ -d /usr/share/omarchy/shell ]] && QMLARGS=(-I /usr/share/omarchy/shell)
+
+if [[ -x $QMLLINT ]]; then
+  out=""
+  for f in $(git -C "$ROOT" ls-files '*.qml'); do
+    while IFS= read -r line; do
+      out="$out\n    $line"
+    done < <("$QMLLINT" "${QMLARGS[@]+"${QMLARGS[@]}"}" "$ROOT/$f" 2>&1 |
+             grep "\[missing-property\]")
+  done
+  if [[ -n ${out//[$'\n' ]} ]]; then
+    say "QML references a property that does not exist" "FAIL"
+    printf '%b\n' "$out"
+    fail=1
+  else
+    say "every QML property reference resolves" "ok"
+  fi
+elif [[ -n ${AGENTVOICE_STRICT:-}${CI:-} ]]; then
+  # Same rule as the tests: a check that silently did not run is not a pass.
+  # CI installs qt6-declarative for this.
+  say "qmllint" "FAIL: not found at $QMLLINT, and this run must not skip it"
+  fail=1
+else
+  say "qmllint not installed, skipping QML check" "--"
+fi
+
+# 10. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"

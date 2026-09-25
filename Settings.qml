@@ -655,6 +655,7 @@ Item {
             KnobRow {
               width: parent.width
               visible: root.setting("bargeIn", false) === true
+              scrollTarget: formScroll
               label: "How much louder you must be"
               unit: "%"
               description: "Above its own voice, before it stops. Higher is " +
@@ -884,7 +885,12 @@ Item {
               text: "INPUT"; foreground: root.dim; fontFamily: root.fontFamily
             }
 
+            // Named, so the bars inside address it directly. They reached it
+            // through parent.parent, which resolves at runtime and silently
+            // breaks the moment anything is nested between -- and which the
+            // linter cannot check, because `parent` is only ever an Item.
             Item {
+              id: meter
               width: parent.width
               height: Style.space(18)
               readonly property real span: 60
@@ -899,16 +905,16 @@ Item {
                 radius: height / 2
                 color: Qt.darker(root.background, 1.4)
                 Rectangle {
-                  width: Math.max(0, parent.width * parent.parent.levelFrac)
+                  width: Math.max(0, parent.width * meter.levelFrac)
                   height: parent.height
                   radius: parent.radius
-                  color: parent.parent.gateOpen ? root.foreground : Qt.darker(root.foreground, 2.2)
+                  color: meter.gateOpen ? root.foreground : Qt.darker(root.foreground, 2.2)
                 }
               }
               Rectangle {
-                x: parent.width * parent.gateFrac
+                x: meter.width * meter.gateFrac
                 width: Math.max(2, Style.space(2))
-                height: parent.height
+                height: meter.height
                 color: Color.urgent
               }
             }
