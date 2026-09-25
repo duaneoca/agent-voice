@@ -79,3 +79,65 @@ def test_stopping_during_transcription_discards_the_turn():
     assert checked < answered, "the flag must be read before the agent is called"
     assert "self._interrupt.clear()" in loop[checked:answered], \
         "and cleared, or the next turn starts already interrupted"
+
+
+# --- the verifier as a switch, not a file ----------------------------------
+# Asked: with two people using this computer, how do you turn the verifier off?
+# You could not. `use_verifier` had existed in OwwWake since it was written and
+# nothing in the daemon passed it -- only `agentvoice monitor --no-verifier`.
+# The only way to stop verifying was to delete the .joblib, which also threw
+# away the twenty-five recordings behind it.
+
+SETTINGS = (ROOT / "Settings.qml").read_text()
+
+
+def test_the_daemon_honours_the_setting():
+    build = DAEMON[DAEMON.index("def _build_wake"):]
+    build = build[:build.index("\n    def ", 10)]
+    assert 'use_verifier=cfg.bool("useVerifier")' in build
+
+
+def test_switching_it_off_rebuilds_the_engine():
+    """openWakeWord takes the verifier as a constructor argument, so unlike the
+    threshold this cannot be assigned to a running engine."""
+    spec = DAEMON[DAEMON.index("want = (engine,"):]
+    spec = spec[:spec.index("self._build_wake(cfg, engine)")]
+    assert 'cfg.bool("useVerifier")' in spec
+
+
+def test_the_three_states_are_distinguishable_on_screen():
+    """In use, trained-but-off, and never trained. Reading the middle one as
+    the last would send someone back to redo work they had already done."""
+    box = SETTINGS[SETTINGS.index('title: "YOUR VOICE"'):]
+    box = box[:box.index("SettingsGroup {", 10)]
+    assert "In use for" in box
+    assert "switched " in box and "The training is kept." in box
+    assert "No verifier for" in box
+    assert 'label: "Only wake for my voice"' in box
+
+
+def test_the_banner_does_not_call_a_disabled_verifier_missing():
+    build = DAEMON[DAEMON.index("def _build_wake"):]
+    build = build[:build.index("\n    def ", 10)]
+    assert "no verifier yet" in build
+    assert "your verifier is off" in build, \
+        "a trained verifier switched off must not read as absent"
+
+
+def test_the_setting_exists_in_all_three_places():
+    import json
+    manifest = json.loads((ROOT / "manifest.json").read_text())
+    assert "useVerifier" in {k["key"] for k in manifest["barWidget"]["schema"]}
+    assert manifest["barWidget"]["defaults"]["useVerifier"] is True
+    assert '"useVerifier": True' in (ROOT / "daemon" / "runtime.py").read_text()
+    assert "useVerifier" in SETTINGS
+
+
+def test_it_defaults_to_on():
+    """Off by default would mean a verifier someone trained does nothing until
+    they find the switch."""
+    import json
+    manifest = json.loads((ROOT / "manifest.json").read_text())
+    assert manifest["barWidget"]["defaults"]["useVerifier"] is True
+    assert 'root.setting("useVerifier", true)' in SETTINGS, \
+        "the QML fallback must agree with the manifest"

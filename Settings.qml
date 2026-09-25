@@ -918,15 +918,40 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 visible: root.owwLive
+                // Three states, not two. A trained verifier that is switched
+                // off read as "no verifier yet" -- the one message that would
+                // send someone back to redo work they had already done.
                 text: root.vVerifier
                       ? "\u2713  In use for “" + root.activePhrase + "”. Only your " +
                         "voice saying it gets through."
-                      : "No verifier for “" + root.activePhrase + "” yet — anyone " +
-                        "saying the phrase can wake it. Verifiers are per phrase, " +
-                        "so training a new wake word means training a new one."
+                      : root.setting("useVerifier", true) !== true
+                        ? "Trained for \u201c" + root.activePhrase + "\u201d and switched " +
+                          "off below, so anyone can wake it. The training is kept."
+                        : "No verifier for \u201c" + root.activePhrase + "\u201d yet \u2014 anyone " +
+                          "saying the phrase can wake it. Verifiers are per phrase, " +
+                          "so training a new wake word means training a new one."
                 color: root.vVerifier ? root.foreground : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
+              }
+
+              // The switch that had no switch. `use_verifier` has existed in
+              // OwwWake since it was written and nothing ever passed it, so the
+              // only way to stop verifying was to delete the .joblib -- a file
+              // operation that also threw the training away. It matters most for
+              // someone else at this computer: the verifier is built to reject
+              // them, so from their side the machine ignores them and nothing
+              // says why.
+              Toggle {
+                width: parent.width
+                visible: root.owwLive
+                label: "Only wake for my voice"
+                description: "Off lets anyone wake it. Your training stays on disk."
+                checked: root.setting("useVerifier", true) === true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("useVerifier",
+                    root.setting("useVerifier", true) === true ? "false" : "true", true)
               }
 
               // A disabled button that does nothing when clicked reads as a bug,

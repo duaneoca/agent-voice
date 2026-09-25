@@ -43,6 +43,7 @@ def _pipeline_with(monkeypatch, threshold_pct: int):
     cfg = {
         "engine": "openwakeword", "owwModel": "hey_claude",
         "owwThresholdPct": threshold_pct, "micThresholdDb": -40,
+        "useVerifier": True, "phrase": "hey computer",
         "leadInMs": 5000, "trailingSilenceMs": 1200, "minUtteranceMs": 300,
         "maxUtteranceMs": 15000, "refractoryMs": 1500, "wakeConfidence": 0.70,
         "model": "tiny.en", "livePartials": "auto",
@@ -57,10 +58,27 @@ def _pipeline_with(monkeypatch, threshold_pct: int):
     return pipe, Cfg(cfg)
 
 
-def test_lowering_the_threshold_reaches_the_running_engine(monkeypatch):
-    pipe, cfg = _pipeline_with(monkeypatch, 51)
-    assert pipe._oww.threshold == 0.90
+def _settled(monkeypatch, threshold_pct: int):
+    """A pipeline whose spec already matches its config.
 
+    Hand-writing the spec tuple in the fixture worked until the tuple gained a
+    field, at which point every test here rebuilt the engine for real and died
+    reaching for Vosk. Letting apply() set its own spec keeps these tests about
+    what they are testing.
+    """
+    pipe, cfg = _pipeline_with(monkeypatch, threshold_pct)
+    rebuilt: list[str] = []
+    pipe._build_wake = lambda c, e: rebuilt.append(e)
+    pipe.apply(cfg)
+    rebuilt.clear()
+    return pipe, cfg, rebuilt
+
+
+def test_lowering_the_threshold_reaches_the_running_engine(monkeypatch):
+    pipe, cfg, _ = _settled(monkeypatch, 90)
+    assert pipe._oww.threshold == pytest.approx(0.90)
+
+    cfg["owwThresholdPct"] = 51
     pipe.apply(cfg)
 
     assert pipe._oww.threshold == pytest.approx(0.51), \
@@ -70,18 +88,30 @@ def test_lowering_the_threshold_reaches_the_running_engine(monkeypatch):
 def test_the_engine_is_not_rebuilt_for_a_threshold_change(monkeypatch):
     """A rebuild would drop and reload ~100MB of model for a slider move, so
     the threshold is assigned rather than added to the spec."""
-    pipe, cfg = _pipeline_with(monkeypatch, 51)
-    rebuilt = []
-    pipe._build_wake = lambda c, e: rebuilt.append(e)
+    pipe, cfg, rebuilt = _settled(monkeypatch, 90)
 
+    cfg["owwThresholdPct"] = 51
     pipe.apply(cfg)
 
     assert rebuilt == [], f"rebuilt for a number: {rebuilt}"
     assert pipe._oww.threshold == pytest.approx(0.51)
 
 
+def test_turning_the_verifier_off_does_rebuild(monkeypatch):
+    """The opposite case, and the reason the threshold is not in the spec:
+    openWakeWord takes the verifier as a constructor argument, so switching it
+    off means building the engine without it."""
+    pipe, cfg, rebuilt = _settled(monkeypatch, 51)
+
+    cfg["useVerifier"] = False
+    pipe.apply(cfg)
+
+    assert rebuilt == ["openwakeword"], "a verifier change needs a new engine"
+
+
 def test_raising_it_reaches_the_engine_too(monkeypatch):
-    pipe, cfg = _pipeline_with(monkeypatch, 85)
+    pipe, cfg, _ = _settled(monkeypatch, 51)
+    cfg["owwThresholdPct"] = 85
     pipe.apply(cfg)
     assert pipe._oww.threshold == pytest.approx(0.85)
 
@@ -102,8 +132,7 @@ def test_nothing_breaks_when_openwakeword_is_not_the_engine(monkeypatch):
 def test_the_banner_reports_the_number_that_governs_the_engine(monkeypatch):
     """It printed Vosk's grammar confidence while running openWakeWord, so the
     number that did nothing was on screen and the stale one was not."""
-    pipe, cfg = _pipeline_with(monkeypatch, 51)
-    pipe.apply(cfg)
+    pipe, cfg, _ = _settled(monkeypatch, 51)
     assert pipe.detection_threshold == pytest.approx(0.51)
 
     pipe._oww = None
