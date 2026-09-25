@@ -47,6 +47,7 @@ Panel {
   readonly property string icon: {
     if (!serviceActive) return "󰍭"              // mic off
     if (vState === "capture" || vState === "followup") return "󰑊"  // recording you
+    if (vState === "transcribing") return "󰗊"   // turning speech into text
     if (vState === "thinking") return "󰔟"
     if (vState === "speaking") return "󰕾"
     if (vState === "listening") return "󰍬"
@@ -65,7 +66,10 @@ Panel {
     if (vState === "capture") return "LISTENING TO YOU"
     // Still hot after a reply, waiting to see if you carry on.
     if (vState === "followup") return "STILL LISTENING"
-    if (vState === "thinking") return "TRANSCRIBING"
+    // These were one state called "thinking", labelled "TRANSCRIBING" -- which
+    // described the shorter half and then sat there through the longer one.
+    if (vState === "transcribing") return "TRANSCRIBING"
+    if (vState === "thinking") return "THINKING"
     if (vState === "speaking") return "SPEAKING"
     if (vState === "listening") return "WAITING FOR \"" + voice.activePhrase.toUpperCase() + "\""
     return "STARTING"
@@ -467,6 +471,7 @@ Panel {
       // discoverable half of it; Super+Ctrl+Space is the fast half.
       Text {
         visible: voice.vState === "speaking" || voice.vState === "thinking"
+                 || voice.vState === "transcribing"
         text: "\uf04d   stop"
         color: stopHover.containsMouse ? voice.fg : voice.dim
         font.family: voice.fontFamily

@@ -42,8 +42,9 @@ PanelWindow {
   //: the window is still open, another sentence may follow, and closing on it
   //: would flicker between turns.
   readonly property bool busy: enabled
-    && (vState === "capture" || vState === "thinking"
-        || vState === "speaking" || vState === "followup")
+    && (vState === "capture" || vState === "transcribing"
+        || vState === "thinking" || vState === "speaking"
+        || vState === "followup")
 
   property bool showing: false
 
