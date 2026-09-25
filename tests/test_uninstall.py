@@ -27,6 +27,18 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _shell_function(name: str) -> str:
+    """Lift one function out of install.sh, so a test can drive it directly.
+
+    Line-based: an earlier version cut at the first "\\n}" and split the body
+    in half, because ${XDG_CONFIG_HOME:-$HOME/.config} closes a brace too.
+    """
+    lines = (ROOT / "install.sh").read_text().splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith(f"{name}() {{"))
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+    return "\n".join(lines[start:end + 1]) + "\n"
+
+
 def _env(home: Path, **overrides) -> dict[str, str]:
     """A fully sandboxed environment for install.sh.
 
@@ -284,3 +296,69 @@ def test_installing_from_the_plugin_directory_still_replaces_the_copy(tmp_path):
     assert done.returncode == 0, done.stderr
     assert (app / "daemon").is_dir()
     assert not (app / "stale.txt").exists(), "a real install must not keep old files"
+
+
+# --- a first install on a machine that is not the author's ------------------
+# Found by running install.sh into an empty HOME, which had never been done:
+# both machines it was written on already had a configured widget, and neither
+# could reach either of these.
+
+def test_a_first_install_survives_having_no_shell_json(tmp_path):
+    """jq exits 2 on a file that is not there.
+
+    `configured()` runs inside a command substitution being assigned, so under
+    `set -e` that 2 ended the installer -- after 700MB of downloads, printing
+    nothing at all. A machine with no shell.json is not an error; it is every
+    machine where the widget has not been configured yet.
+    """
+    fn = _shell_function("configured")
+
+    probe = (
+        "set -euo pipefail\n"
+        "have() { command -v \"$1\" >/dev/null 2>&1; }\n"
+        f"export XDG_CONFIG_HOME={tmp_path}/nothing-here\n"
+        + fn +
+        'V="$(configured voice)"\n'
+        'echo "survived:[$V]"\n'
+    )
+    done = subprocess.run(["bash", "-c", probe], capture_output=True,
+                          text=True, timeout=60)
+
+    assert done.returncode == 0, done.stderr
+    assert "survived:[]" in done.stdout
+
+
+def test_configured_still_reads_a_value_that_is_there(tmp_path):
+    """The guard must not turn the lookup into a no-op -- a reinstall relies on
+    it to re-fetch the voice the settings ask for."""
+    fn = _shell_function("configured")
+
+    cfg = tmp_path / "omarchy"
+    cfg.mkdir(parents=True)
+    (cfg / "shell.json").write_text(
+        '{"bar":{"layout":{"right":[{"id":"duaneoca.agentvoice",'
+        '"voice":"joe-medium"}]}}}')
+
+    probe = ("set -euo pipefail\n"
+             "have() { command -v \"$1\" >/dev/null 2>&1; }\n"
+             f"export XDG_CONFIG_HOME={tmp_path}\n"
+             + fn + 'configured voice\n')
+    done = subprocess.run(["bash", "-c", probe], capture_output=True,
+                          text=True, timeout=60)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "joe-medium"
+
+
+def test_no_systemctl_call_can_end_the_install():
+    """There need not be a systemd user session: a container, an ssh login
+    without one, a distribution not using systemd. daemon-reload was the last
+    line of a successful install and unguarded, so failing it discarded an
+    install that had already written every file."""
+    script = (ROOT / "install.sh").read_text()
+    for line_no, line in enumerate(script.splitlines(), 1):
+        if "systemctl" not in line or line.strip().startswith("#"):
+            continue
+        guarded = ("|| true" in line or line.strip().startswith("if ")
+                   or "if !" in line)
+        assert guarded, f"install.sh:{line_no} can abort the install: {line.strip()}"
