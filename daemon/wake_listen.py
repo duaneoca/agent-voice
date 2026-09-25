@@ -687,9 +687,14 @@ class Daemon:
         speak_on = self.cfg.bool("speakReplies")
         if not speak_on:
             self.speaker = None
-        elif self.speaker is None or self.speaker.name != wanted:
+        elif (self.speaker is None
+              or self.speaker.requested != wanted
+              or self.speaker.superseded()):
             try:
                 self.speaker = Speaker(wanted)
+                if self.speaker.substituted_for:
+                    print(f"  {YEL}the voice {self.speaker.substituted_for} is "
+                          f"not downloaded; speaking as {self.speaker.name}{OFF}")
             except Exception as e:
                 print(f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
 
@@ -1052,6 +1057,9 @@ def main() -> int:
     if cfg.bool("speakReplies") and not args.no_speak:
         try:
             speaker = Speaker(cfg.str("voice"))
+            if speaker.substituted_for:
+                print(f"  {YEL}the voice {speaker.substituted_for} is not "
+                      f"downloaded; speaking as {speaker.name}{OFF}")
         except Exception as e:
             print(f"  {YEL}tts unavailable: {e}{OFF}")
 
