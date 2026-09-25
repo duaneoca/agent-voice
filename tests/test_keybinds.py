@@ -16,11 +16,22 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _lines(name: str, end: str = "}") -> str:
-    """Lift a block out of install.sh by its opening line."""
+    """Lift a block out of install.sh by its opening line.
+
+    `end` must match a whole line exactly. Shaping it as a guess about the
+    block's last line broke every test in this file the moment the block gained
+    a closing marker, so the callers below name the real terminator.
+    """
     text = (ROOT / "install.sh").read_text().splitlines()
     start = next(i for i, l in enumerate(text) if l.startswith(name))
-    stop = next(i for i in range(start + 1, len(text)) if text[i] == end)
+    stop = next((i for i in range(start + 1, len(text)) if text[i] == end), None)
+    assert stop is not None, f"no line {end!r} after {name!r} in install.sh"
     return "\n".join(text[start:stop + 1]) + "\n"
+
+
+#: The three variables, as one block: KEYBIND_BEGIN, KEYBIND_END, KEYBIND_LINES.
+def _keybind_vars() -> str:
+    return _lines("KEYBIND_BEGIN=", '$KEYBIND_END"')
 
 
 def _run(home: Path, keybinds: str, *, bindings: str | None = None,
@@ -50,7 +61,8 @@ def _run(home: Path, keybinds: str, *, bindings: str | None = None,
         'warn() { echo "WARN: $*"; }\n'
         'ask() { echo "ASKED: $*"; return 1; }\n'
         f'KEYBINDS="{keybinds}"\n'
-        + _lines("KEYBIND_LINES=", "o.bind(\"SUPER + ALT + SPACE\", \"Release or re-engage the mic\", \"agentvoice mic\")'")
+        + _keybind_vars()
+        + _lines("reload_hypr_or_restore() {")
         + _lines("offer_keybinds() {")
         + "offer_keybinds\n"
     )
@@ -130,3 +142,110 @@ def test_a_rejected_config_is_rolled_back(tmp_path):
     assert (tmp_path / "config" / "hypr" / "bindings.lua").read_text() == OTHER, \
         "must restore the file Hyprland rejected"
     assert "put back" in done.stdout
+
+
+# --- and taking them back out ----------------------------------------------
+# The first version marked the block with prose -- "remove these if you remove
+# the plugin" -- which is a chore handed to the user by something that could do
+# it itself, and not reliably findable afterwards either.
+
+def _remove(home: Path, bindings: str | None, *, hyprctl: bool = False
+            ) -> subprocess.CompletedProcess:
+    cfg = home / "config" / "hypr"
+    cfg.mkdir(parents=True, exist_ok=True)
+    if bindings is not None:
+        (cfg / "bindings.lua").write_text(bindings)
+
+    bin_ = home / "bin"
+    bin_.mkdir(exist_ok=True)
+    body = ('#!/bin/sh\n[ "$1" = configerrors ] && echo "bad token"\nexit 0\n'
+            if hyprctl else
+            '#!/bin/sh\n[ "$1" = configerrors ] && printf "\\n\\n"\nexit 0\n')
+    (bin_ / "hyprctl").write_text(body)
+    (bin_ / "hyprctl").chmod(0o755)
+
+    script = (
+        "set -uo pipefail\n"
+        'have() { command -v "$1" >/dev/null 2>&1; }\n'
+        'ok() { echo "OK: $*"; }\n'
+        'warn() { echo "WARN: $*"; }\n'
+        + _keybind_vars()
+        + _lines("reload_hypr_or_restore() {")
+        + _lines("remove_keybinds() {")
+        + "remove_keybinds\n"
+    )
+    env = dict(os.environ)
+    env.update({"HOME": str(home), "XDG_CONFIG_HOME": str(home / "config"),
+                "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}"})
+    return subprocess.run(["bash", "-c", script], env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_what_was_added_is_taken_back_out(tmp_path):
+    _run(tmp_path, "1", bindings=OTHER)
+    after_install = (tmp_path / "config" / "hypr" / "bindings.lua").read_text()
+    assert "agentvoice talk" in after_install
+
+    done = _remove(tmp_path, None)
+    text = (tmp_path / "config" / "hypr" / "bindings.lua").read_text()
+
+    assert done.returncode == 0, done.stderr
+    assert "agentvoice" not in text
+    assert ">>>" not in text and "<<<" not in text, "markers must go too"
+    assert text == OTHER, f"should be byte-identical to before: {text!r}"
+
+
+def test_removal_keeps_a_backup(tmp_path):
+    _run(tmp_path, "1", bindings=OTHER)
+    installed = (tmp_path / "config" / "hypr" / "bindings.lua").read_text()
+    for stale in (tmp_path / "config" / "hypr").glob("*backup*"):
+        stale.unlink()
+
+    _remove(tmp_path, None)
+
+    backups = list((tmp_path / "config" / "hypr").glob("*agentvoice-backup*"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == installed
+
+
+def test_hand_written_bindings_are_named_not_deleted(tmp_path):
+    """Outside the markers it is someone's own work. Guessing wrong deletes it."""
+    mine = OTHER + 'o.bind("SUPER + V", "My own", "agentvoice talk")\n'
+    done = _remove(tmp_path, mine)
+
+    assert (tmp_path / "config" / "hypr" / "bindings.lua").read_text() == mine
+    # warn() goes to stderr when gum is absent, and the list follows it there.
+    combined = done.stdout + done.stderr
+    assert "WARN" in combined
+    assert "SUPER + V" in combined
+
+
+def test_removing_when_nothing_was_added_changes_nothing(tmp_path):
+    done = _remove(tmp_path, OTHER)
+    assert (tmp_path / "config" / "hypr" / "bindings.lua").read_text() == OTHER
+    assert "OK:" not in done.stdout, "nothing to report"
+
+
+def test_no_bindings_file_is_not_an_error(tmp_path):
+    (tmp_path / "config" / "hypr").mkdir(parents=True, exist_ok=True)
+    done = _remove(tmp_path, None)
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_rejected_removal_is_rolled_back(tmp_path):
+    _run(tmp_path, "1", bindings=OTHER)
+    installed = (tmp_path / "config" / "hypr" / "bindings.lua").read_text()
+
+    done = _remove(tmp_path, None, hyprctl=True)
+
+    assert (tmp_path / "config" / "hypr" / "bindings.lua").read_text() == installed
+    assert "put back" in done.stdout
+
+
+def test_the_uninstall_calls_it():
+    """Wired in, not merely defined -- and before the farewell that claims it."""
+    script = (ROOT / "install.sh").read_text()
+    block = script[script.index("if [[ $UNINSTALL == 1 ]]; then"):]
+    block = block[:block.index("\n  exit 0")]
+    assert "remove_keybinds" in block
+    assert "were taken back out" in script, "the farewell must not claim otherwise"

@@ -88,12 +88,84 @@ ask() {
 # the result was that they went unbound: a key nobody has bound is a feature
 # nobody has. Offered instead, with three rules -- ask first, never overwrite a
 # key that is already bound, and put the file back if Hyprland rejects it.
-KEYBIND_LINES='
--- Agent Voice. Remove these if you remove the plugin.
-o.bind("F8", "Talk to the agent (push-to-talk)", "agentvoice talk")
-o.bind("F8", "End the turn (push-to-talk)", "agentvoice talk-end", { release = true })
-o.bind("SUPER + CTRL + SPACE", "Stop the agent talking", "agentvoice interrupt")
-o.bind("SUPER + ALT + SPACE", "Release or re-engage the mic", "agentvoice mic")'
+# Markers, not prose. The first version said "remove these if you remove the
+# plugin", which is a chore handed to the user by something that could do it
+# itself -- and not reliably findable afterwards. Anything written into someone
+# else's file has to be removable by the thing that wrote it.
+KEYBIND_BEGIN='-- >>> agentvoice keybinds'
+KEYBIND_END='-- <<< agentvoice keybinds'
+KEYBIND_LINES="
+$KEYBIND_BEGIN (added by install.sh, removed by --uninstall)
+o.bind(\"F8\", \"Talk to the agent (push-to-talk)\", \"agentvoice talk\")
+o.bind(\"F8\", \"End the turn (push-to-talk)\", \"agentvoice talk-end\", { release = true })
+o.bind(\"SUPER + CTRL + SPACE\", \"Stop the agent talking\", \"agentvoice interrupt\")
+o.bind(\"SUPER + ALT + SPACE\", \"Release or re-engage the mic\", \"agentvoice mic\")
+$KEYBIND_END"
+
+# Hyprland reloads bindings.lua on save, so a bad edit is live at once and a
+# broken one costs the user their keyboard. Shared by both directions: check,
+# and put the file back if it is rejected.
+reload_hypr_or_restore() {
+  local file="$1" backup="$2"
+  have hyprctl || return 0
+  hyprctl reload >/dev/null 2>&1 || true
+  # A healthy `hyprctl configerrors` prints two newlines and nothing else, so
+  # blank lines have to be ignored; filtering only "ok" treated that whitespace
+  # as an error and undid every good change.
+  if [[ -n "$(hyprctl configerrors 2>/dev/null | grep -vE '^(ok)?$' || true)" ]]; then
+    mv "$backup" "$file"
+    hyprctl reload >/dev/null 2>&1 || true
+    return 1
+  fi
+  return 0
+}
+
+# Take out exactly what was put in, and nothing else. Bindings mentioning
+# agentvoice outside the markers were written or moved by hand: they are named
+# on the way out rather than deleted, because guessing wrong here deletes
+# someone's own work.
+remove_keybinds() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+  [[ -f $file ]] || return 0
+
+  # -e, because the marker starts with "--" and grep parses that as the end of
+  # its own options: without it the match silently never happened and the block
+  # was left in place while the uninstall reported success.
+  if grep -qF -e "$KEYBIND_BEGIN" "$file"; then
+    local backup="$file.agentvoice-backup.$(date -u +%Y%m%d%H%M%S)"
+    cp "$file" "$backup"
+    local tmp="$file.agentvoice-tmp.$$"
+    # Buffered, so the blank line the block was appended after goes with it.
+    # That separator sits outside the markers, so a line-at-a-time filter left
+    # it behind and the file grew a blank line on every install-and-remove.
+    # These files are a few dozen lines; reading it whole costs nothing.
+    awk -v b="$KEYBIND_BEGIN" -v e="$KEYBIND_END" '
+      { line[NR] = $0 }
+      END {
+        for (i = 1; i <= NR; i++) {
+          if (line[i] == "" && i < NR && index(line[i + 1], b) == 1) continue
+          if (index(line[i], b) == 1) {
+            while (i <= NR && index(line[i], e) != 1) i++
+            continue
+          }
+          print line[i]
+        }
+      }' "$file" >"$tmp" && mv "$tmp" "$file"
+    if reload_hypr_or_restore "$file" "$backup"; then
+      ok "Removed the keybinds from ${file/#$HOME/~} (backup: ${backup/#$HOME/~})"
+    else
+      warn "Hyprland rejected the edit, so ${file/#$HOME/~} was put back."
+    fi
+  fi
+
+  local loose
+  loose="$(grep -n 'agentvoice ' "$file" 2>/dev/null || true)"
+  if [[ -n $loose ]]; then
+    echo
+    warn "These mention agentvoice and were not added by this, so they stay:"
+    printf '%s\n' "$loose" | sed 's/^/    /' >&2
+  fi
+}
 
 offer_keybinds() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
@@ -144,21 +216,10 @@ offer_keybinds() {
   cp "$file" "$backup"
   printf '%s\n' "$KEYBIND_LINES" >>"$file"
 
-  # Hyprland reloads on save, so a syntax error is live immediately. Check, and
-  # put the file back if it did not like it -- this is the user's config and a
-  # broken one costs them their whole keyboard.
-  if have hyprctl; then
-    hyprctl reload >/dev/null 2>&1 || true
-    # A healthy `hyprctl configerrors` prints two newlines and nothing else, so
-    # the test has to ignore blank lines -- filtering only "ok" treated that
-    # whitespace as an error and rolled back every good change.
-    if [[ -n "$(hyprctl configerrors 2>/dev/null | grep -vE '^(ok)?$' || true)" ]]; then
-      mv "$backup" "$file"
-      hyprctl reload >/dev/null 2>&1 || true
-      warn "Hyprland rejected the change, so your bindings.lua was put back."
-      show_keybinds
-      return 0
-    fi
+  if ! reload_hypr_or_restore "$file" "$backup"; then
+    warn "Hyprland rejected the change, so your bindings.lua was put back."
+    show_keybinds
+    return 0
   fi
   ok "Added the keybinds to ${file/#$HOME/~} (backup: ${backup/#$HOME/~})"
 }
@@ -208,6 +269,8 @@ if [[ $UNINSTALL == 1 ]]; then
   ok "Removed the installed daemon"
 
   rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agentvoice"
+
+  remove_keybinds
 
   # Existing and holding something are different questions, and the first one
   # is the wrong one: install.sh creates these directories itself, so asking
@@ -259,8 +322,9 @@ NEXT
   Whisper's model cache, shared with anything else using it:
     ~/.cache/huggingface        ($(du -sh ~/.cache/huggingface 2>/dev/null | cut -f1 || echo "not present"))
 
-  Settings in ~/.config/omarchy/shell.json, and any keybinds you added
-  to ~/.config/hypr/bindings.lua.
+  Settings in ~/.config/omarchy/shell.json. Keybinds this added to
+  ~/.config/hypr/bindings.lua were taken back out, with a backup; any you
+  wrote yourself were named above and left alone.
 NEXT
   # --- and the widget, if asked -------------------------------------------
   # This used to be chained in the widget's own Remove button:
