@@ -77,20 +77,26 @@ def test_nothing_offers_to_switch_to_an_engine_that_is_not_there():
     """Switching to a missing engine changes nothing a user can see -- the
     daemon falls back again -- so the offer must be to install it."""
     assert "Install openWakeWord to enable this" in SETTINGS
-    assert "Install openWakeWord…" in SETTINGS
+    # Choosing the engine now starts the install itself, so the button is the
+    # way back from a download that did not finish rather than the way in.
+    assert "Try installing openWakeWord again" in SETTINGS
+    engine = SETTINGS[SETTINGS.index("options: root.engineOptions"):]
+    engine = engine[:engine.index("\n              }")]
+    assert "root.fetchNow" in engine, "selecting the engine must fetch it"
 
 
 def test_the_installer_is_called_with_flags_it_accepts():
     """install.sh rejects an unknown option with exit 2, and the first draft of
     this passed a --no-voice-change that does not exist."""
     accepted = set()
-    for m in re.finditer(r"^\s*--([a-z-]+)(?:\|--?([a-z-]+))*\)",
+    # `--name)` for a switch, `--name=*)` for one that takes a value.
+    for m in re.finditer(r"^\s*--([a-z-]+)(?:=\*)?(?:\|--?([a-z-]+))*\)",
                          (ROOT / "install.sh").read_text(), re.M):
         accepted.update(g for g in m.groups() if g)
     assert "oww" in accepted, f"parsed flags look wrong: {accepted}"
 
     for call in re.findall(r"/install\.sh([^\"']*)", SETTINGS):
-        for flag in re.findall(r"--([a-z-]+)", call):
+        for flag in re.findall(r"--([a-z-]+)=?", call):
             assert flag in accepted, f"install.sh does not accept --{flag}"
 
 

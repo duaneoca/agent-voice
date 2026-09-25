@@ -35,20 +35,28 @@ def test_the_offer_appears_only_when_it_is_missing():
 
 def test_the_installer_is_called_with_a_flag_it_accepts():
     accepted = set()
-    for m in re.finditer(r"^\s*--([a-z-]+)(?:\|--?([a-z-]+))*\)",
+    # `--name)` for a switch, `--name=*)` for one that takes a value.
+    for m in re.finditer(r"^\s*--([a-z-]+)(?:=\*)?(?:\|--?([a-z-]+))*\)",
                          (ROOT / "install.sh").read_text(), re.M):
         accepted.update(g for g in m.groups() if g)
     for call in re.findall(r"/install\.sh([^\"']*)", SETTINGS):
-        for flag in re.findall(r"--([a-z-]+)", call):
+        for flag in re.findall(r"--([a-z-]+)=?", call):
             assert flag in accepted, f"install.sh does not accept --{flag}"
 
 
-def test_the_installer_fetches_whatever_the_settings_ask_for():
-    """The button passes no voice name; it relies on install.sh reading the
-    setting. If that ever stops, the button downloads the wrong thing."""
+def test_the_installer_fetches_both_the_named_and_the_configured_voice():
+    """Named on the command line, because choosing a voice fires the installer
+    at once and `omarchy bar set` has not necessarily landed -- reading the
+    setting alone would race the write. The configured one is still fetched
+    too: a --voice run is also an install, and the voice in use has to be
+    present when it finishes.
+    """
     install = (ROOT / "install.sh").read_text()
-    assert 'WANT_VOICE="$(configured voice)"' in install
-    assert 'fetch_voice "${WANT_VOICE%-*}" "${WANT_VOICE##*-}"' in install
+    loop = install[install.index('for v in "$WANT_VOICE_ARG"'):]
+    loop = loop[:loop.index("done") + 4]
+    assert "$(configured voice)" in loop
+    assert 'fetch_voice "${v%-*}" "${v##*-}"' in loop
+    assert "--voice=*)" in install, "the flag has to be accepted"
 
 
 def test_a_downloaded_voice_is_picked_up_without_touching_a_setting():
