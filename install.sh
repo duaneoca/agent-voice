@@ -260,10 +260,18 @@ fetch_voice() {
 # a log nobody reads.
 configured() {
   local key="$1"
-  have jq || return 1
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+  have jq || return 0
+  # Both guards matter under `set -e`. jq exits 2 on a file that is not there,
+  # and this runs inside a command substitution being assigned, so that 2 left
+  # the whole installer dead -- after 700MB of downloads, with nothing printed.
+  # A machine with no shell.json is not an error: it is every machine where the
+  # widget has not been configured yet, which is most of them on a first run.
+  # Neither of the two machines this was written on could reproduce it.
+  [[ -f $file ]] || return 0
   jq -r --arg k "$key" \
     '[.bar.layout[]?[]? | select(.id=="duaneoca.agentvoice")][0][$k] // empty' \
-    "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null
+    "$file" 2>/dev/null || true
 }
 
 fetch_vosk
@@ -311,7 +319,18 @@ ok "Installed agentvoice and agentvoice-train-verifier into $BINDIR"
 mkdir -p "$UNITDIR"
 sed -e "s|@ROOT@|$APP|g" -e "s|@VENV@|$VENV|g" \
     "$ROOT/desktop/agentvoice.service.in" > "$UNITDIR/agentvoice.service"
-systemctl --user daemon-reload
+# Unguarded, this was the last line of a successful install and could undo it:
+# `set -e` turned a machine with no systemd user session -- a container, an ssh
+# login without one, a distribution that is not using systemd -- into an exit
+# after every file was already in place, with the failure attributed to
+# nothing. The uninstall path has always tolerated this; the install path did
+# not. Say what happened and carry on, because everything needed to start it by
+# hand is installed by this point.
+if ! systemctl --user daemon-reload 2>/dev/null; then
+  warn "No systemd user session here, so the service was not registered."
+  warn "The unit is at $UNITDIR/agentvoice.service; run 'agentvoice start' to"
+  warn "run the daemon in the foreground instead."
+fi
 ok "Installed the user service"
 
 echo
