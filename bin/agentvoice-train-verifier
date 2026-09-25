@@ -423,7 +423,11 @@ if [[ -n ${WANT_PCT:-} ]] && (( WANT_PCT != NOW_PCT )); then
   echo
   if gum confirm "Set the wake threshold to $WANT_PCT%?" \
        --affirmative "Set it" --negative "Leave it at $NOW_PCT%"; then
-    omarchy bar set duaneoca.agentvoice owwThresholdPct "$WANT_PCT" >/dev/null 2>&1 &&
+    # --json, because it feeds `jq --argjson`: without it the number is stored
+    # as the string "63" while every other numeric setting is a number. The UI's
+    # persist() passes it for exactly this reason. A bare string must omit it,
+    # which is why `engine openwakeword` above does.
+    omarchy bar set duaneoca.agentvoice owwThresholdPct "$WANT_PCT" --json >/dev/null 2>&1 &&
       gum style --foreground 2 "  Wake threshold set to $WANT_PCT%." ||
       gum style --foreground 3 "  Could not write the setting; set it in Settings."
   fi
