@@ -27,9 +27,32 @@ Add one when you touch:
 - **`adapters/`** — the streaming contract, the cold-stub check, and the
   permission posture of each backend under `ask_permission` on and off.
 
-Do not try to test the QML, the audio loop, or anything needing a microphone.
-Those are exercised by hand, and `agentvoice monitor` exists so a wake word
-can be diagnosed with numbers rather than guesses.
+Do not try to test the QML's behaviour, the audio loop, or anything needing a
+microphone. Those are exercised by hand, and `agentvoice monitor` exists so a
+wake word can be diagnosed with numbers rather than guesses. The QML's
+*property references* are checked: `qmllint` catches a control bound to a name
+that does not exist, which is how `suffix` versus `unit` shipped.
+
+## Testing the installer on a machine that is not yours
+
+```bash
+AGENTVOICE_BOX=1 ./bin/agentvoice-check      # or bench/install-in-a-box.sh
+```
+
+Four real installs under bubblewrap with an empty HOME, no shell.json, no
+systemd user bus, a cold uv cache and named commands withheld. Opt-in, because
+each one downloads about 100MB.
+
+Every install bug this project has had hid behind something the development
+machine already had: a configured widget, a systemd session, `gum`, `uv`, a warm
+cache. A first install died silently after 700MB because `jq` exits 2 on a
+missing shell.json; another reported `pkexec: command not found` and exit 127
+when it could not bootstrap uv. Neither was reachable here. If you change
+`install.sh`, run the box.
+
+A pass there means the pieces are on disk afterwards, not that the exit status
+was 0 -- an installer that returns 0 having done nothing is the same false green
+as a skipped suite.
 
 ## Settings are three things, not one
 

@@ -182,9 +182,25 @@ fi
 # --- uv, the only thing we need from the system ---------------------------
 if ! have uv; then
   say "Installing uv (the official 'extra' repo package)…"
-  if have omarchy-pkg-add; then omarchy-pkg-add uv
-  elif [[ -t 0 ]]; then sudo pacman -S --needed --noconfirm uv
-  else pkexec pacman -S --needed --noconfirm uv; fi
+  # Each branch may legitimately not apply: no Omarchy helper, no tty to take a
+  # password, no pkexec to ask graphically. Tolerate all three and judge by
+  # whether uv is there afterwards -- unguarded, the last branch failed with
+  # bash's own "pkexec: command not found" and exit 127, which names the wrong
+  # problem and is the only thing a non-Omarchy machine would have seen.
+  if have omarchy-pkg-add; then omarchy-pkg-add uv || true
+  elif [[ -t 0 ]] && have sudo; then sudo pacman -S --needed --noconfirm uv || true
+  elif have pkexec; then pkexec pacman -S --needed --noconfirm uv || true
+  fi
+fi
+
+# uv is not in the dependency check at the top because this tries to install it.
+# It still has to be here afterwards, and the message has to say so in the same
+# terms as the others rather than as a stack of shell errors.
+if ! have uv; then
+  echo "  missing required tool: uv, and it could not be installed for you" >&2
+  echo "  install it with: sudo pacman -S uv" >&2
+  echo "  or see: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 1
 fi
 
 # --- interpreter and wheels -----------------------------------------------

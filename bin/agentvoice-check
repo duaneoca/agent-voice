@@ -209,7 +209,23 @@ else
   say "qmllint not installed, skipping QML check" "--"
 fi
 
-# 10. the behavioural tests, when pytest is available
+# 10. the real installer, against a machine that is not this one. Opt-in: it
+# runs four installs and downloads ~100MB each, so it belongs before a release
+# rather than before every commit. Every install bug so far hid behind
+# something this machine already had.
+if [[ -n ${AGENTVOICE_BOX:-} ]]; then
+  if out=$("$ROOT/bench/install-in-a-box.sh" 2>&1); then
+    say "installer in a box" "$(tail -1 <<<"$out" | sed 's/^ *//')"
+  else
+    say "installer in a box" "FAIL"
+    echo "$out" | sed 's/^/    /'
+    fail=1
+  fi
+else
+  say "installer-in-a-box not run (AGENTVOICE_BOX=1)" "--"
+fi
+
+# 11. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"
