@@ -44,6 +44,11 @@ DEFAULTS = {
     "speakReplies": True,
     "livePartials": "auto",
     "bargeIn": False,
+    # Drawn by the widget, not used by the daemon -- but it still belongs in
+    # DEFAULTS, because the check script requires every declared setting to
+    # have one and because `omarchy bar set` has to have something to compare.
+    "hud": True,
+    "hudLingerMs": 2000,
     "bargeFactor": 150,
     "permissions": {},
     "projectDir": "",
@@ -73,6 +78,8 @@ TOML_ALIASES = {
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
     "bargeIn": ("audio", "barge_in"),
+    "hud": ("ui", "hud"),
+    "hudLingerMs": ("ui", "hud_linger_ms"),
     "bargeFactor": ("audio", "barge_factor"),
     "permissions": ("agent", "permissions"),
     "projectDir": ("agent", "project_dir"),

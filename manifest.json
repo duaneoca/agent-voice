@@ -49,7 +49,9 @@
       "endpointModel": "",
       "endpointIsAgent": false,
       "bargeIn": false,
-      "bargeFactor": 150
+      "bargeFactor": 150,
+      "hud": true,
+      "hudLingerMs": 2000
     },
     "schema": [
       {
@@ -280,6 +282,22 @@
         "minimum": 110,
         "maximum": 400,
         "description": "How far above its own bleed your voice has to reach before it stops. 150 means half again as loud. Higher is harder to trigger by accident and harder to trigger on purpose."
+      },
+      {
+        "key": "hud",
+        "type": "bool",
+        "label": "Show a readout while it is working",
+        "defaultValue": true,
+        "description": "A small panel near the bar from the moment it wakes until shortly after it answers, showing what it heard and what it is doing. It never takes keyboard focus, so it cannot interrupt what you are typing."
+      },
+      {
+        "key": "hudLingerMs",
+        "type": "integer",
+        "label": "How long it stays afterwards (ms)",
+        "defaultValue": 2000,
+        "minimum": 0,
+        "maximum": 10000,
+        "description": "Measured from the end of the exchange, including the follow-up window. Zero closes it immediately."
       }
     ]
   },
