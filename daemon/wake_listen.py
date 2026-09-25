@@ -960,6 +960,7 @@ class Daemon:
         self.banner()
         self._publish()
         last = _empty_turn()
+        shown_partial = ""
 
         with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16",
                               blocksize=CHUNK, device=device, callback=cb):
@@ -992,6 +993,7 @@ class Daemon:
                     print(f"  {GRN}● talk{OFF}  {DIM}(listening while held){OFF}",
                           flush=True)
                     last = _empty_turn()
+                    shown_partial = ""
                     self.state.publish("capture", **last)
                 elif cmd == "talk-end" and ptt:
                     ptt_done = True
@@ -1034,6 +1036,7 @@ class Daemon:
                         heard = False
                         active_lead_in = self.pipe.lead_in_ms
                         last = _empty_turn()
+                        shown_partial = ""
                         self.state.publish("capture", **last)
                     continue
 
@@ -1050,9 +1053,19 @@ class Daemon:
                 if level >= self.pipe.threshold_db:
                     heard = True
                     last_voice = time.time()
-                if partial:
+                if partial and partial != shown_partial:
+                    shown_partial = partial
                     print(f"\r  {DIM}{partial[:100]}{OFF}{' ' * 20}",
                           end="", flush=True)
+                    # Published, not merely printed. "Live transcript while
+                    # you speak" costs 114MB and went to stdout alone, which
+                    # under systemd means the journal -- so the one setting
+                    # whose whole purpose is to be watched was invisible to
+                    # anyone not tailing it. Sent as the transcript, so the
+                    # readout fills in as you talk and Whisper's version
+                    # replaces it in the same place.
+                    self.state.publish("capture",
+                                       **{**last, "transcript": partial})
 
                 now = time.time()
                 elapsed_ms = (now - woke_at) * 1000
