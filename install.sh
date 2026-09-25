@@ -37,11 +37,13 @@ SELF_IS_APP=0
 ASSUME_YES=0
 WANT_OWW=""
 UNINSTALL=0
+WITH_WIDGET=0
 DEV=0
 for arg in "$@"; do
   case "$arg" in
     --yes|-y) ASSUME_YES=1 ;;
     --uninstall|--remove) UNINSTALL=1 ;;
+    --with-widget) WITH_WIDGET=1 ;;
     --dev) DEV=1 ;;
     --oww|--openwakeword) WANT_OWW=1 ;;
     --no-oww) WANT_OWW=0 ;;
@@ -176,6 +178,41 @@ NEXT
   Settings in ~/.config/omarchy/shell.json, and any keybinds you added
   to ~/.config/hypr/bindings.lua.
 NEXT
+  # --- and the widget, if asked -------------------------------------------
+  # This used to be chained in the widget's own Remove button:
+  #
+  #   install.sh --uninstall && omarchy plugin remove duaneoca.agentvoice --yes
+  #
+  # which worked until it did not. `omarchy plugin remove` disabled the plugin,
+  # removed its entry from shell.json, and its `rm -rf` then stopped partway:
+  # .git, bin/, Panel.qml and more gone, daemon/, Settings.qml and the rest
+  # still there. Nothing held the directory and it had no unusual attributes,
+  # so the removal was interrupted rather than refused. The next thing the user
+  # saw was `omarchy plugin add` refusing, because the id was still in use, with
+  # no hint that a previous removal had not finished.
+  #
+  # It lives here instead of in a QML string for two reasons: shell logic
+  # assembled in QML is exactly how the Remove button once swallowed its own
+  # --uninstall flag, and a half-removed widget should be reported by something
+  # that can check for it.
+  if (( WITH_WIDGET )); then
+    echo
+    if have omarchy; then
+      omarchy plugin remove duaneoca.agentvoice --yes || \
+        warn "omarchy could not remove the widget."
+    else
+      warn "No omarchy command here, so the widget was left alone."
+    fi
+    WIDGET_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/duaneoca.agentvoice"
+    if [[ -e $WIDGET_DIR ]]; then
+      echo
+      warn "The widget folder is still there, so this did not finish:"
+      warn "    $WIDGET_DIR"
+      warn "Adding the plugin again will refuse while it exists. Remove it with:"
+      warn "    rm -rf \"$WIDGET_DIR\""
+    fi
+  fi
+
   exit 0
 fi
 
