@@ -286,6 +286,7 @@ Panel {
     // utterance until Whisper returns, and showing that next to "hearing you"
     // reads as though it had misheard the thing you just said.
     transcript: voice.vState === "capture" ? "" : voice.lastTranscript
+    reply: voice.lastReply
   }
 
   KeyboardPanel {

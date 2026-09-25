@@ -26,6 +26,7 @@ PanelWindow {
   property string stateLabel: ""
   property string icon: ""
   property string transcript: ""
+  property string reply: ""
   property color accent: Color.foreground
 
   //: `var`, not QtObject: the bar is reached for position and thickness, and
@@ -132,6 +133,22 @@ PanelWindow {
         elide: Text.ElideRight
         text: "“" + hud.transcript + "”"
         color: Color.tooltip.text
+        font.family: hud.fontFamily
+        font.pixelSize: Style.font.body
+      }
+
+      // The answer, growing a sentence at a time as it is said. Dimmed against
+      // the transcript so the two are told apart at a glance rather than by
+      // reading them, and allowed more lines, being usually the longer.
+      Text {
+        width: parent.width
+        visible: hud.reply !== ""
+        wrapMode: Text.WordWrap
+        maximumLineCount: 6
+        elide: Text.ElideRight
+        text: "→ " + hud.reply
+        color: Qt.rgba(Color.tooltip.text.r, Color.tooltip.text.g,
+                       Color.tooltip.text.b, 0.8)
         font.family: hud.fontFamily
         font.pixelSize: Style.font.body
       }
