@@ -108,8 +108,10 @@ def test_switching_it_off_rebuilds_the_engine():
 def test_the_three_states_are_distinguishable_on_screen():
     """In use, trained-but-off, and never trained. Reading the middle one as
     the last would send someone back to redo work they had already done."""
-    box = SETTINGS[SETTINGS.index('title: "YOUR VOICE"'):]
-    box = box[:box.index("SettingsGroup {", 10)]
+    # By content, not by title: this box has been called YOUR VOICE and then
+    # TRAIN WAKE WORD TO YOUR VOICE, and will be called something else again.
+    start = SETTINGS.index("The stock wake models are speaker independent")
+    box = SETTINGS[start:SETTINGS.index("SettingsGroup {", start)]
     assert "In use for" in box
     assert "switched " in box and "The training is kept." in box
     assert "No verifier for" in box
