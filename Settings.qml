@@ -652,7 +652,7 @@ Item {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "PROJECT AND PERMISSIONS"
+              title: "AGENT PROJECT FOLDER AND PERMISSIONS"
 
               TextField {
                 width: parent.width
@@ -727,7 +727,7 @@ Item {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "KEYS AND INTERRUPTING"
+              title: "KEY BINDINGS AND INTERRUPTIONS"
 
               Text {
                 width: parent.width
@@ -911,7 +911,7 @@ Item {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "YOUR VOICE"
+              title: "TRAIN WAKE WORD TO YOUR VOICE"
 
               Text {
                 width: parent.width
@@ -1012,7 +1012,7 @@ Item {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "TRAINING YOUR OWN PHRASE"
+              title: "TRAINING YOUR OWN WAKE WORD"
               visible: root.owwLive
 
               Text {
@@ -1105,13 +1105,24 @@ Item {
                 foreground: root.foreground; fontFamily: root.fontFamily
                 label: "Microphone gate"
                 unit: " dBFS"
-                description: root.usingOww
-                  ? "Does not affect openWakeWord, which scores every frame and " +
-                    "rejects noise on its own. It still decides when your turn " +
-                    "has ended."
-                  : "Frames quieter than this never reach the Vosk grammar, " +
-                    "which would otherwise match the phrase against room noise. " +
-                    "Room tone here is near -45 and speech near -24."
+                // Rewritten because it led with what the setting does *not* do
+                // on openWakeWord and left the reader to infer what it does.
+                // It has one job on both engines -- deciding which frames count
+                // as you talking, which is what ends your turn -- and one extra
+                // on Vosk.
+                description: "Where your voice stops and the room starts. " +
+                             "Anything above the line counts as you talking, so " +
+                             "this is what ends your turn: once you have been " +
+                             "under the line for \u201cPause that ends a turn\u201d " +
+                             "in TIMING, it stops listening. Set it too low " +
+                             "and room noise holds the turn open; too high and a " +
+                             "quiet word cuts you off. The bar above is the live " +
+                             "level and the red mark is this setting — talk " +
+                             "normally and put the line under it." +
+                             (root.owwLive ? "" :
+                               " On Vosk it also gates the wake word: quieter " +
+                               "frames never reach the grammar, so the phrase " +
+                               "cannot be matched against room noise.")
                 value: root.setting("micThresholdDb", -38)
                 minimum: -60; maximum: -20; stepSize: 1
                 onCommitted: function(v) { root.persist("micThresholdDb", v, true) }
@@ -1279,7 +1290,7 @@ Item {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "ENDPOINT (OPTIONAL)"
+              title: "MODEL API ENDPOINT (OPTIONAL)"
 
               TextField {
                 width: parent.width

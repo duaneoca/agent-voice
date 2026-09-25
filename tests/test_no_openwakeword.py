@@ -104,7 +104,7 @@ def test_the_training_section_is_openwakeword_only():
     """A Colab notebook, a .onnx to drop in, and a phrase list this engine
     ships -- none of it applies to Vosk, which takes any phrase and needs no
     training, yet all of it was on screen while Vosk was selected."""
-    start = SETTINGS.index('title: "TRAINING YOUR OWN PHRASE"')
+    start = SETTINGS.index("a Colab notebook")
     # One condition on the box, rather than one per child. The box is what is
     # on screen, so hiding it hides the section -- and a child that forgets the
     # condition can no longer leak out of a hidden section.
@@ -165,9 +165,13 @@ def test_speech_comes_before_the_optional_endpoint():
     Asserted because the two have been reordered twice by hand and the comment
     introducing the endpoint block still said "speech" from the first move.
     """
-    order = [m.group(1) for m in re.finditer(r'\n\s+title: "([A-Z][A-Z ()-]*)"',
-                                             SETTINGS)]
-    assert "SPEECH" in order and "ENDPOINT (OPTIONAL)" in order, order
-    assert order.index("SPEECH") < order.index("ENDPOINT (OPTIONAL)")
-    assert order.index("ENDPOINT (OPTIONAL)") == len(order) - 1, \
-        f"the endpoint group should be the last on the page: {order}"
+    # Located by what each box contains, not by its title. Titles are prose and
+    # have been rewritten twice; a test that spells them out fails for the wrong
+    # reason every time someone improves the wording.
+    speech = SETTINGS.index('label: "Transcription model"')
+    endpoint = SETTINGS.index('"endpointUrl"')
+    assert speech < endpoint, "speech should come before the optional endpoint"
+
+    titles = [m.start() for m in re.finditer(r'\n\s+title: "', SETTINGS)]
+    last_box = max(titles)
+    assert last_box < endpoint, "the endpoint should be in the last box on the page"
