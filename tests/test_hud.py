@@ -108,3 +108,52 @@ def test_turning_it_off_closes_it_rather_than_freezing_it():
     no timer left to take it away."""
     assert "onEnabledChanged" in HUD
     assert re.search(r"onEnabledChanged.*showing = false", HUD, re.S)
+
+
+# --- the answer, in text ----------------------------------------------------
+
+def test_the_reply_is_published_as_it_is_produced():
+    """It used to be written to the state file only after the last word had been
+    spoken -- which is the moment the readout starts counting down to close, so
+    the answer was on screen for the linger and nothing longer."""
+    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
+    loop = daemon[daemon.index("for sentence in sentences("):]
+    loop = loop[:loop.index("reply = \" \".join(reply_parts)")]
+
+    assert 'last["reply"]' in loop, "the reply must be updated inside the loop"
+    assert loop.count("self.state.publish") >= 2, \
+        "published for both the spoken and the silent path"
+    # And before speak(), which blocks until the sentence has been said.
+    assert loop.index("self.state.publish") < loop.index("self.speak(sentence")
+
+
+def test_a_new_turn_clears_the_previous_answer():
+    """publish() merges, and the widget only updates a field it is sent, so an
+    absent key left the last answer on screen through the whole next turn."""
+    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
+    assert '"reply": ""' in daemon, "the per-turn dict must clear it"
+
+
+def test_the_readout_renders_the_reply():
+    assert "hud.reply" in HUD
+    panel = _code(ROOT / "Panel.qml")
+    block = panel[panel.index("  Hud {"):]
+    block = block[:block.index("\n  }") + 4]
+    assert "reply: voice.lastReply" in block
+
+
+def test_the_switch_has_its_own_section():
+    """It was at the end of TALKING TO IT, which is otherwise about keys, and
+    the person who asked for it could not find it there."""
+    settings = _code(ROOT / "Settings.qml")
+    assert 'text: "ON-SCREEN READOUT"' in settings
+    header = settings.index('text: "ON-SCREEN READOUT"')
+    toggle = settings.index('"hud"')
+    assert header < toggle, "the header must introduce the control"
+
+
+def test_no_dead_flag_is_left_behind():
+    """`spoke` existed to publish "speaking" once; publishing every sentence
+    made it write-only, and this project has shipped orphaned code before."""
+    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
+    assert "spoke = " not in daemon

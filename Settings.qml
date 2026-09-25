@@ -708,9 +708,18 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
+            // Its own section. It was put at the end of TALKING TO IT, which is
+            // otherwise about keys, and the person who asked for the switch
+            // then could not find it -- which is the only test of a settings
+            // layout that matters.
+            PanelSeparator { width: parent.width; foreground: root.foreground }
+            PanelSectionHeader {
+              text: "ON-SCREEN READOUT"; foreground: root.dim; fontFamily: root.fontFamily
+            }
+
             Toggle {
               width: parent.width
-              label: "Show a readout while it is working"
+              label: "Show what it heard and what it answered"
               checked: root.setting("hud", true) === true
               fontFamily: root.fontFamily
               onClicked: root.persist("hud",
@@ -721,10 +730,10 @@ Item {
               width: parent.width
               wrapMode: Text.WordWrap
               text: "A small panel near the bar from the moment it wakes until " +
-                    "shortly after it answers, showing what it heard and what it " +
-                    "is doing. It has its own surface with keyboard focus " +
-                    "disabled, so unlike this panel it cannot take the keyboard " +
-                    "from what you are typing."
+                    "shortly after it answers: what it is doing, what it heard, " +
+                    "and the answer a sentence at a time as it is spoken. It has " +
+                    "its own surface with keyboard focus disabled, so unlike this " +
+                    "panel it cannot take the keyboard from what you are typing."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

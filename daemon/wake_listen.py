@@ -815,7 +815,6 @@ class Daemon:
         reply_parts: list[str] = []
         ttft = None
         error = None
-        spoke = False
 
         def tap(stream):
             nonlocal ttft, error
@@ -839,11 +838,20 @@ class Daemon:
                     break
                 print(f"  {CYA}{sentence}{OFF}", flush=True)
                 reply_parts.append(sentence)
+                # Published per sentence rather than once at the end. The answer
+                # used to reach the state file only after the last word was
+                # spoken, which is the moment the readout starts counting down
+                # to close -- so it was on screen for the linger and nothing
+                # more. Publishing here puts the text up as that sentence
+                # begins, because speak() below blocks until it has been said.
+                last["reply"] = " ".join(reply_parts)[:400]
                 if self.speaker and self.enabled:
-                    if not spoke:
-                        self.state.publish("speaking", **last)
-                        spoke = True
+                    self.state.publish("speaking", **last)
                     self.speak(sentence, tail_ms)
+                else:
+                    # No voice: the text is the entire answer, so it matters
+                    # more here, not less. Keep whatever state we are in.
+                    self.state.publish(self.state.current, **last)
         except Exception as e:                  # a broken agent must not end the loop
             error = f"{type(e).__name__}: {e}"
 
@@ -1006,8 +1014,13 @@ class Daemon:
                     print(f"\r{' ' * 120}\r  {BLD}{text or '(nothing)'}{OFF}")
                     print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
                           f"whisper {ms:.0f}ms{OFF}")
+                    # "reply" is cleared explicitly rather than left absent.
+                    # publish() merges what it is given, and the widget only
+                    # updates a field it is sent -- so omitting it left the
+                    # previous turn's answer on screen for the whole of this
+                    # one, beside the sentence that had just been said.
                     last = {"transcript": text, "ms": round(ms),
-                            "audio_s": round(audio_ms / 1000, 2)}
+                            "audio_s": round(audio_ms / 1000, 2), "reply": ""}
 
                     # "stop", "cancel that", "never mind" and friends discard
                     # the turn instead of sending it. This is not an interrupt
