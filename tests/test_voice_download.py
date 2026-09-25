@@ -15,18 +15,35 @@ SETTINGS = (ROOT / "Settings.qml").read_text()
 DAEMON = (ROOT / "daemon" / "wake_listen.py").read_text()
 
 
+# Found by content rather than by neighbours: the label was "Voice" and is now
+# "Spoken voice", and the three controls in that box have since been reversed.
+# Both tests below used to slice between two labels and broke on each change,
+# which is noise -- and worse, the reordering deleted the offer outright and
+# only these caught it.
+
+def _voice_dropdown() -> str:
+    start = SETTINGS.index('root.persist("voice", v, false)')
+    return SETTINGS[SETTINGS.rindex("Dropdown {", 0, start):
+                    SETTINGS.index("}", start)]
+
+
+def _download_offer() -> str:
+    start = SETTINGS.index("visible: root.voicesOnDisk.length > 0")
+    return SETTINGS[SETTINGS.rindex("Column {", 0, start):
+                    SETTINGS.index("\n              }", start)]
+
+
 def test_a_voice_that_is_not_on_disk_can_be_downloaded():
-    block = SETTINGS[SETTINGS.index('label: "Voice"'):]
-    block = block[:block.index('label: "Live transcript')]
-    assert "voicesOnDisk.indexOf" in block, "must know whether it is present"
-    assert "install.sh" in block, "and offer to fetch it"
-    assert "Download " in block
+    """Choosing it is the request; the button is the way back if that failed."""
+    assert "root.fetchNow" in _voice_dropdown(), "choosing must fetch it"
+    offer = _download_offer()
+    assert "root.fetchNow" in offer, "and there must be a way to retry"
+    assert "--voice=" in offer, "naming the voice, not relying on the setting"
 
 
 def test_the_offer_appears_only_when_it_is_missing():
-    block = SETTINGS[SETTINGS.index('label: "Voice"'):]
-    block = block[:block.index('label: "Live transcript')]
-    visible = block[block.index("visible:"):]
+    offer = _download_offer()
+    visible = offer[offer.index("visible:"):]
     visible = visible[:visible.index("\n\n")]
     assert "< 0" in visible, "shown when the voice is absent from the list"
     assert "voicesOnDisk.length > 0" in visible, \
