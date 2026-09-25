@@ -98,12 +98,13 @@ def test_the_training_section_is_openwakeword_only():
     """A Colab notebook, a .onnx to drop in, and a phrase list this engine
     ships -- none of it applies to Vosk, which takes any phrase and needs no
     training, yet all of it was on screen while Vosk was selected."""
-    start = SETTINGS.index('text: "TRAINING YOUR OWN PHRASE"')
-    section = SETTINGS[start:SETTINGS.index("// --- input ---")]
-    children = re.findall(r"^            (Text|Button|PanelSeparator) [{]", section, re.M)
-    guarded = section.count("visible: root.owwLive")
-    assert guarded >= len(children), \
-        f"{len(children)} children, only {guarded} guarded"
+    start = SETTINGS.index('title: "TRAINING YOUR OWN PHRASE"')
+    # One condition on the box, rather than one per child. The box is what is
+    # on screen, so hiding it hides the section -- and a child that forgets the
+    # condition can no longer leak out of a hidden section.
+    box = SETTINGS.rindex("SettingsGroup {", 0, start)
+    head = SETTINGS[box:SETTINGS.index("\n\n", start)]
+    assert "visible: root.owwLive" in head, head
 
 
 # --- optional means not asked for ------------------------------------------
@@ -158,9 +159,9 @@ def test_speech_comes_before_the_optional_endpoint():
     Asserted because the two have been reordered twice by hand and the comment
     introducing the endpoint block still said "speech" from the first move.
     """
-    order = [m.group(1) for m in re.finditer(
-        r'text: "(PROJECT|WAKE WORD|INPUT|TIMING|SPEECH|ENDPOINT \(optional\))"',
-        SETTINGS)]
-    assert order.index("SPEECH") < order.index("ENDPOINT (optional)")
-    assert order.index("ENDPOINT (optional)") == len(order) - 1, \
-        "the endpoint section should be the last one on the page"
+    order = [m.group(1) for m in re.finditer(r'\n\s+title: "([A-Z][A-Z ()-]*)"',
+                                             SETTINGS)]
+    assert "SPEECH" in order and "ENDPOINT (OPTIONAL)" in order, order
+    assert order.index("SPEECH") < order.index("ENDPOINT (OPTIONAL)")
+    assert order.index("ENDPOINT (OPTIONAL)") == len(order) - 1, \
+        f"the endpoint group should be the last on the page: {order}"
