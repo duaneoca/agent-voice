@@ -47,6 +47,7 @@ DEFAULTS = {
     # Drawn by the widget, not used by the daemon -- but it still belongs in
     # DEFAULTS, because the check script requires every declared setting to
     # have one and because `omarchy bar set` has to have something to compare.
+    "useVerifier": True,
     "hud": True,
     "hudLingerMs": 2000,
     "bargeFactor": 150,
@@ -78,6 +79,7 @@ TOML_ALIASES = {
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
     "bargeIn": ("audio", "barge_in"),
+    "useVerifier": ("wake", "use_verifier"),
     "hud": ("ui", "hud"),
     "hudLingerMs": ("ui", "hud_linger_ms"),
     "bargeFactor": ("audio", "barge_factor"),

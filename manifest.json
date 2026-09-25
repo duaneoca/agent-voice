@@ -51,7 +51,8 @@
       "bargeIn": false,
       "bargeFactor": 150,
       "hud": true,
-      "hudLingerMs": 2000
+      "hudLingerMs": 2000,
+      "useVerifier": true
     },
     "schema": [
       {
@@ -298,6 +299,13 @@
         "minimum": 0,
         "maximum": 10000,
         "description": "Measured from the end of the exchange, including the follow-up window. Zero closes it immediately."
+      },
+      {
+        "key": "useVerifier",
+        "type": "bool",
+        "label": "Only wake for my voice",
+        "defaultValue": true,
+        "description": "Uses the verifier trained from your recordings, which rejects anyone else saying the phrase -- including another person at this computer, who will find it simply ignores them. Turn it off to let anyone wake it; the training stays on disk either way."
       }
     ]
   },

@@ -185,7 +185,12 @@ class Pipeline:
         want = (engine,
                 cfg.str("owwModel") if engine == "openwakeword"
                 else cfg.str("phrase").lower(),
-                self._verifier_stamp(cfg) if engine == "openwakeword" else 0.0)
+                self._verifier_stamp(cfg) if engine == "openwakeword" else 0.0,
+                # In the spec, not assigned after the fact: openWakeWord takes
+                # the verifier as a constructor argument, so turning it off
+                # means building the engine without it. The threshold is the
+                # opposite case -- a number the running engine can be handed.
+                cfg.bool("useVerifier") if engine == "openwakeword" else False)
         if want != getattr(self, "_wake_spec", None):
             self._wake_spec = want
             self._build_wake(cfg, engine)
@@ -248,9 +253,17 @@ class Pipeline:
         if engine == "openwakeword":
             try:
                 self._oww = OwwWake(cfg.str("owwModel"),
-                                    cfg.int("owwThresholdPct") / 100.0)
+                                    cfg.int("owwThresholdPct") / 100.0,
+                                    use_verifier=cfg.bool("useVerifier"))
                 self.phrase = self._oww.phrase
-                verifier = "with your verifier" if self._oww.verifier else "no verifier yet"
+                if self._oww.verifier:
+                    verifier = "with your verifier"
+                elif not cfg.bool("useVerifier"):
+                    # Said plainly, because "no verifier yet" would describe a
+                    # trained one that is switched off as though none existed.
+                    verifier = "anyone may wake it -- your verifier is off"
+                else:
+                    verifier = "no verifier yet"
                 print(f"  {DIM}wake: openWakeWord {self._oww.key} "
                       f"@ {self._oww.threshold:.2f} ({verifier}){OFF}")
                 # Nothing needs Vosk on this engine unless partials are
