@@ -496,73 +496,82 @@ Item {
             width: parent.width
             spacing: Style.spacing.md
 
-            // The controls anyone actually reaches for. Everything below is
-            // calibration you set once and forget.
-            Toggle {
+            // Grouped rather than separated. Ten sections divided by rules had
+            // become easy to get lost in, and a rule only says something changed;
+            // a box says these belong together -- which matters most where a knob
+            // is meaningless without the switch above it.
+            SettingsGroup {
               width: parent.width
-              label: "Show what it heard and what it answered"
-              description: "A panel by the bar while it works, from the wake word " +
-                           "until shortly after the answer. It cannot take the " +
-                           "keyboard from what you are typing."
-              checked: root.setting("hud", true) === true
               foreground: root.foreground
               fontFamily: root.fontFamily
-              onClicked: root.persist("hud",
-                  root.setting("hud", true) === true ? "false" : "true", true)
-            }
+              title: "WHILE YOU TALK TO IT"
 
-            Toggle {
-              width: parent.width
-              label: "Speak replies aloud"
-              description: "Off leaves the reply as text in the panel."
-              checked: root.speakReplies
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("speakReplies",
-                                      root.speakReplies ? "false" : "true", true)
-            }
+              Toggle {
+                width: parent.width
+                label: "Show what it heard and what it answered"
+                description: "A panel by the bar while it works, from the wake word " +
+                             "until shortly after the answer. It cannot take the " +
+                             "keyboard from what you are typing."
+                checked: root.setting("hud", true) === true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("hud",
+                    root.setting("hud", true) === true ? "false" : "true", true)
+              }
 
-            Toggle {
-              width: parent.width
-              label: "Keep listening after a reply"
-              description: "Carry on without repeating the wake word. Say " +
-                           "\"stop\", \"cancel that\" or \"never mind\" to end it, " +
-                           "or just stay quiet."
-              checked: root.conversation
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("conversationMode",
-                                      root.conversation ? "false" : "true", true)
-            }
+              Toggle {
+                width: parent.width
+                label: "Speak replies aloud"
+                description: "Off leaves the reply as text in the panel."
+                checked: root.speakReplies
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("speakReplies",
+                                        root.speakReplies ? "false" : "true", true)
+              }
 
-            // Left on rather than switched off for a backend that forgets:
-            // it still saves the wake word, which is half of what it is for.
-            // What it cannot do is follow on, and that failure is silent --
-            // the window opens, it listens, it answers from nothing.
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: root.conversation && !root.vRemembers
-              text: (root.vAgent === "" ? "This agent" : root.vAgent) +
-                    " starts fresh on every turn, so this saves you the wake " +
-                    "word and nothing more. Asking \"what did you mean by " +
-                    "that?\" will get an answer to a question it has never seen."
-              color: Color.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+              Toggle {
+                width: parent.width
+                label: "Keep listening after a reply"
+                description: "Carry on without repeating the wake word. Say " +
+                             "\"stop\", \"cancel that\" or \"never mind\" to end it, " +
+                             "or just stay quiet."
+                checked: root.conversation
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("conversationMode",
+                                        root.conversation ? "false" : "true", true)
+              }
 
-            KnobRow {
-              width: parent.width
-              visible: root.conversation
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Follow-up window"
-              description: "How long it keeps listening after speaking before " +
-                           "it needs the wake word again."
-              value: root.setting("followUpMs", 7000)
-              minimum: 2000; maximum: 20000; stepSize: 500
-              onCommitted: function(v) { root.persist("followUpMs", v, true) }
+              // Left on rather than switched off for a backend that forgets:
+              // it still saves the wake word, which is half of what it is for.
+              // What it cannot do is follow on, and that failure is silent --
+              // the window opens, it listens, it answers from nothing.
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: root.conversation && !root.vRemembers
+                text: (root.vAgent === "" ? "This agent" : root.vAgent) +
+                      " starts fresh on every turn, so this saves you the wake " +
+                      "word and nothing more. Asking \"what did you mean by " +
+                      "that?\" will get an answer to a question it has never seen."
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              KnobRow {
+                width: parent.width
+                visible: root.conversation
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Follow-up window"
+                description: "How long it keeps listening after speaking before " +
+                             "it needs the wake word again."
+                value: root.setting("followUpMs", 7000)
+                minimum: 2000; maximum: 20000; stepSize: 500
+                onCommitted: function(v) { root.persist("followUpMs", v, true) }
+              }
             }
 
             // The directory and what is allowed in it are one decision, not
@@ -581,684 +590,674 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
-
-            Text {
+            SettingsGroup {
               width: parent.width
-              text: "PROJECT"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            TextField {
-              width: parent.width
-              text: root.projectDir
-              placeholderText: "~  (your home directory)"
               foreground: root.foreground
-              font.family: root.fontFamily
-              onEditingFinished: {
-                if (text !== root.projectDir) root.persist("projectDir", text, false)
+              fontFamily: root.fontFamily
+              title: "PROJECT AND PERMISSIONS"
+
+              TextField {
+                width: parent.width
+                text: root.projectDir
+                placeholderText: "~  (your home directory)"
+                foreground: root.foreground
+                font.family: root.fontFamily
+                onEditingFinished: {
+                  if (text !== root.projectDir) root.persist("projectDir", text, false)
+                }
               }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Where the agent works. Everything it reads, writes or runs " +
-                    "happens here. Changing it starts a new conversation, because " +
-                    "the agent keeps its history per project."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: root.vAgent === "" ? "Permission level"
-                                        : "Permission level for " + root.vAgent
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.levelOptions
-              value: root.permissionLevel
-              onChanged: function(v) { root.setLevel(v) }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: (root.vPosture !== "" ? "In force: " + root.vPosture + ".  " : "")
-                    + (root.agentLevels.indexOf("edits") < 0
-                       ? (root.vAgent === "" ? "" : root.vAgent + " cannot put a " +
-                          "question on screen, so it is held read-only instead and " +
-                          "may refuse work rather than ask. Only the trusted level " +
-                          "changes that.")
-                       : root.permissionLevel === "edits"
-                       ? "Files inside the project can be edited without asking. " +
-                         "Commands, web fetches and anything outside it still prompt."
-                       : root.permissionLevel === "trusted"
-                       ? "Nothing is asked. A spoken sentence can edit files and run " +
-                         "commands here with nothing able to stop it."
-                       : "Every change is prompted. Read-only tools are never asked " +
-                         "about, and an unanswered prompt is denied.")
-              color: root.permissionLevel === "trusted" ? Color.urgent : root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: root.vOverriding !== ""
-              text: "⚠  This endpoint is answering instead of " + root.vOverriding +
-                    ", which is what Omarchy's own settings are set to. Clear " +
-                    "both boxes below to go back to it."
-              color: Color.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-
-            // --- talking and interrupting -----------------------------------
-            // Not settings: the keys. They are here because the feature was
-            // built, bound and still undiscoverable -- the first question
-            // asked of it was how to make it stop.
-            PanelSectionHeader {
-              text: "TALKING TO IT"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              textFormat: Text.StyledText
-              text: "<b>Hold F8</b> and speak, release when you are done — no " +
-                    "wake word needed.<br>" +
-                    "<b>Press F8</b> while it is replying to stop it. So does " +
-                    "<b>Super+Ctrl+Space</b>, or the stop button in the panel.<br>" +
-                    "<b>Super+Alt+Space</b> releases the microphone entirely."
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Toggle {
-              width: parent.width
-              label: "Let me interrupt by talking"
-              description: "Stop speaking when it hears you over it. Measure " +
-                           "first with: agentvoice calibrate"
-              checked: root.setting("bargeIn", false) === true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.persist("bargeIn",
-                  root.setting("bargeIn", false) === true ? "false" : "true", true)
-            }
-
-            KnobRow {
-              width: parent.width
-              visible: root.setting("bargeIn", false) === true
-              scrollTarget: formScroll
-              label: "How much louder you must be"
-              unit: "%"
-              description: "Above its own voice, before it stops. Higher is " +
-                           "harder to trigger by accident and on purpose."
-              value: root.setting("bargeFactor", 150)
-              minimum: 110; maximum: 400; stepSize: 10
-              onCommitted: function(v) { root.persist("bargeFactor", v, true) }
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "No spoken phrase can interrupt a reply: the microphone is " +
-                    "ignored while it talks, and at a normal volume its own " +
-                    "voice reaches the mic as loudly as yours anyway. " +
-                    "Saying \"stop\" or \"never mind\" cancels a turn it has " +
-                    "not taken yet — useful when the wake word fires by " +
-                    "mistake, so nothing is sent to the agent."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            // Only the duration lives down here; the switch is in the group the
-            // page opens with. Separator included in the hiding, or turning the
-            // readout off leaves two rules with nothing between them.
-            PanelSeparator {
-              width: parent.width; foreground: root.foreground
-              visible: root.setting("hud", true) === true
-            }
-            PanelSectionHeader {
-              visible: root.setting("hud", true) === true
-              text: "ON-SCREEN READOUT"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              visible: root.setting("hud", true) === true
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "How long it stays afterwards"
-              unit: "ms"
-              description: "Measured from the end of the exchange, including the " +
-                           "follow-up window. Zero closes it immediately."
-              value: root.setting("hudLingerMs", 2000)
-              minimum: 0; maximum: 10000; stepSize: 500
-              onCommitted: function(v) { root.persist("hudLingerMs", v, true) }
-            }
-
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-
-            // --- wake word ------------------------------------------------
-            PanelSectionHeader {
-              text: "WAKE WORD"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Engine"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.engineOptions
-              value: root.engine
-              onChanged: function(v) { root.persist("engine", v, false) }
-            }
-
-            // The state that had no representation here at all. Choosing
-            // openWakeWord without the package installed left the daemon
-            // falling back to Vosk while this page went on showing an
-            // openWakeWord model, threshold and verifier. The controls below
-            // now follow what is actually listening; this says why.
-            Column {
-              width: parent.width
-              spacing: Style.space(4)
-              visible: root.usingOww && !root.owwAvailable
 
               Text {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "openWakeWord is not installed, so Vosk is listening instead. " +
-                      "It was offered during install and can be added now — about " +
-                      "100MB, and it brings real rejection plus verifiers trained " +
-                      "from your own voice."
+                text: "Where the agent works. Everything it reads, writes or runs " +
+                      "happens here. Changing it starts a new conversation, because " +
+                      "the agent keeps its history per project."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Dropdown {
+                width: parent.width
+                showLabel: true
+                label: root.vAgent === "" ? "Permission level"
+                                          : "Permission level for " + root.vAgent
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: root.levelOptions
+                value: root.permissionLevel
+                onChanged: function(v) { root.setLevel(v) }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: (root.vPosture !== "" ? "In force: " + root.vPosture + ".  " : "")
+                      + (root.agentLevels.indexOf("edits") < 0
+                         ? (root.vAgent === "" ? "" : root.vAgent + " cannot put a " +
+                            "question on screen, so it is held read-only instead and " +
+                            "may refuse work rather than ask. Only the trusted level " +
+                            "changes that.")
+                         : root.permissionLevel === "edits"
+                         ? "Files inside the project can be edited without asking. " +
+                           "Commands, web fetches and anything outside it still prompt."
+                         : root.permissionLevel === "trusted"
+                         ? "Nothing is asked. A spoken sentence can edit files and run " +
+                           "commands here with nothing able to stop it."
+                         : "Every change is prompted. Read-only tools are never asked " +
+                           "about, and an unanswered prompt is denied.")
+                color: root.permissionLevel === "trusted" ? Color.urgent : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: root.vOverriding !== ""
+                text: "⚠  This endpoint is answering instead of " + root.vOverriding +
+                      ", which is what Omarchy's own settings are set to. Clear " +
+                      "both boxes below to go back to it."
                 color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              title: "KEYS AND INTERRUPTING"
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                textFormat: Text.StyledText
+                text: "<b>Hold F8</b> and speak, release when you are done — no " +
+                      "wake word needed.<br>" +
+                      "<b>Press F8</b> while it is replying to stop it. So does " +
+                      "<b>Super+Ctrl+Space</b>, or the stop button in the panel.<br>" +
+                      "<b>Super+Alt+Space</b> releases the microphone entirely."
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Toggle {
+                width: parent.width
+                label: "Let me interrupt by talking"
+                description: "Stop speaking when it hears you over it. Measure " +
+                             "first with: agentvoice calibrate"
+                checked: root.setting("bargeIn", false) === true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("bargeIn",
+                    root.setting("bargeIn", false) === true ? "false" : "true", true)
+              }
+
+              KnobRow {
+                width: parent.width
+                visible: root.setting("bargeIn", false) === true
+                scrollTarget: formScroll
+                label: "How much louder you must be"
+                unit: "%"
+                description: "Above its own voice, before it stops. Higher is " +
+                             "harder to trigger by accident and on purpose."
+                value: root.setting("bargeFactor", 150)
+                minimum: 110; maximum: 400; stepSize: 10
+                onCommitted: function(v) { root.persist("bargeFactor", v, true) }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "No spoken phrase can interrupt a reply: the microphone is " +
+                      "ignored while it talks, and at a normal volume its own " +
+                      "voice reaches the mic as loudly as yours anyway. " +
+                      "Saying \"stop\" or \"never mind\" cancels a turn it has " +
+                      "not taken yet — useful when the wake word fires by " +
+                      "mistake, so nothing is sent to the agent."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+            }
+
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              // Only the duration lives here; the switch is the first control
+              // on the page. The box hides with it, so the knob does not have
+              // to repeat the condition.
+              title: "ON-SCREEN READOUT"
+              visible: root.setting("hud", true) === true
+
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "How long it stays afterwards"
+                unit: "ms"
+                description: "Measured from the end of the exchange, including the " +
+                             "follow-up window. Zero closes it immediately."
+                value: root.setting("hudLingerMs", 2000)
+                minimum: 0; maximum: 10000; stepSize: 500
+                onCommitted: function(v) { root.persist("hudLingerMs", v, true) }
+              }
+            }
+
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              title: "WAKE WORD"
+
+              Dropdown {
+                width: parent.width
+                showLabel: true
+                label: "Engine"
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: root.engineOptions
+                value: root.engine
+                onChanged: function(v) { root.persist("engine", v, false) }
+              }
+
+              // The state that had no representation here at all. Choosing
+              // openWakeWord without the package installed left the daemon
+              // falling back to Vosk while this page went on showing an
+              // openWakeWord model, threshold and verifier. The controls below
+              // now follow what is actually listening; this says why.
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: root.usingOww && !root.owwAvailable
+
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "openWakeWord is not installed, so Vosk is listening instead. " +
+                        "It was offered during install and can be added now — about " +
+                        "100MB, and it brings real rejection plus verifiers trained " +
+                        "from your own voice."
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Button {
+                  text: "Install openWakeWord…"
+                  fontFamily: root.fontFamily
+                  onClicked: {
+                    owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                            Quickshell.env("HOME") +
+                                            "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
+                    owwInstaller.running = true
+                    root.dismiss()
+                  }
+                }
+
+                Process { id: owwInstaller }
+              }
+
+              // One dropdown per engine rather than one that swaps its options.
+              // Swapping left the previous engine's value displayed -- picking
+              // "hey claude" under Vosk and then switching engines still showed
+              // "hey claude", which openWakeWord has no model for.
+              Dropdown {
+                width: parent.width
+                visible: !root.owwLive
+                showLabel: true
+                label: "Phrase"
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: root.phraseOptions
+                value: root.setting("phrase", "hey computer")
+                onChanged: function(v) { root.persist("phrase", v, false) }
+              }
+
+              Dropdown {
+                width: parent.width
+                visible: root.owwLive
+                showLabel: true
+                label: "Phrase"
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: root.owwOptions
+                value: root.setting("owwModel", "hey_jarvis")
+                onChanged: function(v) { root.persist("owwModel", v, false) }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.owwLive
+                wrapMode: Text.WordWrap
+                text: "Only these ship pretrained. A different phrase means training " +
+                      "your own model — see TRAINING YOUR OWN PHRASE below."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                visible: root.owwLive
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Detection threshold"
+                unit: "%"
+                description: "Measured here: the real phrase peaks near 99 and a " +
+                             "phonetically similar phrase near 90, so 90 rejects " +
+                             "the near miss and still fires reliably."
+                value: root.setting("owwThresholdPct", 90)
+                minimum: 10; maximum: 99; stepSize: 1
+                onCommitted: function(v) { root.persist("owwThresholdPct", v, true) }
+              }
+
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                visible: !root.owwLive
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Grammar confidence"
+                unit: "%"
+                description: "Weak against phonetic neighbours by nature: a grammar " +
+                             "must pick between the phrase and anything-else, so " +
+                             "\"hey cloud\" scores as high as \"hey claude\". Switch " +
+                             "engines if a phone keeps waking it."
+                value: root.setting("wakeConfidencePct", 70)
+                minimum: 0; maximum: 100; stepSize: 5
+                onCommitted: function(v) { root.persist("wakeConfidencePct", v, true) }
+              }
+            }
+
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              title: "YOUR VOICE"
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "The stock wake models are speaker independent, so a podcast " +
+                      "or phone saying the phrase gets through. A verifier trained " +
+                      "on your voice is the only layer that knows who is talking."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              // Whether one is in force was known only to a log line. Training
+              // one and seeing the screen unchanged reads as the training
+              // having failed.
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: root.owwLive
+                text: root.vVerifier
+                      ? "\u2713  In use for “" + root.activePhrase + "”. Only your " +
+                        "voice saying it gets through."
+                      : "No verifier for “" + root.activePhrase + "” yet — anyone " +
+                        "saying the phrase can wake it. Verifiers are per phrase, " +
+                        "so training a new wake word means training a new one."
+                color: root.vVerifier ? root.foreground : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              // A disabled button that does nothing when clicked reads as a bug,
+              // not as a precondition -- so on Vosk there is no dead control
+              // here at all. The button becomes the fix instead: it switches the
+              // engine, which is the thing that was missing.
+              Button {
+                text: root.owwLive ? "Train a verifier from your voice…"
+                                   : !root.owwAvailable
+                                     ? "Install openWakeWord to enable this"
+                                     : "Switch to openWakeWord to enable this"
+                fontFamily: root.fontFamily
+                onClicked: {
+                  // Switching to an engine that is not installed changes nothing
+                  // a user can see -- the daemon just falls back again. Send them
+                  // to the installer instead, which is the actual precondition.
+                  if (!root.owwAvailable) {
+                    owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                            Quickshell.env("HOME") +
+                                            "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
+                    owwInstaller.running = true
+                    root.dismiss()
+                    return
+                  }
+                  if (!root.usingOww) {
+                    root.persist("engine", "openwakeword", false)
+                    return
+                  }
+                  trainer.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                     "agentvoice-train-verifier"]
+                  trainer.running = true
+                  root.dismiss()
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: !root.owwLive
+                wrapMode: Text.WordWrap
+                text: "Verifiers attach to an openWakeWord model. Vosk has no model " +
+                      "to attach one to, so training is unavailable while it is selected."
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              title: "TRAINING YOUR OWN PHRASE"
+              visible: root.owwLive
+
+              Text {
+                visible: root.owwLive
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "A verifier refines an existing model; it cannot create a new " +
+                      "phrase. For a phrase openWakeWord was not shipped with, train " +
+                      "one in a Colab notebook — about 2.5 hours on the free tier, " +
+                      "90 minutes on Colab Pro. You edit two lines: the phrase and " +
+                      "the output name.\n\n" +
+                      "Only the small classifier head is trained; the feature models " +
+                      "it sits on ship with openWakeWord and do not change. That is " +
+                      "why it is quick, and why training is network-bound rather " +
+                      "than GPU-bound."
+                color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
 
               Button {
-                text: "Install openWakeWord…"
+                visible: root.owwLive
+                text: "Open the training notebook…"
                 fontFamily: root.fontFamily
-                onClicked: {
-                  owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                          Quickshell.env("HOME") +
-                                          "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
-                  owwInstaller.running = true
-                  root.dismiss()
-                }
+                onClicked: Quickshell.execDetached(["omarchy-launch-browser",
+                  "https://github.com/alfiedennen/openwakeword-colab-2026"])
               }
 
-              Process { id: owwInstaller }
-            }
-
-            // One dropdown per engine rather than one that swaps its options.
-            // Swapping left the previous engine's value displayed -- picking
-            // "hey claude" under Vosk and then switching engines still showed
-            // "hey claude", which openWakeWord has no model for.
-            Dropdown {
-              width: parent.width
-              visible: !root.owwLive
-              showLabel: true
-              label: "Phrase"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.phraseOptions
-              value: root.setting("phrase", "hey computer")
-              onChanged: function(v) { root.persist("phrase", v, false) }
-            }
-
-            Dropdown {
-              width: parent.width
-              visible: root.owwLive
-              showLabel: true
-              label: "Phrase"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.owwOptions
-              value: root.setting("owwModel", "hey_jarvis")
-              onChanged: function(v) { root.persist("owwModel", v, false) }
-            }
-
-            Text {
-              width: parent.width
-              visible: root.owwLive
-              wrapMode: Text.WordWrap
-              text: "Only these ship pretrained. A different phrase means training " +
-                    "your own model — see TRAINING YOUR OWN PHRASE below."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              visible: root.owwLive
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Detection threshold"
-              unit: "%"
-              description: "Measured here: the real phrase peaks near 99 and a " +
-                           "phonetically similar phrase near 90, so 90 rejects " +
-                           "the near miss and still fires reliably."
-              value: root.setting("owwThresholdPct", 90)
-              minimum: 10; maximum: 99; stepSize: 1
-              onCommitted: function(v) { root.persist("owwThresholdPct", v, true) }
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              visible: !root.owwLive
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Grammar confidence"
-              unit: "%"
-              description: "Weak against phonetic neighbours by nature: a grammar " +
-                           "must pick between the phrase and anything-else, so " +
-                           "\"hey cloud\" scores as high as \"hey claude\". Switch " +
-                           "engines if a phone keeps waking it."
-              value: root.setting("wakeConfidencePct", 70)
-              minimum: 0; maximum: 100; stepSize: 5
-              onCommitted: function(v) { root.persist("wakeConfidencePct", v, true) }
-            }
-
-            // --- verifier -------------------------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "YOUR VOICE"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "The stock wake models are speaker independent, so a podcast " +
-                    "or phone saying the phrase gets through. A verifier trained " +
-                    "on your voice is the only layer that knows who is talking."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            // Whether one is in force was known only to a log line. Training
-            // one and seeing the screen unchanged reads as the training
-            // having failed.
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              visible: root.owwLive
-              text: root.vVerifier
-                    ? "\u2713  In use for “" + root.activePhrase + "”. Only your " +
-                      "voice saying it gets through."
-                    : "No verifier for “" + root.activePhrase + "” yet — anyone " +
-                      "saying the phrase can wake it. Verifiers are per phrase, " +
-                      "so training a new wake word means training a new one."
-              color: root.vVerifier ? root.foreground : root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            // A disabled button that does nothing when clicked reads as a bug,
-            // not as a precondition -- so on Vosk there is no dead control
-            // here at all. The button becomes the fix instead: it switches the
-            // engine, which is the thing that was missing.
-            Button {
-              text: root.owwLive ? "Train a verifier from your voice…"
-                                 : !root.owwAvailable
-                                   ? "Install openWakeWord to enable this"
-                                   : "Switch to openWakeWord to enable this"
-              fontFamily: root.fontFamily
-              onClicked: {
-                // Switching to an engine that is not installed changes nothing
-                // a user can see -- the daemon just falls back again. Send them
-                // to the installer instead, which is the actual precondition.
-                if (!root.owwAvailable) {
-                  owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                          Quickshell.env("HOME") +
-                                          "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
-                  owwInstaller.running = true
-                  root.dismiss()
-                  return
-                }
-                if (!root.usingOww) {
-                  root.persist("engine", "openwakeword", false)
-                  return
-                }
-                trainer.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                   "agentvoice-train-verifier"]
-                trainer.running = true
-                root.dismiss()
-              }
-            }
-
-            Text {
-              width: parent.width
-              visible: !root.owwLive
-              wrapMode: Text.WordWrap
-              text: "Verifiers attach to an openWakeWord model. Vosk has no model " +
-                    "to attach one to, so training is unavailable while it is selected."
-              color: Color.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            // --- training your own phrase ---------------------------------
-            // openWakeWord reference from start to finish -- a Colab notebook,
-            // a .onnx to drop in, a phrase list this engine ships. None of it
-            // applies to Vosk, which takes any phrase and needs no training at
-            // all, yet all of it was on screen while Vosk was selected.
-            PanelSeparator { width: parent.width; foreground: root.foreground; visible: root.owwLive }
-            PanelSectionHeader {
-              visible: root.owwLive
-              text: "TRAINING YOUR OWN PHRASE"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Text {
-              visible: root.owwLive
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "A verifier refines an existing model; it cannot create a new " +
-                    "phrase. For a phrase openWakeWord was not shipped with, train " +
-                    "one in a Colab notebook — about 2.5 hours on the free tier, " +
-                    "90 minutes on Colab Pro. You edit two lines: the phrase and " +
-                    "the output name.\n\n" +
-                    "Only the small classifier head is trained; the feature models " +
-                    "it sits on ship with openWakeWord and do not change. That is " +
-                    "why it is quick, and why training is network-bound rather " +
-                    "than GPU-bound."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Button {
-              visible: root.owwLive
-              text: "Open the training notebook…"
-              fontFamily: root.fontFamily
-              onClicked: Quickshell.execDetached(["omarchy-launch-browser",
-                "https://github.com/alfiedennen/openwakeword-colab-2026"])
-            }
-
-            Text {
-              visible: root.owwLive
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Upstream's own notebook has not been maintained since 2023; " +
-                    "this one is patched for current Python and torchaudio.\n\n" +
-                    "Save the .onnx it gives you into " +
-                    "~/.local/share/agentvoice/wakewords/ and it appears in the " +
-                    "phrase list above, ready for its own verifier. Check it with " +
-                    "'agentvoice monitor' before trusting it: this ships " +
-                    "openwakeword 0.4.0, and a model built against a newer one " +
-                    "should load but has not been proven to."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            // --- input ----------------------------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "INPUT"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            // Named, so the bars inside address it directly. They reached it
-            // through parent.parent, which resolves at runtime and silently
-            // breaks the moment anything is nested between -- and which the
-            // linter cannot check, because `parent` is only ever an Item.
-            Item {
-              id: meter
-              width: parent.width
-              height: Style.space(18)
-              readonly property real span: 60
-              readonly property real levelFrac: Math.max(0, Math.min(1, (root.levelDb + span) / span))
-              readonly property real gateFrac: Math.max(0, Math.min(1, (root.setting("micThresholdDb", -38) + span) / span))
-              readonly property bool gateOpen: root.levelDb >= root.setting("micThresholdDb", -38)
-
-              Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
+              Text {
+                visible: root.owwLive
                 width: parent.width
-                height: Style.space(8)
-                radius: height / 2
-                color: Qt.darker(root.background, 1.4)
+                wrapMode: Text.WordWrap
+                text: "Upstream's own notebook has not been maintained since 2023; " +
+                      "this one is patched for current Python and torchaudio.\n\n" +
+                      "Save the .onnx it gives you into " +
+                      "~/.local/share/agentvoice/wakewords/ and it appears in the " +
+                      "phrase list above, ready for its own verifier. Check it with " +
+                      "'agentvoice monitor' before trusting it: this ships " +
+                      "openwakeword 0.4.0, and a model built against a newer one " +
+                      "should load but has not been proven to."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              title: "MICROPHONE"
+
+              // Named, so the bars inside address it directly. They reached it
+              // through parent.parent, which resolves at runtime and silently
+              // breaks the moment anything is nested between -- and which the
+              // linter cannot check, because `parent` is only ever an Item.
+              Item {
+                id: meter
+                width: parent.width
+                height: Style.space(18)
+                readonly property real span: 60
+                readonly property real levelFrac: Math.max(0, Math.min(1, (root.levelDb + span) / span))
+                readonly property real gateFrac: Math.max(0, Math.min(1, (root.setting("micThresholdDb", -38) + span) / span))
+                readonly property bool gateOpen: root.levelDb >= root.setting("micThresholdDb", -38)
+
                 Rectangle {
-                  width: Math.max(0, parent.width * meter.levelFrac)
-                  height: parent.height
-                  radius: parent.radius
-                  color: meter.gateOpen ? root.foreground : Qt.darker(root.foreground, 2.2)
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: parent.width
+                  height: Style.space(8)
+                  radius: height / 2
+                  color: Qt.darker(root.background, 1.4)
+                  Rectangle {
+                    width: Math.max(0, parent.width * meter.levelFrac)
+                    height: parent.height
+                    radius: parent.radius
+                    color: meter.gateOpen ? root.foreground : Qt.darker(root.foreground, 2.2)
+                  }
+                }
+                Rectangle {
+                  x: meter.width * meter.gateFrac
+                  width: Math.max(2, Style.space(2))
+                  height: meter.height
+                  color: Color.urgent
                 }
               }
-              Rectangle {
-                x: meter.width * meter.gateFrac
-                width: Math.max(2, Style.space(2))
-                height: meter.height
-                color: Color.urgent
+
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Microphone gate"
+                unit: " dBFS"
+                description: root.usingOww
+                  ? "Does not affect openWakeWord, which scores every frame and " +
+                    "rejects noise on its own. It still decides when your turn " +
+                    "has ended."
+                  : "Frames quieter than this never reach the Vosk grammar, " +
+                    "which would otherwise match the phrase against room noise. " +
+                    "Room tone here is near -45 and speech near -24."
+                value: root.setting("micThresholdDb", -38)
+                minimum: -60; maximum: -20; stepSize: 1
+                onCommitted: function(v) { root.persist("micThresholdDb", v, true) }
               }
             }
 
-            KnobRow {
+            SettingsGroup {
               width: parent.width
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Microphone gate"
-              unit: " dBFS"
-              description: root.usingOww
-                ? "Does not affect openWakeWord, which scores every frame and " +
-                  "rejects noise on its own. It still decides when your turn " +
-                  "has ended."
-                : "Frames quieter than this never reach the Vosk grammar, " +
-                  "which would otherwise match the phrase against room noise. " +
-                  "Room tone here is near -45 and speech near -24."
-              value: root.setting("micThresholdDb", -38)
-              minimum: -60; maximum: -20; stepSize: 1
-              onCommitted: function(v) { root.persist("micThresholdDb", v, true) }
-            }
-
-            // --- timing ---------------------------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "TIMING"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Time to start speaking"
-              description: "Stops counting the moment you make a sound, so it never " +
-                           "competes with the pause that ends a turn."
-              value: root.setting("leadInMs", 5000)
-              minimum: 1000; maximum: 15000; stepSize: 500
-              onCommitted: function(v) { root.persist("leadInMs", v, true) }
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Pause that ends a turn"
-              value: root.setting("trailingSilenceMs", 1200)
-              minimum: 400; maximum: 4000; stepSize: 100
-              onCommitted: function(v) { root.persist("trailingSilenceMs", v, true) }
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Deaf period after speaking"
-              description: "One microphone beside the speakers cannot win against " +
-                           "its own output, so the mic goes deaf while the voice " +
-                           "talks and for this long after."
-              value: root.setting("echoTailMs", 350)
-              minimum: 0; maximum: 1500; stepSize: 50
-              onCommitted: function(v) { root.persist("echoTailMs", v, true) }
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Discard shorter than"
-              value: root.setting("minUtteranceMs", 400)
-              minimum: 0; maximum: 2000; stepSize: 100
-              onCommitted: function(v) { root.persist("minUtteranceMs", v, true) }
-            }
-
-            KnobRow {
-              width: parent.width
-              scrollTarget: formScroll
-              foreground: root.foreground; fontFamily: root.fontFamily
-              label: "Hard ceiling on one turn"
-              description: "A microphone stuck open stops here rather than " +
-                           "recording forever."
-              value: root.setting("maxUtteranceMs", 30000)
-              minimum: 5000; maximum: 120000; stepSize: 5000
-              onCommitted: function(v) { root.persist("maxUtteranceMs", v, true) }
-            }
-
-
-
-            // --- speech -------------------------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
-            PanelSectionHeader {
-              text: "SPEECH"; foreground: root.dim; fontFamily: root.fontFamily
-            }
-
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Voice"
+              foreground: root.foreground
               fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.voiceOptions
-              value: root.setting("voice", "lessac-medium")
-              onChanged: function(v) { root.persist("voice", v, false) }
-            }
+              title: "TIMING"
 
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Live transcript while you speak"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: [
-                { label: "auto — only when it is free", value: "auto" },
-                { label: "on — costs 114MB",            value: "on" },
-                { label: "off",                          value: "off" }
-              ]
-              value: root.setting("livePartials", "auto")
-              onChanged: function(v) { root.persist("livePartials", v, false) }
-            }
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Time to start speaking"
+                description: "Stops counting the moment you make a sound, so it never " +
+                             "competes with the pause that ends a turn."
+                value: root.setting("leadInMs", 5000)
+                minimum: 1000; maximum: 15000; stepSize: 500
+                onCommitted: function(v) { root.persist("leadInMs", v, true) }
+              }
 
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Rough text shown as you talk, before Whisper returns. It " +
-                    "needs the Vosk model resident. On the Vosk wake engine " +
-                    "that model is already loaded, so it is free; on " +
-                    "openWakeWord it is an extra 114MB."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Pause that ends a turn"
+                value: root.setting("trailingSilenceMs", 1200)
+                minimum: 400; maximum: 4000; stepSize: 100
+                onCommitted: function(v) { root.persist("trailingSilenceMs", v, true) }
+              }
 
-            Dropdown {
-              width: parent.width
-              showLabel: true
-              label: "Transcription model"
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              options: root.modelOptions
-              value: root.setting("model", "tiny.en")
-              onChanged: function(v) { root.persist("model", v, false) }
-            }
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Deaf period after speaking"
+                description: "One microphone beside the speakers cannot win against " +
+                             "its own output, so the mic goes deaf while the voice " +
+                             "talks and for this long after."
+                value: root.setting("echoTailMs", 350)
+                minimum: 0; maximum: 1500; stepSize: 50
+                onCommitted: function(v) { root.persist("echoTailMs", v, true) }
+              }
 
-            // --- an OpenAI-compatible endpoint instead of a CLI agent ---
-            PanelSeparator { width: parent.width; foreground: root.foreground }
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Discard shorter than"
+                value: root.setting("minUtteranceMs", 400)
+                minimum: 0; maximum: 2000; stepSize: 100
+                onCommitted: function(v) { root.persist("minUtteranceMs", v, true) }
+              }
 
-            Text {
-              width: parent.width
-              text: "ENDPOINT (optional)"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            TextField {
-              width: parent.width
-              text: root.setting("endpointUrl", "")
-              placeholderText: "http://your-machine:11434/v1"
-              foreground: root.foreground
-              font.family: root.fontFamily
-              onEditingFinished: {
-                if (text !== root.setting("endpointUrl", ""))
-                  root.persist("endpointUrl", text, false)
+              KnobRow {
+                width: parent.width
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "Hard ceiling on one turn"
+                description: "A microphone stuck open stops here rather than " +
+                             "recording forever."
+                value: root.setting("maxUtteranceMs", 30000)
+                minimum: 5000; maximum: 120000; stepSize: 5000
+                onCommitted: function(v) { root.persist("maxUtteranceMs", v, true) }
               }
             }
 
-            TextField {
+            SettingsGroup {
               width: parent.width
-              text: root.setting("endpointModel", "")
-              placeholderText: "model name, e.g. llama3.2"
               foreground: root.foreground
-              font.family: root.fontFamily
-              onEditingFinished: {
-                if (text !== root.setting("endpointModel", ""))
-                  root.persist("endpointModel", text, false)
+              fontFamily: root.fontFamily
+              title: "SPEECH"
+
+              Dropdown {
+                width: parent.width
+                showLabel: true
+                label: "Voice"
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: root.voiceOptions
+                value: root.setting("voice", "lessac-medium")
+                onChanged: function(v) { root.persist("voice", v, false) }
+              }
+
+              Dropdown {
+                width: parent.width
+                showLabel: true
+                label: "Live transcript while you speak"
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: [
+                  { label: "auto — only when it is free", value: "auto" },
+                  { label: "on — costs 114MB",            value: "on" },
+                  { label: "off",                          value: "off" }
+                ]
+                value: root.setting("livePartials", "auto")
+                onChanged: function(v) { root.persist("livePartials", v, false) }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Rough text shown as you talk, before Whisper returns. It " +
+                      "needs the Vosk model resident. On the Vosk wake engine " +
+                      "that model is already loaded, so it is free; on " +
+                      "openWakeWord it is an extra 114MB."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Dropdown {
+                width: parent.width
+                showLabel: true
+                label: "Transcription model"
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                options: root.modelOptions
+                value: root.setting("model", "tiny.en")
+                onChanged: function(v) { root.persist("model", v, false) }
               }
             }
 
-            Toggle {
+            SettingsGroup {
               width: parent.width
-              visible: root.setting("endpointUrl", "") !== ""
-              label: "This endpoint is an agent"
-              description: "Tick when it can run commands or change files on " +
-                           "its own host, as Hermes can. agentvoice cannot tell " +
-                           "from the URL, so it claims nothing about the far " +
-                           "end unless you say — and gives it longer to answer, " +
-                           "because an agent goes quiet while it runs tools."
-              checked: root.setting("endpointIsAgent", false) === true
               foreground: root.foreground
               fontFamily: root.fontFamily
-              onClicked: root.persist("endpointIsAgent",
-                  root.setting("endpointIsAgent", false) === true
-                    ? "false" : "true", true)
+              title: "ENDPOINT (OPTIONAL)"
+
+              TextField {
+                width: parent.width
+                text: root.setting("endpointUrl", "")
+                placeholderText: "http://your-machine:11434/v1"
+                foreground: root.foreground
+                font.family: root.fontFamily
+                onEditingFinished: {
+                  if (text !== root.setting("endpointUrl", ""))
+                    root.persist("endpointUrl", text, false)
+                }
+              }
+
+              TextField {
+                width: parent.width
+                text: root.setting("endpointModel", "")
+                placeholderText: "model name, e.g. llama3.2"
+                foreground: root.foreground
+                font.family: root.fontFamily
+                onEditingFinished: {
+                  if (text !== root.setting("endpointModel", ""))
+                    root.persist("endpointModel", text, false)
+                }
+              }
+
+              Toggle {
+                width: parent.width
+                visible: root.setting("endpointUrl", "") !== ""
+                label: "This endpoint is an agent"
+                description: "Tick when it can run commands or change files on " +
+                             "its own host, as Hermes can. agentvoice cannot tell " +
+                             "from the URL, so it claims nothing about the far " +
+                             "end unless you say — and gives it longer to answer, " +
+                             "because an agent goes quiet while it runs tools."
+                checked: root.setting("endpointIsAgent", false) === true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("endpointIsAgent",
+                    root.setting("endpointIsAgent", false) === true
+                      ? "false" : "true", true)
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, " +
+                      "OpenAI, xAI, Hermes. Set both boxes and it answers instead " +
+                      "of the desktop's agent.\n" +
+                      "agentvoice offers it no tools and gates nothing, so the " +
+                      "permission level above does not reach it. What the endpoint " +
+                      "itself can do is not visible from here: Ollama cannot touch " +
+                      "anything, while Hermes has a terminal and a filesystem on " +
+                      "its host. That is what the tickbox is for.\n" +
+                      "Ollama and LM Studio need no key. For one that does, the " +
+                      "login keyring is the best place — it unlocks when you log " +
+                      "in and only this session can read it:\n" +
+                      "  secret-tool store --label=agentvoice \\\n" +
+                      "      service agentvoice endpoint api.openai.com\n" +
+                      "Keyed by host and port, so two services on one machine do " +
+                      "not share a key. Failing that, " +
+                      "~/.config/agentvoice/endpoint.key. Never in this settings " +
+                      "file — it is the desktop's config and gets copied around."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
 
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: "Any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, " +
-                    "OpenAI, xAI, Hermes. Set both boxes and it answers instead " +
-                    "of the desktop's agent.\n" +
-                    "agentvoice offers it no tools and gates nothing, so the " +
-                    "permission level above does not reach it. What the endpoint " +
-                    "itself can do is not visible from here: Ollama cannot touch " +
-                    "anything, while Hermes has a terminal and a filesystem on " +
-                    "its host. That is what the tickbox is for.\n" +
-                    "Ollama and LM Studio need no key. For one that does, the " +
-                    "login keyring is the best place — it unlocks when you log " +
-                    "in and only this session can read it:\n" +
-                    "  secret-tool store --label=agentvoice \\\n" +
-                    "      service agentvoice endpoint api.openai.com\n" +
-                    "Keyed by host and port, so two services on one machine do " +
-                    "not share a key. Failing that, " +
-                    "~/.config/agentvoice/endpoint.key. Never in this settings " +
-                    "file — it is the desktop's config and gets copied around."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             // Last on the page, and the only red control on it. Removal lives

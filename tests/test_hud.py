@@ -172,17 +172,21 @@ def test_the_switch_is_in_the_group_the_page_opens_with():
     """
     settings = _code(ROOT / "Settings.qml")
     toggle = settings.index('label: "Show what it heard and what it answered"')
-    first_header = min(settings.index('text: "PROJECT"'),
-                       settings.index('text: "ON-SCREEN READOUT"'))
-    assert toggle < first_header, "the switch is below a section header"
+    # It sits inside the first group, so it must come before every *later*
+    # group's title -- and before the second title on the page, which is the
+    # first one it is not itself inside.
+    titles = [m.start() for m in re.finditer(r'\n\s+title: "[A-Z]', settings)]
+    assert len(titles) > 1, "the page should be grouped"
+    assert toggle < titles[1], "the switch has fallen below another group"
 
     # The duration stays below, and its header and separator go when the
     # readout is off, or there are two rules with nothing between them.
-    section = settings[settings.index('text: "ON-SCREEN READOUT"'):]
-    section = section[:section.index("PanelSeparator", 40)]
-    assert "hudLingerMs" in section
-    assert settings.count('visible: root.setting("hud", true) === true') >= 3, \
-        "separator, header and knob all follow the switch"
+    readout = settings.index('title: "ON-SCREEN READOUT"')
+    assert toggle < readout, "the switch should not be inside the box it governs"
+    box = settings[readout:settings.index("SettingsGroup {", readout)]
+    assert "hudLingerMs" in box, "the duration belongs in that box"
+    assert 'visible: root.setting("hud", true) === true' in box, \
+        "the box must hide when the readout is off"
 
 
 def test_no_dead_flag_is_left_behind():
