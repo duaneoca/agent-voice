@@ -297,14 +297,22 @@ if [[ $UNINSTALL == 1 ]]; then
   # named on the way out and this did not, so a key left here survived
   # unmentioned -- and when there was none, an empty directory survived
   # instead. Same question as above, asked of the other parent.
+  # Named for what is actually in there. "Non-empty" was close enough while
+  # endpoint.key was the only thing this directory ever held; vocab.txt lives
+  # here too now, and a removal that announces "an API key you put in a file"
+  # about a word list is telling the user something untrue about their own
+  # secrets -- which is the worst subject to be loose about.
   CFGDIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentvoice"
   KEPT_KEY=""
+  KEPT_CFG=""
   if [[ -d $CFGDIR ]]; then
-    if [[ -n "$(ls -A "$CFGDIR" 2>/dev/null)" ]]; then
-      KEPT_KEY="$CFGDIR"
-    else
-      rmdir "$CFGDIR" 2>/dev/null || true
+    [[ -f "$CFGDIR/endpoint.key" ]] && KEPT_KEY="$CFGDIR/endpoint.key"
+    # Anything else in there is the user's too, and worth naming without
+    # calling it a credential.
+    if [[ -n "$(find "$CFGDIR" -maxdepth 1 -type f ! -name endpoint.key -print -quit 2>/dev/null)" ]]; then
+      KEPT_CFG="$CFGDIR"
     fi
+    [[ -z $KEPT_KEY && -z $KEPT_CFG ]] && rmdir "$CFGDIR" 2>/dev/null || true
   fi
 
   echo
@@ -319,6 +327,7 @@ if [[ $UNINSTALL == 1 ]]; then
 NEXT
   [[ -n $KEPT ]] && printf "  Your voice — recordings and trained verifiers:%b\n\n" "$KEPT"
   [[ -n $KEPT_KEY ]] && printf "  An API key you put in a file:\n    %s\n\n" "$KEPT_KEY"
+  [[ -n $KEPT_CFG ]] && printf "  Your own settings files:\n    %s\n\n" "$KEPT_CFG"
   cat <<NEXT
   API keys in the login keyring:
     secret-tool search --all service agentvoice
