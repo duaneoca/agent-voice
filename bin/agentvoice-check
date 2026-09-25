@@ -149,7 +149,30 @@ QQ
 if [[ -n ${out// } ]]; then say "nested bash -c eats the launcher's args" "FAIL: $out"; fail=1
 else say "no nested bash -c in a launcher command" "ok"; fi
 
-# 8. the Piper download URL is written in two places -- install.sh fetches the
+# 8. no comment directly after a line-continuation backslash. `bash -n` accepts
+# it, and what it means is that the continuation joins to the comment: the
+# command loses everything that was meant to follow, and the next line runs as
+# a statement of its own. Found the hard way -- `gum spin --title X -- \` with a
+# comment under it printed gum's usage on every call while the command it was
+# supposed to wrap ran unwrapped, so the work succeeded and the error was real.
+out=$(python3 - "$ROOT" <<'QQ'
+import pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+bad = []
+files = subprocess.run(["git", "-C", str(root), "ls-files", "bin/*", "install.sh",
+                        "bench/*.sh"], capture_output=True, text=True).stdout.split()
+for rel in files:
+    lines = (root / rel).read_text().splitlines()
+    for i, line in enumerate(lines[:-1]):
+        if line.rstrip().endswith("\\") and lines[i + 1].lstrip().startswith("#"):
+            bad.append(f"{rel}:{i + 2}")
+print(" ".join(bad))
+QQ
+)
+if [[ -n ${out// } ]]; then say "comment after a line continuation" "FAIL: $out"; fail=1
+else say "no comment orphaning a continued line" "ok"; fi
+
+# 9. the Piper download URL is written in two places -- install.sh fetches the
 # configured voice, the verifier trainer fetches other speakers to contrast
 # against -- and a silent drift there is a 404 inside a gum spinner.
 out=$(python3 - "$ROOT" <<'QQ'
@@ -168,7 +191,7 @@ QQ
 if [[ -n ${out// } ]]; then say "Piper URL drifted between the two scripts" "FAIL: $out"; fail=1
 else say "both scripts fetch voices from one URL" "ok"; fi
 
-# 9. the QML references properties that exist. Nothing here runs the overlay,
+# 12. the QML references properties that exist. Nothing here runs the overlay,
 # so this is the only automated check the interface gets -- and the interface
 # is where this project's bugs have landed: a KnobRow given `suffix` when it
 # takes `unit`, a `voiceOptions` renamed without its callers, a Timer nested
@@ -209,7 +232,7 @@ else
   say "qmllint not installed, skipping QML check" "--"
 fi
 
-# 10. the real installer, against a machine that is not this one. Opt-in: it
+# 12. the real installer, against a machine that is not this one. Opt-in: it
 # runs four installs and downloads ~100MB each, so it belongs before a release
 # rather than before every commit. Every install bug so far hid behind
 # something this machine already had.
@@ -225,7 +248,7 @@ else
   say "installer-in-a-box not run (AGENTVOICE_BOX=1)" "--"
 fi
 
-# 11. the behavioural tests, when pytest is available
+# 12. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
     say "tests" "$(tail -1 <<<"$out")"
