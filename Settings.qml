@@ -64,9 +64,31 @@ Item {
     { label: "hey mycroft", value: "hey_mycroft" },
     { label: "hey marvin",  value: "hey_marvin" }
   ].concat(customModels)
+  //: Whether openWakeWord is in the environment at all. install.sh asks, and
+  //: --no-oww is a supported answer: the default engine is Vosk and the daemon
+  //: falls back to it if openWakeWord is chosen and missing. That fallback is
+  //: silent from here, though, so the settings would offer an engine that
+  //: cannot run and then show its model picker, threshold and verifier while
+  //: Vosk was actually listening. Same failure as offering a voice that is not
+  //: downloaded, and found by asking the same question of it.
+  property bool owwAvailable: true
+  Process {
+    id: scanOww
+    command: ["bash", "-c",
+      "d=\"${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice/venv\"; " +
+      "compgen -G \"$d/lib/python*/site-packages/openwakeword\" >/dev/null " +
+      "&& echo yes || echo no"]
+    stdout: StdioCollector {
+      onStreamFinished: root.owwAvailable = String(text).trim() === "yes"
+    }
+  }
+
   readonly property var engineOptions: [
     { label: "Vosk — any phrase, weaker rejection", value: "vosk" },
-    { label: "openWakeWord — four phrases, better rejection", value: "openwakeword" }
+    { label: root.owwAvailable
+               ? "openWakeWord — four phrases, better rejection"
+               : "openWakeWord — four phrases, better rejection  (not installed)",
+      value: "openwakeword" }
   ]
   //: Which voices are actually on disk. install.sh fetches one by default
   //: and the one the settings ask for; the rest are 60MB each and arrive
@@ -164,6 +186,12 @@ Item {
   readonly property bool speakReplies: setting("speakReplies", true)
   readonly property string engine: setting("engine", "vosk")
   readonly property bool usingOww: engine === "openwakeword"
+  //: Selected *and* able to run. The daemon falls back to Vosk when
+  //: openWakeWord is chosen and not installed, so every control that only
+  //: makes sense while openWakeWord is really listening keys off this, not
+  //: off the setting -- otherwise the page describes an engine that is not
+  //: running.
+  readonly property bool owwLive: usingOww && owwAvailable
 
   function open(payloadJson) {
     mode = "settings"
@@ -179,6 +207,7 @@ Item {
       cfgReload.running = true
       scanCustom.running = true
       scanVoices.running = true
+      scanOww.running = true
       stateFile.reload()
     }
   }
@@ -697,13 +726,50 @@ Item {
               onChanged: function(v) { root.persist("engine", v, false) }
             }
 
+            // The state that had no representation here at all. Choosing
+            // openWakeWord without the package installed left the daemon
+            // falling back to Vosk while this page went on showing an
+            // openWakeWord model, threshold and verifier. The controls below
+            // now follow what is actually listening; this says why.
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+              visible: root.usingOww && !root.owwAvailable
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "openWakeWord is not installed, so Vosk is listening instead. " +
+                      "It was offered during install and can be added now — about " +
+                      "100MB, and it brings real rejection plus verifiers trained " +
+                      "from your own voice."
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Button {
+                text: "Install openWakeWord…"
+                fontFamily: root.fontFamily
+                onClicked: {
+                  owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                          Quickshell.env("HOME") +
+                                          "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
+                  owwInstaller.running = true
+                  root.dismiss()
+                }
+              }
+
+              Process { id: owwInstaller }
+            }
+
             // One dropdown per engine rather than one that swaps its options.
             // Swapping left the previous engine's value displayed -- picking
             // "hey claude" under Vosk and then switching engines still showed
             // "hey claude", which openWakeWord has no model for.
             Dropdown {
               width: parent.width
-              visible: !root.usingOww
+              visible: !root.owwLive
               showLabel: true
               label: "Phrase"
               fontFamily: root.fontFamily
@@ -715,7 +781,7 @@ Item {
 
             Dropdown {
               width: parent.width
-              visible: root.usingOww
+              visible: root.owwLive
               showLabel: true
               label: "Phrase"
               fontFamily: root.fontFamily
@@ -727,7 +793,7 @@ Item {
 
             Text {
               width: parent.width
-              visible: root.usingOww
+              visible: root.owwLive
               wrapMode: Text.WordWrap
               text: "Only these ship pretrained. A different phrase means training " +
                     "your own model — see TRAINING YOUR OWN PHRASE below."
@@ -739,7 +805,7 @@ Item {
             KnobRow {
               width: parent.width
               scrollTarget: formScroll
-              visible: root.usingOww
+              visible: root.owwLive
               foreground: root.foreground; fontFamily: root.fontFamily
               label: "Detection threshold"
               unit: "%"
@@ -754,7 +820,7 @@ Item {
             KnobRow {
               width: parent.width
               scrollTarget: formScroll
-              visible: !root.usingOww
+              visible: !root.owwLive
               foreground: root.foreground; fontFamily: root.fontFamily
               label: "Grammar confidence"
               unit: "%"
@@ -790,7 +856,7 @@ Item {
             Text {
               width: parent.width
               wrapMode: Text.WordWrap
-              visible: root.usingOww
+              visible: root.owwLive
               text: root.vVerifier
                     ? "\u2713  In use for “" + root.activePhrase + "”. Only your " +
                       "voice saying it gets through."
@@ -807,10 +873,23 @@ Item {
             // here at all. The button becomes the fix instead: it switches the
             // engine, which is the thing that was missing.
             Button {
-              text: root.usingOww ? "Train a verifier from your voice…"
-                                  : "Switch to openWakeWord to enable this"
+              text: root.owwLive ? "Train a verifier from your voice…"
+                                 : !root.owwAvailable
+                                   ? "Install openWakeWord to enable this"
+                                   : "Switch to openWakeWord to enable this"
               fontFamily: root.fontFamily
               onClicked: {
+                // Switching to an engine that is not installed changes nothing
+                // a user can see -- the daemon just falls back again. Send them
+                // to the installer instead, which is the actual precondition.
+                if (!root.owwAvailable) {
+                  owwInstaller.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                          Quickshell.env("HOME") +
+                                          "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --oww"]
+                  owwInstaller.running = true
+                  root.dismiss()
+                  return
+                }
                 if (!root.usingOww) {
                   root.persist("engine", "openwakeword", false)
                   return
@@ -824,7 +903,7 @@ Item {
 
             Text {
               width: parent.width
-              visible: !root.usingOww
+              visible: !root.owwLive
               wrapMode: Text.WordWrap
               text: "Verifiers attach to an openWakeWord model. Vosk has no model " +
                     "to attach one to, so training is unavailable while it is selected."
@@ -834,12 +913,18 @@ Item {
             }
 
             // --- training your own phrase ---------------------------------
-            PanelSeparator { width: parent.width; foreground: root.foreground }
+            // openWakeWord reference from start to finish -- a Colab notebook,
+            // a .onnx to drop in, a phrase list this engine ships. None of it
+            // applies to Vosk, which takes any phrase and needs no training at
+            // all, yet all of it was on screen while Vosk was selected.
+            PanelSeparator { width: parent.width; foreground: root.foreground; visible: root.owwLive }
             PanelSectionHeader {
+              visible: root.owwLive
               text: "TRAINING YOUR OWN PHRASE"; foreground: root.dim; fontFamily: root.fontFamily
             }
 
             Text {
+              visible: root.owwLive
               width: parent.width
               wrapMode: Text.WordWrap
               text: "A verifier refines an existing model; it cannot create a new " +
@@ -857,6 +942,7 @@ Item {
             }
 
             Button {
+              visible: root.owwLive
               text: "Open the training notebook…"
               fontFamily: root.fontFamily
               onClicked: Quickshell.execDetached(["omarchy-launch-browser",
@@ -864,6 +950,7 @@ Item {
             }
 
             Text {
+              visible: root.owwLive
               width: parent.width
               wrapMode: Text.WordWrap
               text: "Upstream's own notebook has not been maintained since 2023; " +
