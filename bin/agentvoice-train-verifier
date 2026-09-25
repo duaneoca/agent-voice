@@ -54,14 +54,17 @@ spin() {  # spin <title> <outfile> -- <cmd...>
   SPIN_ERR="$(mktemp)"
   tty_flush
   echo_off
+  # Not `exec "$@"` inside the inner shell. exec replaces the process with an
+  # executable and so cannot run a shell function -- exported or not; it looks
+  # for a binary of that name and exits 127. Every caller was an external
+  # command until the voice fetch passed a function. Dropping exec costs one
+  # process and accepts functions and builtins.
+  #
+  # This comment lives above the command, not inside it: a comment after a
+  # line-continuation backslash is what the continuation joins to, so gum got
+  # no command at all and printed its usage, while the `bash -c` line ran on
+  # its own as the next statement. The work happened; the spinner did not.
   gum spin --title "$title" -- \
-    # Not `exec "$@"`. exec replaces the process with an executable and so
-    # cannot run a shell function -- exported or not, defined in that very
-    # shell or not; it simply looks for a binary of that name and reports
-    # "not found" with exit 127. Every caller so far was an external command,
-    # so this held until the voice fetch passed a function, whose failure was
-    # then reported as "could not fetch" with the reason discarded. Dropping
-    # exec costs one process and accepts functions and builtins.
     bash -c 'o=$1; e=$2; shift 2; "$@" >"$o" 2>"$e"' _ "$out" "$SPIN_ERR" "$@"
   local rc=$?
   echo_restore
