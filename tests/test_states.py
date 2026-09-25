@@ -143,3 +143,33 @@ def test_it_defaults_to_on():
     assert manifest["barWidget"]["defaults"]["useVerifier"] is True
     assert 'root.setting("useVerifier", true)' in SETTINGS, \
         "the QML fallback must agree with the manifest"
+
+
+# --- the live transcript, which went nowhere anyone could see ---------------
+
+def test_the_partial_is_published_not_only_printed():
+    """"Live transcript while you speak" costs 114MB of resident Vosk and went
+    to stdout alone. Under systemd that is the journal, so the one setting
+    whose entire purpose is to be watched was invisible to anyone not tailing
+    it -- reported as the feature simply not working."""
+    loop = DAEMON[DAEMON.index("if partial and partial != shown_partial:"):]
+    loop = loop[:loop.index("\n                now = time.time()")]
+    assert "self.state.publish" in loop, "printing it is not showing it"
+    assert '"transcript": partial' in loop, \
+        "sent as the transcript, so Whisper's version replaces it in place"
+
+
+def test_the_partial_is_published_only_when_it_changes():
+    """Vosk emits one per frame, most of them identical. Publishing every one
+    would rewrite the state file about twelve times a second for no change."""
+    loop = DAEMON[DAEMON.index("if partial and partial != shown_partial:"):]
+    loop = loop[:loop.index("self.state.publish")]
+    assert "shown_partial = partial" in loop
+
+
+def test_the_guard_resets_where_a_turn_begins():
+    """Left over from the previous turn it would suppress the first partial of
+    the next one, which is exactly the word you are watching for."""
+    starts = DAEMON.count("last = _empty_turn()")
+    resets = DAEMON.count('shown_partial = ""')
+    assert resets >= starts, f"{starts} turn starts, {resets} resets"

@@ -96,11 +96,19 @@ def test_the_wake_word_clears_the_previous_exchange():
     for field in ('"transcript": ""', '"reply": ""', '"ms": 0', '"audio_s": 0.0'):
         assert field in empty, f"{field} must be cleared, not omitted"
 
-    # Every point a turn begins must reset it before publishing capture.
-    for chunk in daemon.split('self.state.publish("capture"')[:-1]:
+    # Every point a turn *begins* must reset first. A capture publish that
+    # passes `**last` alone is a turn start; one that overrides a field is a
+    # mid-turn update -- the live partial does that, and inherits the cleared
+    # dict rather than rebuilding one.
+    starts = daemon.split('self.state.publish("capture", **last)')[:-1]
+    assert starts, "no turn-starting capture publish found"
+    for chunk in starts:
         tail = chunk[-260:]
         assert "_empty_turn()" in tail, \
             f"a capture publish carries the previous turn:\n{tail}"
+
+    assert '**{**last, "transcript": partial}' in daemon, \
+        "the live partial must inherit the cleared turn, not a fresh dict"
 
 
 def test_the_widget_does_not_second_guess_the_state_file():
