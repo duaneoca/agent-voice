@@ -38,12 +38,15 @@ ASSUME_YES=0
 WANT_OWW=""
 UNINSTALL=0
 WITH_WIDGET=0
+KEYBINDS=""
 DEV=0
 for arg in "$@"; do
   case "$arg" in
     --yes|-y) ASSUME_YES=1 ;;
     --uninstall|--remove) UNINSTALL=1 ;;
     --with-widget) WITH_WIDGET=1 ;;
+    --keybinds) KEYBINDS=1 ;;
+    --no-keybinds) KEYBINDS=0 ;;
     --dev) DEV=1 ;;
     --oww|--openwakeword) WANT_OWW=1 ;;
     --no-oww) WANT_OWW=0 ;;
@@ -77,6 +80,87 @@ ask() {
   if have gum && [[ -t 0 ]]; then gum confirm "$prompt"; else
     read -r -p "  $prompt [y/N] " a; [[ ${a,,} == y* ]]
   fi
+}
+
+# --- keybinds ---------------------------------------------------------------
+# The push-to-talk key, the interrupt and the mic release were printed for the
+# user to paste, on the grounds that bindings.lua is theirs. Which is true, and
+# the result was that they went unbound: a key nobody has bound is a feature
+# nobody has. Offered instead, with three rules -- ask first, never overwrite a
+# key that is already bound, and put the file back if Hyprland rejects it.
+KEYBIND_LINES='
+-- Agent Voice. Remove these if you remove the plugin.
+o.bind("F8", "Talk to the agent (push-to-talk)", "agentvoice talk")
+o.bind("F8", "End the turn (push-to-talk)", "agentvoice talk-end", { release = true })
+o.bind("SUPER + CTRL + SPACE", "Stop the agent talking", "agentvoice interrupt")
+o.bind("SUPER + ALT + SPACE", "Release or re-engage the mic", "agentvoice mic")'
+
+offer_keybinds() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+
+  show_keybinds() {
+    echo
+    printf '%s\n' "  Optional keybinds for ~/.config/hypr/bindings.lua:"
+    printf '%s\n' "$KEYBIND_LINES" | sed 's/^/    /'
+  }
+
+  if [[ ! -f $file ]]; then
+    # Not an Omarchy machine, or not one using bindings.lua. Print and leave.
+    show_keybinds
+    return 0
+  fi
+
+  if grep -q 'agentvoice talk' "$file"; then
+    ok "Keybinds are already in ${file/#$HOME/~}"
+    return 0
+  fi
+
+  # Never take a key someone is already using. Their own file binds F4, SUPER+E
+  # and more; silently shadowing one of those would be worse than not binding.
+  local taken=""
+  local key
+  for key in "F8" "SUPER + CTRL + SPACE" "SUPER + ALT + SPACE"; do
+    grep -qF "o.bind(\"$key\"" "$file" && taken="$taken\n    $key"
+  done
+
+  if [[ -n $taken ]]; then
+    warn "Not touching your keybinds: these are already bound in"
+    warn "${file/#$HOME/~}:"
+    printf "%b\n" "$taken" >&2
+    show_keybinds
+    return 0
+  fi
+
+  # String comparison, not arithmetic: KEYBINDS is empty when neither flag was
+  # passed, and (( "" == 0 )) is true -- which would have meant never asking.
+  if [[ $KEYBINDS == 0 ]]; then show_keybinds; return 0; fi
+  if [[ $KEYBINDS != 1 ]]; then
+    show_keybinds
+    echo
+    ask "Add these to ${file/#$HOME/~}?" || return 0
+  fi
+
+  local backup="$file.agentvoice-backup.$(date -u +%Y%m%d%H%M%S)"
+  cp "$file" "$backup"
+  printf '%s\n' "$KEYBIND_LINES" >>"$file"
+
+  # Hyprland reloads on save, so a syntax error is live immediately. Check, and
+  # put the file back if it did not like it -- this is the user's config and a
+  # broken one costs them their whole keyboard.
+  if have hyprctl; then
+    hyprctl reload >/dev/null 2>&1 || true
+    # A healthy `hyprctl configerrors` prints two newlines and nothing else, so
+    # the test has to ignore blank lines -- filtering only "ok" treated that
+    # whitespace as an error and rolled back every good change.
+    if [[ -n "$(hyprctl configerrors 2>/dev/null | grep -vE '^(ok)?$' || true)" ]]; then
+      mv "$backup" "$file"
+      hyprctl reload >/dev/null 2>&1 || true
+      warn "Hyprland rejected the change, so your bindings.lua was put back."
+      show_keybinds
+      return 0
+    fi
+  fi
+  ok "Added the keybinds to ${file/#$HOME/~} (backup: ${backup/#$HOME/~})"
 }
 
 # --- taking it off again ---------------------------------------------------
@@ -409,11 +493,6 @@ cat <<NEXT
 
   The Whisper model downloads on first use (~75MB).
 
-  Optional keybinds -- paste into ~/.config/hypr/bindings.lua. They are not
-  installed for you, because that file is yours:
-
-    o.bind("F8", "Talk to the agent (push-to-talk)", "agentvoice talk")
-    o.bind("F8", "End the turn (push-to-talk)", "agentvoice talk-end", { release = true })
-    o.bind("SUPER + CTRL + SPACE", "Stop the agent talking", "agentvoice interrupt")
-    o.bind("SUPER + ALT + SPACE", "Release or re-engage the mic", "agentvoice mic")
 NEXT
+
+offer_keybinds
