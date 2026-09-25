@@ -118,8 +118,16 @@ def test_the_install_does_not_prompt_for_openwakeword():
     script = (ROOT / "install.sh").read_text()
     asks = [l.strip() for l in script.splitlines()
             if re.search(r"^\s*(if .*)?\bask \"", l)]
-    assert len(asks) == 1, f"expected only the uninstall confirm, got {asks}"
-    assert "Remove the agentvoice" in asks[0]
+
+    # Not "only one prompt": the keybinds offer is a prompt, and a deliberate
+    # one -- it writes to the user's own bindings.lua, so it must ask. The rule
+    # is narrower than that. Nothing may ask about openWakeWord, because it is
+    # optional and the settings page offers it.
+    assert asks, "the uninstall confirm should still be here"
+    for line in asks:
+        assert "openWakeWord" not in line and "oww" not in line, line
+    assert any("Remove the agentvoice" in l for l in asks)
+    assert "Install openWakeWord as well?" not in script
 
 
 def test_openwakeword_is_off_unless_asked_for_or_already_selected():
