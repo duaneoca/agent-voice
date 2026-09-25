@@ -497,9 +497,14 @@ fetch_voice lessac medium
 # Whatever was asked for on the command line, then whatever the settings ask
 # for. Both, because a --voice run is also an install and the configured voice
 # still has to be present afterwards.
+# Deduplicated, and silent about the ones already here: fetch_voice announces
+# a real download and returns early otherwise, so an extra line of its own said
+# "fetching" twice for one voice and once for a voice already on disk.
+fetched=""
 for v in "$WANT_VOICE_ARG" "$(configured voice)"; do
   [[ -n $v && $v != lessac-medium ]] || continue
-  say "Fetching the voice $v."
+  [[ " $fetched " == *" $v "* ]] && continue
+  fetched="$fetched $v"
   fetch_voice "${v%-*}" "${v##*-}"
 done
 
