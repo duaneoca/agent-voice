@@ -1151,6 +1151,44 @@ Item {
                 onChanged: function(v) { root.persist("voice", v, false) }
               }
 
+              // Choosing a voice that is not on disk used to be a dead end: the
+              // list marked it "(not downloaded)" and offered no way to
+              // download it, and the daemon quietly spoke in another one. Only
+              // install.sh fetches voices, so this runs it -- it takes whatever
+              // the settings ask for, which is the voice just chosen.
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: root.voicesOnDisk.length > 0
+                         && root.voicesOnDisk.indexOf(
+                              root.setting("voice", "lessac-medium")) < 0
+
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "\u201c" + root.setting("voice", "lessac-medium") +
+                        "\u201d is not on this machine, so it is speaking in " +
+                        "one that is. Voices are about 60MB each."
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Button {
+                  text: "Download " + root.setting("voice", "lessac-medium") + "\u2026"
+                  fontFamily: root.fontFamily
+                  onClicked: {
+                    voiceFetcher.command = ["omarchy-launch-floating-terminal-with-presentation",
+                                            Quickshell.env("HOME") +
+                                            "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh --no-keybinds"]
+                    voiceFetcher.running = true
+                    root.dismiss()
+                  }
+                }
+
+                Process { id: voiceFetcher }
+              }
+
               Dropdown {
                 width: parent.width
                 showLabel: true
