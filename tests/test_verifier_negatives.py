@@ -128,3 +128,68 @@ def test_the_contrast_voices_are_distinct_speakers():
     speakers = {i.rsplit("-", 1)[0] for i in ids}
     assert len(speakers) >= 3, f"only {speakers}"
     assert all("-" in i for i in ids), "each needs a quality suffix for the URL"
+
+
+# --- the threshold, which is what actually kept the light off ---------------
+# The verifier trained fine and the wake word still never fired. openWakeWord's
+# default threshold of 90 suits the four pretrained phrases, which peak near
+# 0.996; a locally trained model peaked at a median of 0.775 with its verifier,
+# so none of the speaker's twenty-five recordings would ever have woken it.
+
+def test_the_noise_floor_keeps_failed_clips_out_of_the_suggestion():
+    """Six of twenty-five real clips scored 0.005 -- the phrase clipped by the
+    recording window, a false start, a cough. Counting them as evidence that
+    the threshold should be lower drove the first version to its floor, which
+    would fire on a television."""
+    pytest.importorskip("numpy")
+    import verifier
+
+    # The distribution actually measured, duds included.
+    peaks = [0.005] * 6 + [0.61, 0.68, 0.73, 0.74, 0.775, 0.78, 0.79, 0.80,
+                           0.81, 0.82, 0.83, 0.84, 0.85, 0.86, 0.866, 0.867,
+                           0.868, 0.868, 0.868]
+    usable = [p for p in peaks if p >= verifier.NOISE_FLOOR]
+    assert len(usable) == 19
+
+    ordered = sorted(usable, reverse=True)
+    cut = ordered[min(int(len(ordered) * 0.9), len(ordered) - 1)]
+    pct = max(45, min(90, int(cut * 100) - 5))
+
+    assert pct == 63, pct
+    assert sum(1 for p in peaks if p >= pct / 100) == 18
+    assert pct > 45, "must not land on the floor when there are real clips"
+
+
+def test_a_model_that_never_responds_is_reported_not_papered_over():
+    """If nothing cleared the noise floor, no threshold helps -- the model is
+    wrong for these recordings, and lowering it would only add false wakes."""
+    pytest.importorskip("numpy")
+    import verifier
+    assert all(p < verifier.NOISE_FLOOR for p in [0.01, 0.005, 0.1])
+
+
+def test_the_suggestion_is_clamped_at_both_ends():
+    """Never above the default, because that can only make it harder to wake;
+    never so low it fires on ordinary speech."""
+    for cut in (0.99, 0.95, 0.50, 0.30, 0.21):
+        pct = max(45, min(90, int(cut * 100) - 5))
+        assert 45 <= pct <= 90
+
+
+def test_the_trainer_measures_the_threshold_after_training():
+    script = (ROOT / "bin" / "agentvoice-train-verifier").read_text()
+    trained = script.index('"$VERIFIER" train ')
+    measured = script.index("suggest-threshold")
+    assert trained < measured, "measure the trained model, not the untrained one"
+    # And it must ask rather than write the setting behind the user's back.
+    offer = script.index("Set the wake threshold to")
+    write = script.index("owwThresholdPct \"$WANT_PCT\"")
+    assert offer < write
+
+
+def test_the_trainer_reads_the_current_threshold_from_shell_json():
+    """`omarchy bar` has set but no get; asking it anyway silently yielded the
+    default, so the trainer would offer to change a value it had not read."""
+    script = (ROOT / "bin" / "agentvoice-train-verifier").read_text()
+    assert "omarchy bar get" not in script
+    assert "shell.json" in script

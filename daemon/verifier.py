@@ -33,6 +33,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 import shutil
+import sys
 import wave
 from pathlib import Path
 
@@ -269,6 +270,65 @@ def synth_other_speakers(phrase: str, into: Path, voices_dir: Path,
     return made
 
 
+#: Below this a clip is treated as not containing the phrase at all, rather
+#: than as evidence that the threshold should be lower.
+NOISE_FLOOR = 0.2
+
+
+def suggest_threshold(model: str, positives: Path,
+                      want: float = 0.9) -> tuple[int, list[float]]:
+    """A wake threshold this model can actually reach, measured on real clips.
+
+    openWakeWord's default of 90 is tuned for the four pretrained phrases,
+    which peak around 0.996. A locally trained model does not come close: one
+    measured here peaked at a median of 0.775 with its verifier, so at 90 none
+    of the speaker's own twenty-five recordings would ever have woken it. The
+    wake word simply never fired, and nothing said so -- the symptom was a
+    microphone indicator that never lit.
+
+    The clips are fed behind two seconds of silence because openWakeWord scores
+    from a rolling buffer of embeddings, and a clip fed from a reset spends its
+    first 1.3s filling that buffer. Measuring without the lead-in understates
+    the model badly: the same twenty-five clips gave a median of 0.069 that
+    way, against 0.775 with it. Live audio never stops, so the lead-in is the
+    honest condition.
+
+    Returns a percentage and every peak score, so the caller can show the
+    hit rate it is buying rather than only the number.
+    """
+    import numpy as np
+    from wake_listen import OwwWake
+
+    clips = sorted(positives.glob("*.wav"))
+    if not clips:
+        raise ClipProblem("no recordings to measure against")
+
+    engine = OwwWake(model, threshold=1.1)     # never fires; we read last_score
+    lead = np.zeros(RATE * 2, dtype=np.int16).tobytes()
+    peaks = []
+    for clip in clips:
+        with wave.open(str(clip)) as handle:
+            pcm = handle.readframes(handle.getnframes())
+        engine.reset()
+        engine.feed(lead + pcm)
+        peaks.append(engine.last_score)
+
+    # Clips where the phrase never registered at all are not evidence about
+    # the threshold. Twenty-five real recordings included six scoring 0.005 --
+    # a cough, a false start, the phrase clipped by the two-second window --
+    # and counting them dragged the suggestion to the floor, which would fire
+    # on a television. Aim to catch nearly all of the clips that did register.
+    usable = [p for p in peaks if p >= NOISE_FLOOR]
+    if not usable:
+        raise ClipProblem("the wake model did not respond to any of the "
+                          "recordings; it may be the wrong model for them")
+    ordered = sorted(usable, reverse=True)
+    cut = ordered[min(int(len(ordered) * want), len(ordered) - 1)]
+    # A few points under, because live speech varies more than a recording of
+    # it and a threshold sitting exactly on the quietest example is brittle.
+    pct = max(45, min(90, int(cut * 100) - 5))
+    return pct, peaks
+
 # --- CLI, so the bash front end can drive each step separately -------------
 
 def main() -> int:
@@ -301,6 +361,11 @@ def main() -> int:
     p.add_argument("into", type=Path)
     p.add_argument("--voices", type=Path, default=None)
     p.add_argument("--per-voice", type=int, default=4)
+
+    p = sub.add_parser("suggest-threshold",
+                       help="a wake threshold this model can actually reach")
+    p.add_argument("model")
+    p.add_argument("positives", type=Path)
 
     p = sub.add_parser("train", help="fit the verifier")
     p.add_argument("model_name")
@@ -338,6 +403,17 @@ def main() -> int:
     if args.cmd == "synth-negatives":
         print(synth_other_speakers(args.phrase, args.into,
                                    args.voices or piper_voices(), args.per_voice))
+        return 0
+
+    if args.cmd == "suggest-threshold":
+        try:
+            pct, peaks = suggest_threshold(args.model, args.positives)
+        except ClipProblem as e:
+            print(f"error {e}", file=sys.stderr)
+            return 1
+        hits = sum(1 for p in peaks if p >= pct / 100.0)
+        usable = sum(1 for p in peaks if p >= NOISE_FLOOR)
+        print(f"{pct} {hits} {len(peaks)} {usable}")
         return 0
 
     if args.cmd == "train":
