@@ -496,15 +496,16 @@ Item {
             width: parent.width
             spacing: Style.spacing.md
 
-            // Grouped rather than separated. Ten sections divided by rules had
-            // become easy to get lost in, and a rule only says something changed;
-            // a box says these belong together -- which matters most where a knob
-            // is meaningless without the switch above it.
+            // The switch first, because it is the one people reach for, and the
+            // duration with it, because the two are one setting described twice:
+            // how long it stays governs nothing when it is not shown. Split
+            // across the page they were the same mistake as a follow-up window
+            // sitting apart from "keep listening after a reply".
             SettingsGroup {
               width: parent.width
               foreground: root.foreground
               fontFamily: root.fontFamily
-              title: "WHILE YOU TALK TO IT"
+              title: "ON-SCREEN READOUT"
 
               Toggle {
                 width: parent.width
@@ -518,6 +519,34 @@ Item {
                 onClicked: root.persist("hud",
                     root.setting("hud", true) === true ? "false" : "true", true)
               }
+
+              KnobRow {
+                width: parent.width
+                // The knob hides, not the box: the box holds the switch now, so
+                // hiding it would take away the only way to turn the thing back
+                // on. Same shape as the follow-up window under "keep listening".
+                visible: root.setting("hud", true) === true
+                scrollTarget: formScroll
+                foreground: root.foreground; fontFamily: root.fontFamily
+                label: "How long it stays afterwards"
+                unit: "ms"
+                description: "Measured from the end of the exchange, including the " +
+                             "follow-up window. Zero closes it immediately."
+                value: root.setting("hudLingerMs", 2000)
+                minimum: 0; maximum: 10000; stepSize: 500
+                onCommitted: function(v) { root.persist("hudLingerMs", v, true) }
+              }
+            }
+
+            // Grouped rather than separated. Ten sections divided by rules had
+            // become easy to get lost in, and a rule only says something changed;
+            // a box says these belong together -- which matters most where a knob
+            // is meaningless without the switch above it.
+            SettingsGroup {
+              width: parent.width
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              title: "WHILE YOU TALK TO IT"
 
               Toggle {
                 width: parent.width
@@ -724,30 +753,6 @@ Item {
                 font.pixelSize: Style.font.caption
               }
 
-            }
-
-            SettingsGroup {
-              width: parent.width
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              // Only the duration lives here; the switch is the first control
-              // on the page. The box hides with it, so the knob does not have
-              // to repeat the condition.
-              title: "ON-SCREEN READOUT"
-              visible: root.setting("hud", true) === true
-
-              KnobRow {
-                width: parent.width
-                scrollTarget: formScroll
-                foreground: root.foreground; fontFamily: root.fontFamily
-                label: "How long it stays afterwards"
-                unit: "ms"
-                description: "Measured from the end of the exchange, including the " +
-                             "follow-up window. Zero closes it immediately."
-                value: root.setting("hudLingerMs", 2000)
-                minimum: 0; maximum: 10000; stepSize: 500
-                onCommitted: function(v) { root.persist("hudLingerMs", v, true) }
-              }
             }
 
             SettingsGroup {

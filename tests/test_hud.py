@@ -181,12 +181,20 @@ def test_the_switch_is_in_the_group_the_page_opens_with():
 
     # The duration stays below, and its header and separator go when the
     # readout is off, or there are two rules with nothing between them.
+    # The switch and the one number it governs are a single setting described
+    # twice: how long it stays means nothing when it is not shown. They live in
+    # one box, the first on the page.
     readout = settings.index('title: "ON-SCREEN READOUT"')
-    assert toggle < readout, "the switch should not be inside the box it governs"
     box = settings[readout:settings.index("SettingsGroup {", readout)]
-    assert "hudLingerMs" in box, "the duration belongs in that box"
-    assert 'visible: root.setting("hud", true) === true' in box, \
-        "the box must hide when the readout is off"
+    assert "hudLingerMs" in box, "the duration belongs with its switch"
+    assert readout < toggle < settings.index("hudLingerMs"), \
+        "the switch should open the box its duration sits in"
+
+    # And the knob hides rather than the box, or turning the readout off would
+    # take away the only way to turn it back on.
+    knob = box[box.index("KnobRow {"):]
+    assert 'visible: root.setting("hud", true) === true' in knob
+    assert 'visible: root.setting("hud", true) === true' not in box[:box.index("KnobRow {")]
 
 
 def test_no_dead_flag_is_left_behind():
