@@ -35,7 +35,22 @@ def _code(text: str) -> str:
 
 
 def test_spin_can_run_a_shell_function(tmp_path):
-    """The behaviour, not the spelling: a function through spin must run."""
+    """The behaviour, not the spelling: a function through spin must run.
+
+    gum is stubbed rather than required. The first version of this needed the
+    real one and a /dev/tty, so it passed on a desktop and failed on CI -- and
+    what is under test is spin's inner `bash -c`, not gum's spinner.
+    """
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "gum").write_text(
+        '#!/bin/sh\n'
+        '# Drop gum\'s own flags, then run whatever followed `--`.\n'
+        'while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\n'
+        'shift\n'
+        'exec "$@"\n')
+    (bin_ / "gum").chmod(0o755)
+
     script = (
         "set -uo pipefail\n"
         + _block("tty_flush()") + _block("echo_off()") + _block("echo_restore()")
@@ -47,8 +62,10 @@ def test_spin_can_run_a_shell_function(tmp_path):
         'rc=$?\n'
         f'echo "rc=$rc"; cat {tmp_path}/out\n'
     )
+    env = {**os.environ, "TERM": "dumb",
+           "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}"}
     done = subprocess.run(["bash", "-c", script], capture_output=True,
-                          text=True, timeout=60, env={**os.environ, "TERM": "dumb"})
+                          text=True, timeout=60, env=env)
     assert "rc=0" in done.stdout, done.stdout + done.stderr
     assert "ran with hello" in done.stdout
 
