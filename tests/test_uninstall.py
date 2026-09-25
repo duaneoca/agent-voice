@@ -17,6 +17,7 @@ directory, a dangling `agentvoice` symlink and a service still running.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,6 +25,47 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _env(home: Path, **overrides) -> dict[str, str]:
+    """A fully sandboxed environment for install.sh.
+
+    Every XDG variable the script reads has to be redirected, not just the
+    ones whose absence is obvious. This passed HOME, XDG_DATA_HOME and
+    XDG_CONFIG_HOME but not XDG_RUNTIME_DIR, so
+
+        rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agentvoice"
+
+    fell through to its default and deleted the *developer's* live runtime
+    directory. The running daemon then died on its next state publish. It
+    happened three times before the journal timestamps were matched against
+    when the suite had run. conftest.py sandboxes these already; building a
+    fresh dict threw that away.
+
+    test_every_xdg_variable_is_redirected keeps the list honest.
+    """
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "XDG_DATA_HOME": str(home / "data"),
+        "XDG_CONFIG_HOME": str(home / "config"),
+        "XDG_RUNTIME_DIR": str(home / "run"),
+    }
+    env.update(overrides)
+    return env
+
+
+def test_every_xdg_variable_is_redirected(tmp_path):
+    """Whatever install.sh reads, _env must override.
+
+    A new XDG_* default in the script is a new way for these tests to reach
+    out of the sandbox and touch the machine they run on.
+    """
+    script = (ROOT / "install.sh").read_text()
+    used = set(re.findall(r"\$\{?(XDG_[A-Z_]+)", script))
+    assert used, "found no XDG variables; did the pattern stop matching?"
+    covered = set(_env(tmp_path))
+    assert used <= covered, f"not redirected: {sorted(used - covered)}"
 
 
 def _install_tree(home: Path) -> Path:
@@ -48,13 +90,7 @@ def _install_tree(home: Path) -> Path:
 
 
 def _run(app: Path, home: Path, *args: str) -> subprocess.CompletedProcess:
-    env = {
-        "PATH": os.environ["PATH"],
-        "HOME": str(home),
-        "XDG_DATA_HOME": str(home / "data"),
-        "XDG_CONFIG_HOME": str(home / "config"),
-    }
-    return subprocess.run([str(app / "install.sh"), *args], env=env,
+    return subprocess.run([str(app / "install.sh"), *args], env=_env(home),
                           capture_output=True, text=True, timeout=120)
 
 
@@ -102,13 +138,7 @@ def test_uninstall_leaves_nothing_when_there_was_nothing_to_keep(tmp_path):
 def test_declining_does_not_remove_anything_and_says_no(tmp_path):
     """Exit status matters: the button chains `&& omarchy plugin remove`."""
     app = _install_tree(tmp_path)
-    env = {
-        "PATH": os.environ["PATH"],
-        "HOME": str(tmp_path),
-        "XDG_DATA_HOME": str(tmp_path / "data"),
-        "XDG_CONFIG_HOME": str(tmp_path / "config"),
-    }
-    done = subprocess.run([str(app / "install.sh"), "--uninstall"], env=env,
+    done = subprocess.run([str(app / "install.sh"), "--uninstall"], env=_env(tmp_path),
                           input="n\n", capture_output=True, text=True, timeout=120)
 
     assert done.returncode != 0
@@ -161,12 +191,7 @@ def test_uninstall_works_without_the_tools_only_the_install_needs(tmp_path):
 
     done = subprocess.run(
         [str(app / "install.sh"), "--uninstall", "--yes"],
-        env={
-            "PATH": str(slim),
-            "HOME": str(tmp_path),
-            "XDG_DATA_HOME": str(tmp_path / "data"),
-            "XDG_CONFIG_HOME": str(tmp_path / "config"),
-        },
+        env=_env(tmp_path, PATH=str(slim)),
         capture_output=True, text=True, timeout=120,
     )
 
