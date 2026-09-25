@@ -553,6 +553,14 @@ ok "Installed agentvoice and agentvoice-train-verifier into $BINDIR"
 mkdir -p "$UNITDIR"
 sed -e "s|@ROOT@|$APP|g" -e "s|@VENV@|$VENV|g" \
     "$ROOT/desktop/agentvoice.service.in" > "$UNITDIR/agentvoice.service"
+# Restart a daemon that is already running, so it picks up the code just
+# installed. Without this the old process kept serving and a deployed fix
+# could be reported as still broken, because it was. try-restart is a no-op
+# when the service is not running, which is every first install.
+restart_if_running() {
+  systemctl --user try-restart agentvoice.service 2>/dev/null || true
+}
+
 # Unguarded, this was the last line of a successful install and could undo it:
 # `set -e` turned a machine with no systemd user session -- a container, an ssh
 # login without one, a distribution that is not using systemd -- into an exit
@@ -566,6 +574,7 @@ if ! systemctl --user daemon-reload 2>/dev/null; then
   warn "run the daemon in the foreground instead."
 fi
 ok "Installed the user service"
+restart_if_running
 
 echo
 ok "Done."
