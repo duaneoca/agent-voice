@@ -34,8 +34,11 @@ Arch is a rolling release, and a venv built on `/usr/bin/python` stops
 importing the next time Arch bumps it, which would leave voice silently dead
 after an `omarchy update`.
 
-Roughly 750MB with the default engine, or 900MB with openWakeWord as well;
-the installer says what the second engine costs before installing it.
+Roughly 750MB with the default engine, or 900MB with openWakeWord as well.
+openWakeWord is not installed by default and the installer does not ask: it is
+optional, and a question with Yes preselected is not really optional. Choose it
+under **Engine** in the settings and it offers to fetch it, or run the
+installer again with `--oww`.
 
 The widget and the engine are two installs, because Omarchy runs
 nothing on a plugin's behalf: `plugin add` clones a directory and
@@ -405,7 +408,11 @@ this; there is nothing to threshold.
 
 *openWakeWord* has four pretrained phrases and real separation --
 `"hey jarvis"` 0.996, a phonetic attack 0.898, unrelated speech 0.000 --
-so 0.90 rejects the near miss and still fires. It costs ~154MB, almost
+so 0.90 rejects the near miss and still fires. That threshold belongs to
+those four. A model you train yourself peaks far lower: one measured here
+at a median of 0.775 with its verifier, firing on 0 of 25 recordings of
+its owner at 0.90 and 19 of 25 at 0.63. The trainer measures and offers a
+threshold for this reason; `bench/FINDINGS.md` §15 has the numbers. It costs ~154MB, almost
 none of it the detector: scipy and scikit-learn are hard imports of its
 package `__init__`. Pin `openwakeword==0.4.0`; 0.5 and later depend on
 `tflite-runtime`, which has no wheel past cp311.

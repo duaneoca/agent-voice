@@ -104,3 +104,55 @@ def test_the_training_section_is_openwakeword_only():
     guarded = section.count("visible: root.owwLive")
     assert guarded >= len(children), \
         f"{len(children)} children, only {guarded} guarded"
+
+
+# --- optional means not asked for ------------------------------------------
+
+def test_the_install_does_not_prompt_for_openwakeword():
+    """It asked during every fresh install, with gum's affirmative preselected.
+
+    An optional component presented as a blocking question with Yes already
+    chosen is a demand wearing a question mark. It belongs where someone goes
+    looking for it, which is the settings page.
+    """
+    script = (ROOT / "install.sh").read_text()
+    asks = [l.strip() for l in script.splitlines()
+            if re.search(r"^\s*(if .*)?\bask \"", l)]
+    assert len(asks) == 1, f"expected only the uninstall confirm, got {asks}"
+    assert "Remove the agentvoice" in asks[0]
+
+
+def test_openwakeword_is_off_unless_asked_for_or_already_selected():
+    """Three ways it should install: --oww, --yes --oww, or settings that
+    already name it -- because then omitting it gives a daemon configured for
+    an engine it cannot start. Not: a bare install, and not --yes alone."""
+    script = (ROOT / "install.sh").read_text()
+    assert "WANT_OWW=0" in script, "the default has to be off"
+    forced = script[script.index("# Settings still override the default"):]
+    forced = forced[:forced.index("Wake word: Vosk")]
+    assert "engine // empty" in forced, "must read the configured engine"
+    assert "WANT_OWW=1" in forced, "and install it when that engine is chosen"
+
+    # --yes must no longer imply it: that only made sense while there was a
+    # prompt for --yes to answer.
+    assert "(( ASSUME_YES )); then\n  WANT_OWW=1" not in script
+
+
+def test_the_install_says_where_to_get_it():
+    script = (ROOT / "install.sh").read_text()
+    assert "--oww" in script
+    assert "Engine in the Agent Voice settings" in script
+
+
+def test_speech_comes_before_the_optional_endpoint():
+    """The endpoint is optional and belongs last; speech is not.
+
+    Asserted because the two have been reordered twice by hand and the comment
+    introducing the endpoint block still said "speech" from the first move.
+    """
+    order = [m.group(1) for m in re.finditer(
+        r'text: "(PROJECT|WAKE WORD|INPUT|TIMING|SPEECH|ENDPOINT \(optional\))"',
+        SETTINGS)]
+    assert order.index("SPEECH") < order.index("ENDPOINT (optional)")
+    assert order.index("ENDPOINT (optional)") == len(order) - 1, \
+        "the endpoint section should be the last one on the page"
