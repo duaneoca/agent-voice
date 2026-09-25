@@ -55,7 +55,14 @@ spin() {  # spin <title> <outfile> -- <cmd...>
   tty_flush
   echo_off
   gum spin --title "$title" -- \
-    bash -c 'o=$1; e=$2; shift 2; exec "$@" >"$o" 2>"$e"' _ "$out" "$SPIN_ERR" "$@"
+    # Not `exec "$@"`. exec replaces the process with an executable and so
+    # cannot run a shell function -- exported or not, defined in that very
+    # shell or not; it simply looks for a binary of that name and reports
+    # "not found" with exit 127. Every caller so far was an external command,
+    # so this held until the voice fetch passed a function, whose failure was
+    # then reported as "could not fetch" with the reason discarded. Dropping
+    # exec costs one process and accepts functions and builtins.
+    bash -c 'o=$1; e=$2; shift 2; "$@" >"$o" 2>"$e"' _ "$out" "$SPIN_ERR" "$@"
   local rc=$?
   echo_restore
   tty_flush
@@ -203,6 +210,11 @@ OTHER_SPEAKERS=(ryan-medium amy-medium joe-medium kristin-medium)
 
 # Fetch one voice into the Piper directory. Both files or neither: a voice
 # whose .json never arrived loads as a stack trace inside gum spin.
+# Exported so it exists inside spin()'s `bash -c`, which is a new process.
+# PIPER_BASE goes with it, since the function reads it. Necessary but not
+# sufficient: spin also had to stop using `exec`, which bypasses functions
+# entirely.
+export PIPER_BASE
 fetch_speaker() {
   local id="$1" dir="$2" name="${1%-*}" quality="${1##*-}"
   local file="en_US-$id.onnx"
@@ -219,6 +231,7 @@ fetch_speaker() {
   rm -rf "$tmp"
   return 1
 }
+export -f fetch_speaker
 
 # --- which wake model ------------------------------------------------------
 MODEL="$("$PY" "$VERIFIER" models | gum choose --header "Which wake word are you training for?")" || cancelled
@@ -301,6 +314,7 @@ if (( NEG_COUNT < 5 )); then
           gum style --foreground 2 "  Fetched $id."
         else
           gum style --foreground 3 "  Could not fetch $id; carrying on with what is here."
+          [[ -s ${SPIN_ERR:-} ]] && tail -2 "$SPIN_ERR" | sed 's/^/    /' >&2
         fi
         rm -f "$FETCH_OUT" "${SPIN_ERR:-}"
       done
