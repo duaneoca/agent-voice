@@ -362,3 +362,91 @@ def test_no_systemctl_call_can_end_the_install():
         guarded = ("|| true" in line or line.strip().startswith("if ")
                    or "if !" in line)
         assert guarded, f"install.sh:{line_no} can abort the install: {line.strip()}"
+
+
+# --- removing the widget too, and noticing when that does not work ----------
+# The Remove button chained `&& omarchy plugin remove ... --yes` onto the
+# uninstall. That removal disabled the plugin, stripped its shell.json entry,
+# and its `rm -rf` then stopped partway: .git, bin/ and Panel.qml gone,
+# daemon/, Settings.qml and the rest still there, with nothing holding the
+# directory. The next thing seen was `omarchy plugin add` refusing because the
+# id was still in use, with no hint a removal had been left half done.
+
+def test_the_widget_removal_is_a_flag_not_a_shell_chain():
+    """Shell logic assembled in a QML string is how --uninstall became $0."""
+    settings = (ROOT / "Settings.qml").read_text()
+    block = settings[settings.index('text: "Remove Agent Voice'):]
+    block = block[:block.index("root.dismiss()")]
+    # Comments only, stripped -- an earlier version of this test matched the
+    # `&&` in the comment explaining that the `&&` had been removed.
+    command = "".join(l for l in block.splitlines()
+                      if "//" not in l and "remover.command" in l or
+                      (l.strip().startswith('"') and "//" not in l))
+    assert "--uninstall --with-widget" in command
+    assert "omarchy plugin remove" not in command, "back to chaining in QML"
+    assert "&&" not in command
+
+
+def test_with_widget_reports_a_folder_that_survived(tmp_path):
+    """The case that actually happened: the removal does not finish, and the
+    only symptom was `plugin add` refusing much later."""
+    app = _install_tree(tmp_path)
+    widget = tmp_path / "config" / "omarchy" / "plugins" / "duaneoca.agentvoice"
+    widget.mkdir(parents=True)
+    (widget / "manifest.json").write_text("{}")
+
+    # No `omarchy` on PATH, so the folder cannot be removed and must be named.
+    slim = tmp_path / "slim"
+    slim.mkdir()
+    for entry in os.environ["PATH"].split(os.pathsep):
+        d = Path(entry)
+        if not d.is_dir():
+            continue
+        for tool in d.iterdir():
+            if tool.name.startswith("omarchy") or (slim / tool.name).exists():
+                continue
+            try:
+                (slim / tool.name).symlink_to(tool)
+            except OSError:
+                pass
+
+    done = subprocess.run(
+        [str(app / "install.sh"), "--uninstall", "--with-widget", "--yes"],
+        env=_env(tmp_path, PATH=str(slim)),
+        capture_output=True, text=True, timeout=120)
+
+    assert done.returncode == 0, done.stderr
+    combined = done.stdout + done.stderr
+    assert str(widget) in combined, "must name the folder it could not remove"
+    assert "rm -rf" in combined, "and say how to finish"
+    assert widget.exists(), "must not delete it itself -- that is omarchy's job"
+
+
+def test_without_the_flag_the_widget_is_not_touched(tmp_path):
+    """`--uninstall` alone is the engine only, which is what a checkout wants."""
+    app = _install_tree(tmp_path)
+    widget = tmp_path / "config" / "omarchy" / "plugins" / "duaneoca.agentvoice"
+    widget.mkdir(parents=True)
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert done.returncode == 0, done.stderr
+    assert widget.exists()
+    assert "still there" not in done.stdout
+
+
+def test_declining_never_reaches_the_widget(tmp_path):
+    """Exit 1 on a decline has to come before anything touches the widget,
+    or saying no to the engine would still take the interface away."""
+    app = _install_tree(tmp_path)
+    widget = tmp_path / "config" / "omarchy" / "plugins" / "duaneoca.agentvoice"
+    widget.mkdir(parents=True)
+
+    done = subprocess.run(
+        [str(app / "install.sh"), "--uninstall", "--with-widget"],
+        env=_env(tmp_path), input="n\n",
+        capture_output=True, text=True, timeout=120)
+
+    assert done.returncode != 0
+    assert widget.exists()
+    assert app.exists(), "the engine must be intact too"

@@ -1232,13 +1232,15 @@ Item {
               foreground: Color.urgent
               accent: Color.urgent
               onClicked: {
-                // No nested `bash -c` here. The launcher already does
-                // `cmd="$*"` and re-wraps it, and a second one swallowed the
-                // flag as $0 -- which ran this as a fresh *install* instead.
+                // One command, no shell logic. The launcher already does
+                // `cmd="$*"` and re-wraps it in its own `bash -c`, and a second
+                // one here swallowed the flag as $0 -- which ran this as a fresh
+                // *install* instead. The widget removal used to be chained on
+                // with `&&`; it is --with-widget now, so the script can check
+                // afterwards that it actually happened.
                 remover.command = ["omarchy-launch-floating-terminal-with-presentation",
                                    "\"$HOME/.local/share/agentvoice/app/install.sh\" " +
-                                   "--uninstall && omarchy plugin remove " +
-                                   "duaneoca.agentvoice --yes"]
+                                   "--uninstall --with-widget"]
                 remover.running = true
                 root.dismiss()
               }
