@@ -193,3 +193,17 @@ def test_the_trainer_reads_the_current_threshold_from_shell_json():
     script = (ROOT / "bin" / "agentvoice-train-verifier").read_text()
     assert "omarchy bar get" not in script
     assert "shell.json" in script
+
+
+def test_a_numeric_setting_is_written_as_a_number():
+    """`omarchy bar set` feeds `jq --argjson`, so a number needs --json and a
+    bare string must not have it. Written without, the measured threshold landed
+    in shell.json as "63" while every other numeric setting was a number."""
+    script = (ROOT / "bin" / "agentvoice-train-verifier").read_text()
+    for line in script.splitlines():
+        if "omarchy bar set" not in line or line.strip().startswith("#"):
+            continue
+        key = line.split("duaneoca.agentvoice", 1)[1].split()[0]
+        numeric = key.endswith("Pct") or key.endswith("Db") or key.endswith("Ms")
+        assert ("--json" in line) == numeric, \
+            f"{key} is {'numeric' if numeric else 'a string'}: {line.strip()}"
