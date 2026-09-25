@@ -93,10 +93,13 @@ PanelWindow {
 
   Rectangle {
     anchors.fill: parent
-    radius: Style.radius.md
+    radius: Style.cornerRadius
     color: Color.tooltip.background
     border.width: 1
-    border.color: Qt.alpha(hud.accent, 0.35)
+    // Qt.rgba on the components, not Qt.alpha: the latter appears nowhere in
+    // Omarchy's own QML, and an unverifiable helper in a surface nothing can
+    // screenshot is a poor bet.
+    border.color: Qt.rgba(hud.accent.r, hud.accent.g, hud.accent.b, 0.35)
 
     Column {
       id: body
