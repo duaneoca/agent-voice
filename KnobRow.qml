@@ -22,8 +22,23 @@ Column {
   property string unit: "ms"
 
   // The Flickable this row lives in, so a wheel event over the slider scrolls
-  // the list instead of changing the setting.
+  // the list instead of changing the setting. Optional: when it is not set,
+  // the enclosing Flickable is found by walking up. Nine of ten callers passed
+  // it and the tenth did not, and the one that did not swallowed the wheel
+  // outright -- the pointer had only to cross that row for scrolling to stop.
+  // A default nobody has to remember cannot be forgotten.
   property Flickable scrollTarget: null
+
+  readonly property Flickable effectiveScrollTarget: scrollTarget || _findFlickable()
+
+  function _findFlickable() {
+    var p = knob.parent
+    while (p) {
+      if (p instanceof Flickable) return p
+      p = p.parent
+    }
+    return null
+  }
 
   signal committed(real value)
 
@@ -88,9 +103,16 @@ Column {
       anchors.fill: parent
       acceptedButtons: Qt.NoButton
       onWheel: function(wheel) {
+        var f = knob.effectiveScrollTarget
+        // Accept only what can be acted on. Accepting first and returning on a
+        // missing target consumed the event and scrolled nothing, which is how
+        // this was reported: not a slider that moved when it should not, but a
+        // page that stopped moving.
+        if (!f) {
+          wheel.accepted = false
+          return
+        }
         wheel.accepted = true
-        var f = knob.scrollTarget
-        if (!f) return
         var limit = Math.max(0, f.contentHeight - f.height)
         f.contentY = Math.max(0, Math.min(limit, f.contentY - wheel.angleDelta.y))
       }

@@ -31,6 +31,13 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
+      # For the QML property check. Nothing here runs the interface, so this is
+      # the only automated check it gets -- and the interface is where this
+      # project's bugs have landed. Omarchy's own QML modules are not needed:
+      # the check resolves properties declared in this repository.
+      - name: Install qmllint
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qt6-declarative-dev-tools
+
       - name: Run checks
         env:
           # Without this a missing pytest is reported as "skipped" and the run
