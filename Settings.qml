@@ -708,6 +708,42 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
+            Toggle {
+              width: parent.width
+              label: "Show a readout while it is working"
+              checked: root.setting("hud", true) === true
+              fontFamily: root.fontFamily
+              onClicked: root.persist("hud",
+                  root.setting("hud", true) === true ? "false" : "true", true)
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "A small panel near the bar from the moment it wakes until " +
+                    "shortly after it answers, showing what it heard and what it " +
+                    "is doing. It has its own surface with keyboard focus " +
+                    "disabled, so unlike this panel it cannot take the keyboard " +
+                    "from what you are typing."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            KnobRow {
+              width: parent.width
+              scrollTarget: formScroll
+              visible: root.setting("hud", true) === true
+              foreground: root.foreground; fontFamily: root.fontFamily
+              label: "How long it stays afterwards"
+              unit: "ms"
+              description: "Measured from the end of the exchange, including the " +
+                           "follow-up window. Zero closes it immediately."
+              value: root.setting("hudLingerMs", 2000)
+              minimum: 0; maximum: 10000; stepSize: 500
+              onCommitted: function(v) { root.persist("hudLingerMs", v, true) }
+            }
+
             PanelSeparator { width: parent.width; foreground: root.foreground }
 
             // --- wake word ------------------------------------------------

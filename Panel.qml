@@ -269,6 +269,25 @@ Panel {
     }
   }
 
+  // A readout while it works, in its own layer-shell surface. Not the panel
+  // below: that one is a KeyboardPanel and takes keyboard focus on every open,
+  // which for a hands-free interface would mean roughly 25 seconds of typing
+  // going to a status display after every utterance.
+  Hud {
+    bar: voice.bar
+    fontFamily: voice.fontFamily
+    enabled: voice.serviceActive && voice.setting("hud", true) === true
+    lingerMs: voice.setting("hudLingerMs", 2000)
+    vState: voice.vState
+    stateLabel: voice.stateLabel
+    icon: voice.icon
+    accent: voice.barIconColor
+    // Only once there is something to show. The field holds the previous
+    // utterance until Whisper returns, and showing that next to "hearing you"
+    // reads as though it had misheard the thing you just said.
+    transcript: voice.vState === "capture" ? "" : voice.lastTranscript
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: button
