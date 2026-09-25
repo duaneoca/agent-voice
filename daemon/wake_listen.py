@@ -195,6 +195,20 @@ class Pipeline:
         self.min_utterance_ms = cfg.int("minUtteranceMs")
         self.max_utterance_ms = cfg.int("maxUtteranceMs")
         self.threshold_db = float(cfg["micThresholdDb"])
+        # Assigned here rather than added to the spec above, like every other
+        # knob on this list: it needs a different number, not a different model,
+        # and a rebuild would drop and reload ~100MB for a slider move.
+        #
+        # It was the one openWakeWord knob that lived on the engine object and
+        # was never updated afterwards. Dragging the slider printed "knobs
+        # updated" and changed nothing until the service restarted -- so a
+        # detection threshold of 90, which a locally trained model cannot reach,
+        # survived being set to 63 and then 51, and the wake word never fired.
+        # The accidental cure was switching engines and back, because that does
+        # change the spec, which rebuilt the engine at whatever the number had
+        # become by then.
+        if self._oww is not None:
+            self._oww.threshold = cfg.int("owwThresholdPct") / 100.0
         self.refractory_ms = int(cfg["refractoryMs"])
         self.wake_confidence = float(cfg["wakeConfidence"])
         # Changing the transcription model used to be a silent no-op: it was
@@ -209,6 +223,11 @@ class Pipeline:
         self.follow_up_ms = cfg.int("followUpMs")
         # 300ms of continuous speech-level audio before a partial may wake it.
         self.min_loud_frames = 3
+
+    @property
+    def detection_threshold(self) -> float | None:
+        """openWakeWord's firing threshold, or None on any other engine."""
+        return self._oww.threshold if self._oww is not None else None
 
     @staticmethod
     def _verifier_stamp(cfg: Config) -> float:
@@ -629,8 +648,16 @@ class Daemon:
         p = self.pipe
         print(f"\n  {BLD}listening{OFF} for {CYA}\"{p.phrase}\"{OFF}"
               f"   {DIM}lead-in {p.lead_in_ms}ms · trailing {p.trailing_ms}ms{OFF}")
-        print(f"  {DIM}gate {p.threshold_db:.0f} dBFS · confidence "
-              f"{p.wake_confidence:.2f} · {self.cfg.source}{OFF}")
+        # The detection threshold is openWakeWord's and the grammar confidence
+        # is Vosk's; printing the second one on the first engine showed a number
+        # that did nothing while the number that mattered was invisible after
+        # startup -- which is how a stale 0.90 went unnoticed through two
+        # attempts to lower it.
+        second = (f"detection {p.detection_threshold:.2f}"
+                  if p.detection_threshold is not None
+                  else f"confidence {p.wake_confidence:.2f}")
+        print(f"  {DIM}gate {p.threshold_db:.0f} dBFS · {second} "
+              f"· {self.cfg.source}{OFF}")
         forgets = self.agent is not None and not getattr(self.agent, "remembers", False)
         if p.conversation and forgets:
             print(f"  {YEL}conversation: on, {p.follow_up_ms / 1000:.0f}s window — but "
