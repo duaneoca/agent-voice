@@ -241,14 +241,37 @@ spin "Synthesising other voices saying \"$SPOKEN\" — about 9s" "$OTHERS_FILE" 
   "$PY" "$VERIFIER" synth-negatives "$SPOKEN" "$NEG" || true
 OTHERS="$(tr -dc '0-9' < "$OTHERS_FILE")"; rm -f "$OTHERS_FILE" "${SPIN_ERR:-}"
 OTHERS="${OTHERS:-0}"
-NEG_COUNT=$(( NEG_COUNT + OTHERS ))
+
+# Count the directory, not the two steps' arithmetic. gather_negatives counts
+# the clips already in there, and synth-negatives writes deterministic
+# filenames -- so on a second run it re-made the same four clips, both steps
+# reported four, and the gate let eight through when four existed. train()
+# then failed on the real count, after twenty-five positives had been
+# recorded. A gate that lies costs more than one that refuses.
+NEG_COUNT=$(find "$NEG" -name '*.wav' 2>/dev/null | wc -l)
 
 if (( NEG_COUNT >= 5 )); then
   gum style --foreground 2 \
     "  Contrast set: $NEG_COUNT clips ($OTHERS of other voices saying the phrase)."
 else
-  gum style --foreground 3 "  Only $NEG_COUNT contrast clips found."
-  printf '%s\n' "Training needs recordings of you talking without the wake phrase, to contrast against. Run 'python bench/record.py' to build that corpus, then come back." | wrapw
+  # This message used to send people to `python bench/record.py`, which is not
+  # installed -- bench/ stays in the checkout -- and to describe the wrong
+  # clips: recordings of you *not* saying the phrase teach "phrase versus no
+  # phrase", which the base model already knows. What is missing is other
+  # speakers saying it.
+  VOICES_ON_DISK="$("$PY" "$VERIFIER" voices 2>/dev/null || echo 0)"
+  gum style --foreground 3 "  Only $NEG_COUNT contrast clips — training needs 5."
+  [[ $VOICES_ON_DISK == 1 ]] && VOICE_WORD="voice" || VOICE_WORD="voices"
+  printf '%s\n' "The contrast clips are other voices saying \"$SPOKEN\", synthesised from the Piper voices on disk. You have $VOICES_ON_DISK $VOICE_WORD, giving $NEG_COUNT clips — one speaker, so there is nothing yet to contrast your voice against." | wrapw
+  echo
+  printf '%s\n' "A second voice is enough. Pick a different one under Voice in the Agent Voice settings, then run the installer again -- it fetches whatever the settings ask for and keeps the one you had:" | wrapw
+  echo
+  gum style --foreground 4 "    ~/.config/omarchy/plugins/duaneoca.agentvoice/install.sh"
+  echo
+  if (( HAVE_POS > 0 )); then
+    echo
+    printf '%s\n' "Your $HAVE_POS recordings are kept, so this picks up where it left off." | wrapw
+  fi
   exit 1
 fi
 
