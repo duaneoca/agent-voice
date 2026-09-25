@@ -399,6 +399,39 @@ if ! spin "Training on $have clips of your voice" "$OUT_FILE" -- \
 fi
 OUT="$(tail -1 "$OUT_FILE")"; rm -f "$OUT_FILE" "${SPIN_ERR:-}"
 
+# --- a threshold this model can actually reach ------------------------------
+# openWakeWord's default of 90 suits the four pretrained phrases, which peak
+# near 0.996. A locally trained one does not: measured on twenty-five real
+# recordings, this model peaked at a median of 0.775 with its verifier, so at
+# 90 not one of them would have woken it. It never fired, nothing said so, and
+# the symptom was an indicator light that never came on. The clips are right
+# here, so measure instead of leaving the default to be wrong quietly.
+SUGGEST_FILE="$(mktemp)"
+if spin "Measuring what this model scores on your voice" "$SUGGEST_FILE" --      "$PY" "$VERIFIER" suggest-threshold "$MODEL" "$POS"; then
+  read -r WANT_PCT HITS TOTAL USABLE < "$SUGGEST_FILE"
+fi
+rm -f "$SUGGEST_FILE" "${SPIN_ERR:-}"
+
+# `omarchy bar` has set but no get, so read the value the way install.sh does.
+NOW_PCT="$(jq -r '[.bar.layout[]?[]? | select(.id=="duaneoca.agentvoice")][0].owwThresholdPct // empty' \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json" 2>/dev/null)"
+[[ -n ${NOW_PCT//[^0-9]/} ]] || NOW_PCT=90
+
+if [[ -n ${WANT_PCT:-} ]] && (( WANT_PCT != NOW_PCT )); then
+  echo
+  printf '%s\n' "The wake threshold is $NOW_PCT%. Measured against your $TOTAL recordings, $WANT_PCT% catches $HITS of them; $USABLE registered with this model at all." | wrapw
+  echo
+  if gum confirm "Set the wake threshold to $WANT_PCT%?" \
+       --affirmative "Set it" --negative "Leave it at $NOW_PCT%"; then
+    omarchy bar set duaneoca.agentvoice owwThresholdPct "$WANT_PCT" >/dev/null 2>&1 &&
+      gum style --foreground 2 "  Wake threshold set to $WANT_PCT%." ||
+      gum style --foreground 3 "  Could not write the setting; set it in Settings."
+  fi
+  if (( USABLE * 2 < TOTAL )); then
+    printf '%s\n' "Fewer than half your recordings registered at all, which usually means the phrase was clipped by the recording window rather than that the threshold is wrong." | wrapw
+  fi
+fi
+
 restart_daemon
 
 echo
