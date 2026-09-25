@@ -481,3 +481,34 @@ def test_a_real_key_is_still_announced_as_one(tmp_path):
     assert "API key you put in a file" in done.stdout
     assert str(cfg / "endpoint.key") in done.stdout, "name the file, not the folder"
     assert (cfg / "endpoint.key").exists()
+
+
+# --- the working directory, which the installer deletes ---------------------
+
+def test_the_unit_does_not_sit_in_the_directory_the_installer_replaces():
+    """install.sh does `rm -rf "$APP"` and recreates it, so a daemon already
+    running is left in an unlinked inode -- and os.getcwd() then fails with
+    ENOENT for the life of the process. Piper's voice loader calls Path.cwd(),
+    so after any reinstall the running daemon could load no further voice: the
+    one it already had kept working and every new one raised "[Errno 2] No such
+    file or directory", naming no file.
+    """
+    unit = (ROOT / "desktop" / "agentvoice.service.in").read_text()
+    wd = next(l for l in unit.splitlines() if l.startswith("WorkingDirectory="))
+    assert "@ROOT@" not in wd, f"{wd} is removed and recreated by install.sh"
+    assert wd == "WorkingDirectory=%h", wd
+
+
+def test_an_install_restarts_a_running_daemon():
+    """Otherwise the old process keeps serving and a deployed fix is reported as
+    still broken, because it is. try-restart is a no-op when nothing is
+    running, which is every first install."""
+    script = (ROOT / "install.sh").read_text()
+    assert "try-restart agentvoice.service" in script
+    body = script[script.index("restart_if_running() {"):]
+    body = body[:body.index("\n}")]
+    assert "try-restart" in body
+    # And it has to be called after the unit is written, not before.
+    called = script.rindex("\nrestart_if_running\n")
+    written = script.index('ok "Installed the user service"')
+    assert called > written

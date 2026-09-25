@@ -9,7 +9,15 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=@ROOT@
+# %h, not the install directory. install.sh removes and recreates @ROOT@, so a
+# daemon already running is left sitting in an unlinked inode -- and from then
+# on anything that calls os.getcwd() fails with ENOENT. Piper's voice loader
+# does, via Path.cwd(), so after any reinstall the running daemon could never
+# load another voice: the one it had kept working, every new one raised
+# "[Errno 2] No such file or directory" with nothing to say which file.
+# Nothing here needs the install directory as its cwd; every adapter is handed
+# one explicitly.
+WorkingDirectory=%h
 ExecStart=@VENV@/bin/python -u @ROOT@/daemon/wake_listen.py
 Restart=on-failure
 RestartSec=2
