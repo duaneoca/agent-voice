@@ -449,3 +449,34 @@ would fire on a television.
 Unmeasured, and not implied by any of the above: whether this verifier rejects
 a *different* person saying the phrase. Every number here is about waking for
 the right one.
+
+**Correction, next day.** Every figure above was taken against a verifier
+trained on four contrast clips from one synthesised voice, because fetching
+other speakers was silently broken -- `spin()` ran its command through
+`exec`, which cannot run a shell function, so every voice download failed and
+reported only "could not fetch". With that fixed, the same speaker and the same
+`hey_claude` model, retrained against twelve clips from three voices:
+
+| threshold | raw model | with the new verifier |
+| --------- | --------- | -------------------- |
+| 0.95      | 1/25      | 22/25                |
+| 0.89      | 5/25      | **25/25**            |
+| 0.80      | 13/25     | 25/25                |
+
+Peak with the verifier: min **0.935**, median **0.963**, max 0.976 -- against
+min 0.005, median 0.775 before. The floor moved further than the median, which
+is the part that matters: nothing sits near the threshold any more.
+
+So the earlier reading, that a locally trained model cannot reach 90, was a
+measurement of the contrast set rather than of the model. Four clips from one
+voice is not enough to separate anything, and a verifier fitted on it suppresses
+its own speaker. The suggestion mechanism was right throughout; fed an adequate
+contrast set it recommended 89, which every one of the speaker's recordings
+clears.
+
+Two things improved at once and they are not separable from these numbers
+alone: the contrast set went from 4 clips/1 voice to 12/3, and the recordings
+were made again -- 25 of 25 register above the noise floor now against 19 of 25,
+and the raw model's median rose from 0.362 to 0.808 on the new set. The raw
+column shows the recordings alone cannot account for the verifier's gain: at
+0.89 the raw model still only reaches 5 of 25.
