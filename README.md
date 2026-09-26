@@ -106,7 +106,10 @@ rhymes with it, and put the threshold between the two peaks.
    raise a permission prompt.
 3. **You own the mic.** Nothing listens unless you've enabled it, and
    the state is always visible. Linux has no OS level mic gate, so
-   that guarantee is ours to build.
+   that guarantee is ours to build. That consent is per session: the
+   service is started, never enabled, so a reboot or a logout leaves it
+   off and the switch back at the beginning. Turning it on is one click
+   and deliberately not one you make once.
 4. **Local first.** Wake word, STT, and TTS run on device. Only the
    agent call leaves the machine, if your agent does.
 5. **Old hardware is the target, not the edge case.** Benchmarked on a
