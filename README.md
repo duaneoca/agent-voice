@@ -412,10 +412,13 @@ this; there is nothing to threshold.
 *openWakeWord* has four pretrained phrases and real separation --
 `"hey jarvis"` 0.996, a phonetic attack 0.898, unrelated speech 0.000 --
 so 0.90 rejects the near miss and still fires. That threshold belongs to
-those four. A model you train yourself peaks far lower: one measured here
-at a median of 0.775 with its verifier, firing on 0 of 25 recordings of
-its owner at 0.90 and 19 of 25 at 0.63. The trainer measures and offers a
-threshold for this reason; `bench/FINDINGS.md` §15 has the numbers. It costs ~154MB, almost
+those four; a model you train yourself needs its own, which is why the
+trainer measures one rather than guessing. How much room it has depends
+almost entirely on the contrast set: the same speaker and model scored a
+median of 0.775 against four clips from one synthesised voice and 0.963
+against twelve from three, where all 25 recordings clear 0.89.
+`bench/FINDINGS.md` §15 has both sets of numbers and why the first was
+misleading. It costs ~154MB, almost
 none of it the detector: scipy and scikit-learn are hard imports of its
 package `__init__`. Pin `openwakeword==0.4.0`; 0.5 and later depend on
 `tflite-runtime`, which has no wheel past cp311.
