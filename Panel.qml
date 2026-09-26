@@ -406,7 +406,9 @@ Panel {
           wrapMode: Text.WordWrap
           text: "The voice engine is not installed yet. It is about 700MB — " +
                 "speech recognition, a voice, and the wake word — and runs as " +
-                "a background service you can stop at any time."
+                "a background service you can stop at any time. It does not " +
+                "start itself after a reboot; that is one click each session, " +
+                "on purpose."
           color: voice.dim
           font.family: voice.fontFamily
           font.pixelSize: Style.font.caption

@@ -173,3 +173,16 @@ def test_the_guard_resets_where_a_turn_begins():
     starts = DAEMON.count("last = _empty_turn()")
     resets = DAEMON.count('shown_partial = ""')
     assert resets >= starts, f"{starts} turn starts, {resets} resets"
+
+
+def test_the_service_is_started_and_never_enabled():
+    """A microphone daemon that starts itself at every login is a privacy
+    default, not a convenience one. `agentvoice start` does exactly that -- it
+    starts the unit and does not enable it -- so consent is per session. Asserted
+    because `systemctl --user enable` is a one-word change that looks like a
+    convenience fix, and because the README now promises this behaviour."""
+    cli = (ROOT / "bin" / "agentvoice").read_text()
+    assert "systemctl --user start" in cli
+    assert "--user enable" not in cli, "enabling makes the mic outlive the session"
+    readme = (ROOT / "README.md").read_text()
+    assert "per session" in readme, "the promise has to be written down"
