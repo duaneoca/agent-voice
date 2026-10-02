@@ -169,6 +169,45 @@ class TestLockingStopsWhatIsUnderway:
         assert daemon._frames.empty()
 
 
+class TestTheGraceAfterAnAnnouncedLock:
+    """`agentvoice lock` has to outrank the poll for a moment.
+
+    `solitaryBlockedBy` does not gain LOCK the instant the lock key is
+    pressed. Without a grace period, binding the command made things *worse*
+    than not binding it: the poll reopened the microphone for the couple of
+    seconds right after locking -- precisely the window the binding closes.
+    """
+
+    def test_the_poll_does_not_reopen_during_the_grace(self, daemon, tmp_path,
+                                                       monkeypatch):
+        import time
+
+        import wake_listen
+        daemon.locked = True
+        daemon._lock_hold_until = time.time() + wake_listen.LOCK_HOLD_S
+        _stub_detector(tmp_path, monkeypatch, 1)       # says unlocked
+        daemon.reconcile_lock()
+        assert daemon.locked is True, "the poll overrode a fresh announcement"
+
+    def test_the_poll_wins_again_once_the_grace_expires(self, daemon, tmp_path,
+                                                        monkeypatch):
+        """A stale announcement must not hold the microphone shut."""
+        daemon.locked = True
+        daemon._lock_hold_until = 0.0
+        _stub_detector(tmp_path, monkeypatch, 1)
+        daemon.reconcile_lock()
+        assert daemon.locked is False
+
+    def test_a_real_lock_is_never_held_open(self, daemon, tmp_path, monkeypatch):
+        """The grace only ever delays *unlocking*. Locking is immediate."""
+        import time
+        daemon.locked = False
+        daemon._lock_hold_until = time.time() + 999
+        _stub_detector(tmp_path, monkeypatch, 0)
+        daemon.reconcile_lock()
+        assert daemon.locked is True
+
+
 class TestItIsVisible:
     def test_locked_is_its_own_published_state(self, daemon, tmp_path,
                                                monkeypatch):
@@ -203,10 +242,30 @@ class TestTheGateIsWhereItMatters:
             "the per-frame gate must consider the lock, not only the toggle"
         assert "if not self.enabled:\n                    continue" not in loop
 
-    def test_the_poll_checks_the_lock(self):
+    def test_the_lock_is_polled_above_the_gate_not_below_it(self):
+        """The bug this pins: reconcile_lock() lived in refresh(), which the
+        loop reaches *after* the gate. So the microphone closed on lock and
+        then nothing ever looked again -- it stayed closed after unlocking
+        until the service was restarted, which is the exact failure the
+        feature exists to prevent. Caught by locking the running daemon and
+        watching it never come back.
+        """
+        loop = DAEMON_SRC[DAEMON_SRC.index("    def run(self, device"):]
+        polled = loop.index("self.reconcile_lock()")
+        gate = loop.index("if not self.listening:")
+        assert polled < gate, \
+            "the lock poll is below the gate, so it stops running once it fires"
+
         refresh = DAEMON_SRC[DAEMON_SRC.index("    def refresh(self):"):]
         refresh = refresh[:refresh.index("\n    def ", 10)]
-        assert "self.reconcile_lock()" in refresh
+        assert "self.reconcile_lock()" not in refresh, \
+            "refresh() is called from below the gate; it must not own this"
+
+    def test_the_lock_poll_has_its_own_clock(self):
+        """Sharing `last_poll` would tie it to the config reload, which is
+        also below the gate."""
+        loop = DAEMON_SRC[DAEMON_SRC.index("    def run(self, device"):]
+        assert "last_lock_poll" in loop
 
     def test_push_to_talk_is_gated_too(self):
         """It bypasses the wake word, so a lock that only stopped the wake

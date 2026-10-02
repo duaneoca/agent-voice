@@ -525,6 +525,11 @@ STATES = ("off", "locked", "listening", "capture", "transcribing",
 #: The subset that means a turn is underway, i.e. what the HUD shows for.
 BUSY_STATES = ("capture", "transcribing", "thinking", "speaking", "followup")
 
+#: How long `agentvoice lock` outranks the poll. Long enough for a compositor
+#: to raise its lock surface and for `solitaryBlockedBy` to admit it, short
+#: enough that a stale announcement cannot hold the microphone shut.
+LOCK_HOLD_S = 10.0
+
 
 def session_locked() -> bool | None:
     """True while the compositor holds a session lock, None when unknowable.
@@ -596,6 +601,10 @@ class Daemon:
         #: Set from the compositor's session lock, not from anything the user
         #: asked for. See the `listening` property.
         self.locked = False
+        #: How long an explicitly announced lock outranks the poll, for the
+        #: moment between the lock key being pressed and the compositor
+        #: admitting to a lock.
+        self._lock_hold_until = 0.0
         # Half duplex. One microphone six inches from the speakers has no
         # chance against its own output, so the microphone is simply deaf
         # while the machine talks -- and for a moment afterwards, because a
@@ -684,6 +693,15 @@ class Daemon:
                           f"so the microphone will not close on lock: no "
                           f"omarchy-hyprland-session-locked on PATH and no "
                           f"logind LockedHint{OFF}")
+            return
+        if not locked and time.time() < self._lock_hold_until:
+            # Told to lock a moment ago, and the compositor has not caught up:
+            # `solitaryBlockedBy` does not gain LOCK the instant the keybind
+            # fires. Without this grace period, binding `agentvoice lock` to
+            # the lock key made things *worse* than not binding it -- the
+            # poll would reopen the microphone for the couple of seconds
+            # right after locking, which is precisely the window the binding
+            # was there to close.
             return
         if locked == self.locked:
             return
@@ -932,9 +950,10 @@ class Daemon:
         # Outside the reload guard: `omarchy default agent` writes its own
         # file, which cfg.reload() does not watch, so a switch at the desktop
         # would otherwise not reach the daemon until it restarted.
-        # First, because everything below it is pointless while the screen
-        # is locked, and because this is the cheapest way to notice.
-        self.reconcile_lock()
+        # Deliberately *not* reconcile_lock() here. refresh() is called from
+        # below the gate in the run loop, so a lock check here would stop
+        # being called the moment it closed the gate -- see the dedicated
+        # poll in run(), which is above it.
         self.reconcile_agent()
         # Outside the guard for the same reason: a voice arrives on disk when
         # the installer fetches it, and a file appearing changes no setting.
@@ -1159,7 +1178,7 @@ class Daemon:
             active_lead_in = self.pipe.lead_in_ms
 
             level_shown = 0.0
-            last_poll = time.time()
+            last_poll = last_lock_poll = time.time()
             # Push-to-talk: the key decides both ends of the turn, so the
             # wake word is bypassed and silence no longer endpoints.
             ptt = ptt_done = False
@@ -1172,8 +1191,10 @@ class Daemon:
                     # keybind that would rather not wait for the poll.
                     self.locked = cmd == "lock"
                     if self.locked:
+                        self._lock_hold_until = time.time() + LOCK_HOLD_S
                         self.silence()
                     else:
+                        self._lock_hold_until = 0.0
                         self._interrupt.clear()
                     print(f"\n  {YEL if self.locked else CYA}screen "
                           f"{'locked' if self.locked else 'unlocked'} "
@@ -1194,6 +1215,17 @@ class Daemon:
                     self.state.publish("capture", **last)
                 elif cmd == "talk-end" and ptt:
                     ptt_done = True
+
+                # Before the gate below, and on its own clock, because
+                # everything past the gate is skipped while the screen is
+                # locked. The lock check used to live in refresh(), which is
+                # below it: the microphone closed on lock and then nothing
+                # ever looked again, so it stayed closed after unlocking
+                # until the service was restarted. Which is the exact failure
+                # this feature exists to avoid.
+                if time.time() - last_lock_poll > 2.0:
+                    last_lock_poll = time.time()
+                    self.reconcile_lock()
 
                 # Deaf window after our own speech: discard without even
                 # measuring, so a tail of reverb cannot register as input.
