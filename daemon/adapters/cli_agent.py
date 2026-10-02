@@ -1,7 +1,8 @@
 """The other nine agents Omarchy knows, as plain-text CLI subprocesses.
 
-None of these is installed on this machine, so none of their headless
-protocols could be observed. Rather than ship nine speculative JSON parsers,
+None of the nine was installed where this was written, so none of their
+headless protocols has been observed. Rather than ship nine speculative
+JSON parsers,
 this is one adapter with a command template per agent and plain stdout
 streaming -- the lowest-common-denominator contract that every one of them
 supports.
@@ -12,19 +13,22 @@ of them launch a TUI), the template here uses the CLI's documented
 non-interactive form instead and is marked UNVERIFIED: it is a starting point
 for someone with that agent installed, not a tested path.
 
-Verified-by-observation adapters live in their own modules: claude_code.py
-(fully), codex.py (envelope only), gemini.py (flags only).
+Adapters that have answered a real turn live in their own modules:
+claude_code.py, codex.py, gemini.py and antigravity.py. Nothing on this
+shared template has, so what each template claims about "do not stop and
+ask" is a reading of a --help page, not an observation.
 """
 from __future__ import annotations
 
 import shlex
-import shutil
 import signal
 import subprocess
 import threading
 from typing import Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
+from .base import (
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+)
 
 #: agent id -> (argv template, verified?). "{prompt}" is substituted.
 #: Confirmed non-interactive by omarchy-agent's own table:
@@ -95,6 +99,12 @@ class CliAgent(Adapter):
             yield Chunk(error=f"could not start {self.binary}: {e}")
             return
 
+        # Drained in the background from here on: stderr is a 64KB pipe
+        # and it is not read until stdout ends, so a chatty CLI fills it,
+        # blocks on its next write, and stops producing stdout -- which the
+        # watchdog then reports as "stopped responding".
+        errors = Drain(proc.stderr)
+
         with self._lock:
             self._proc = proc
         dog = Watchdog(proc, self.idle_timeout_s)
@@ -115,7 +125,7 @@ class CliAgent(Adapter):
                                   f"{dog.idle_s:.0f}s")
                 return
             if code != 0 and not got_text and code not in (-15, 143, -9, 137):
-                err = (proc.stderr.read() or "").strip().splitlines()
+                err = errors.text().splitlines()
                 yield Chunk(error=(err[-1] if err else f"{self.binary} exited {code}"))
         finally:
             dog.stop()

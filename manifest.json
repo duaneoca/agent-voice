@@ -71,7 +71,7 @@
           "computer"
         ],
         "defaultValue": "hey computer",
-        "description": "Pinned by a Vosk grammar. Every option here was measured on this machine: all detect reliably and none false-woke across 98 seconds of ordinary speech. \"hey omarchy\" is absent because Vosk's lexicon has no such word and it never fires."
+        "description": "Pinned by a Vosk grammar. Every option here was measured on a 2014 MacBook Pro (i7-4980HQ): all detect reliably and none false-woke across 98 seconds of ordinary speech. \"hey omarchy\" is absent because Vosk's lexicon has no such word and it never fires."
       },
       {
         "key": "micThresholdDb",
@@ -143,7 +143,7 @@
           "small.en"
         ],
         "defaultValue": "tiny.en",
-        "description": "tiny.en is the measured default on 2014-era hardware: 4.9% WER with the vocabulary prompt at ~320ms. small.en costs nearly two seconds per turn."
+        "description": "tiny.en is the measured default on a 2014 MacBook Pro (i7-4980HQ): 4.9% WER with the vocabulary prompt at ~320ms. small.en costs nearly two seconds per turn."
       },
       {
         "key": "speakReplies",
@@ -209,7 +209,7 @@
         "max": 99,
         "step": 1,
         "defaultValue": 90,
-        "description": "Measured here: real phrase ~99, phonetic near-miss ~90, unrelated speech ~0."
+        "description": "Measured on a 2014 MacBook Pro (i7-4980HQ): real phrase ~99, phonetic near-miss ~90, unrelated speech ~0."
       },
       {
         "key": "conversationMode",
@@ -238,7 +238,7 @@
           "off"
         ],
         "defaultValue": "auto",
-        "description": "Rough text shown as you talk, before Whisper returns. It needs the Vosk model, which costs 156MB resident. 'auto' shows it only when Vosk is already loaded for the wake word, so it is never paid for twice."
+        "description": "Rough text shown as you talk, before Whisper returns. It needs the Vosk model, which costs 114MB resident. 'auto' shows it only when Vosk is already loaded for the wake word, so it is never paid for twice."
       },
       {
         "key": "projectDir",
@@ -280,8 +280,9 @@
         "type": "integer",
         "label": "How much louder you must be (%)",
         "defaultValue": 150,
-        "minimum": 110,
-        "maximum": 400,
+        "min": 110,
+        "max": 400,
+        "step": 10,
         "description": "How far above its own bleed your voice has to reach before it stops. 150 means half again as loud. Higher is harder to trigger by accident and harder to trigger on purpose."
       },
       {
@@ -296,8 +297,9 @@
         "type": "integer",
         "label": "How long it stays afterwards (ms)",
         "defaultValue": 2000,
-        "minimum": 0,
-        "maximum": 10000,
+        "min": 0,
+        "max": 10000,
+        "step": 500,
         "description": "Measured from the end of the exchange, including the follow-up window. Zero closes it immediately."
       },
       {

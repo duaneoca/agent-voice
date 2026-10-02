@@ -68,11 +68,21 @@ def peak_rss_mb() -> float:
 
 
 class VoskEngine:
-    """Streaming. Fed in 100ms chunks the way a live daemon would."""
+    """Streaming. Fed in 100ms chunks the way the live daemon does.
 
-    CHUNK = 3200  # 100ms of 16k mono int16
+    Bytes, not frames: 3200 bytes of int16 mono is 1600 frames, i.e. 100ms.
+    The daemon's own CHUNK is 3200 *frames*, which is 200ms, and it slices
+    bytes at twice this step. Same duration per call, stated two ways.
+    """
+
+    CHUNK = 3200  # bytes: 1600 frames, i.e. 100ms of 16k mono int16
 
     def __init__(self, model_dir: Path, threads: int):
+        # `threads` is accepted and ignored: Vosk's Python binding exposes no
+        # thread count, and Kaldi decodes one utterance on one thread. Taking
+        # it keeps one signature for both engines; a number in a result table
+        # that said "vosk, 4 threads" would be an invention.
+        del threads
         import vosk
         vosk.SetLogLevel(-1)
         self.name = f"vosk-{model_dir.name.replace('vosk-model-', '')}"
@@ -162,6 +172,19 @@ def main() -> int:
         return 1
 
     rows = [l.split("\t") for l in gt_path.read_text().splitlines()[1:] if l.strip()]
+    # The tsv is tracked and the recordings are not, so a fresh clone has the
+    # transcripts without the audio -- which the check above cannot see, and
+    # read_wav then died on the first missing file with a traceback instead of
+    # the one line that says what to do.
+    absent = [pid for pid, _cat, _text in rows
+              if not (corpus / "wav" / f"{pid}.wav").exists()]
+    if absent:
+        print(f"  {len(absent)} of {len(rows)} clips have no recording "
+              f"(first: {absent[0]}.wav).")
+        print(f"  The transcripts are tracked, the audio is not. Record it:  "
+              f"python bench/record.py --corpus {corpus}")
+        return 1
+
     clips = [(pid, cat, text, *read_wav(corpus / "wav" / f"{pid}.wav")) for pid, cat, text in rows]
     audio_total = sum(c[4] for c in clips)
     print(f"\n  Corpus: {len(clips)} clips, {audio_total:.1f}s of audio")

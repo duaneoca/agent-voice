@@ -10,6 +10,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes anything. Spelled out because the default for a public
+# repository is a token that can push, and a workflow that runs on
+# pull_request from a fork should not be handed one.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -22,9 +28,13 @@ jobs:
         python-version: ['3.11', '3.12', '3.13']
 
     steps:
-      - uses: actions/checkout@v5
+      # Pinned to commit SHAs rather than to v5/v6: a tag is mutable, and a
+      # moved tag runs in this workflow. The comment is the version so the
+      # pin can be read; `gh api repos/<action>/git/ref/tags/<tag>` finds a
+      # new one.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -44,4 +54,42 @@ jobs:
           # exits 0 -- a green build that tested nothing, which is worse than
           # a red one.
           AGENTVOICE_STRICT: "1"
+        run: AGENTVOICE_PYTHON="$(command -v python)" ./bin/agentvoice-check
+
+  # The job above installs pytest and nothing else, which is what keeps it at
+  # fifteen seconds -- the daemon imports numpy, onnxruntime and the rest
+  # lazily, inside the functions that use them. The cost is that the numeric
+  # code is never run: test_barge.py and three verifier tests skip for want of
+  # numpy, and those cover the wake word and barge-in, which is where this
+  # project's bugs actually live.
+  #
+  # So: one job with the real requirements. Slower and heavier, and allowed to
+  # be -- and AGENTVOICE_NO_SKIPS makes the check script fail if anything
+  # skips here, because on a runner with the whole stack installed a skip is
+  # a test that was meant to run and did not.
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # 3.13 because that is what install.sh pins, and openWakeWord 0.4.0 is
+      # the last release that does not depend on tflite-runtime, which
+      # publishes no wheel past cp311.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Install the real stack
+        run: |
+          pip install -r requirements.txt \
+                      -r requirements-openwakeword.txt \
+                      -r requirements-dev.txt
+
+      - name: Install qmllint
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qt6-declarative-dev-tools
+
+      - name: Run checks
+        env:
+          AGENTVOICE_STRICT: "1"
+          AGENTVOICE_NO_SKIPS: "1"
         run: AGENTVOICE_PYTHON="$(command -v python)" ./bin/agentvoice-check

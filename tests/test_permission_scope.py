@@ -8,6 +8,8 @@ program's capabilities, so it cannot survive swapping the program.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from adapters.claude_code import ClaudeCode
@@ -62,6 +64,20 @@ class TestLevelsOffered:
     def test_every_backend_can_be_asked_or_trusted(self):
         for a in (ClaudeCode(), Codex(), Gemini()):
             assert a.levels[0] == "ask" and a.levels[-1] == "trusted"
+
+    def test_the_hook_command_is_shell_quoted(self):
+        """The command string is run by a shell, and the plugin lives under
+        $HOME. A space in either path would split it, give exit 127, and a
+        hook that cannot start is a non-blocking error: the tool proceeds."""
+        import json as _json
+        import shlex
+        settings = _json.loads(ClaudeCode._hook_settings())
+        command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        parts = shlex.split(command)
+        assert len(parts) == 3, parts
+        assert parts[1].endswith("permission_hook.py")
+        assert parts[2] == ClaudeCode.name
+        assert Path(parts[1]).exists()
 
     def test_a_backend_that_cannot_ask_says_so(self):
         """The panel must not print "asks before every change" for something

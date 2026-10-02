@@ -94,7 +94,7 @@ SETTINGS = (ROOT / "Settings.qml").read_text()
 def test_the_daemon_honours_the_setting():
     build = DAEMON[DAEMON.index("def _build_wake"):]
     build = build[:build.index("\n    def ", 10)]
-    assert 'use_verifier=cfg.bool("useVerifier")' in build
+    assert 'use_verifier=cfg.get_bool("useVerifier")' in build
 
 
 def test_switching_it_off_rebuilds_the_engine():
@@ -102,7 +102,7 @@ def test_switching_it_off_rebuilds_the_engine():
     threshold this cannot be assigned to a running engine."""
     spec = DAEMON[DAEMON.index("want = (engine,"):]
     spec = spec[:spec.index("self._build_wake(cfg, engine)")]
-    assert 'cfg.bool("useVerifier")' in spec
+    assert 'cfg.get_bool("useVerifier")' in spec
 
 
 def test_the_three_states_are_distinguishable_on_screen():

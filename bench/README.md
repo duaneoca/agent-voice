@@ -1,7 +1,9 @@
 # bench
 
 Picks the default STT/TTS stack from measurements on the machine in front of
-you, rather than from published numbers taken on hardware nobody here owns.
+you, rather than from published numbers taken on other hardware. The figures
+in `FINDINGS.md` were measured on a 2014 MacBook Pro (i7-4980HQ); yours will
+differ, which is the reason this exists.
 
 ## Run it
 
@@ -19,8 +21,8 @@ Results land in `results/*.json`.
 **`perceived_ms` is the headline, not RTF.** Vosk streams, so it consumes
 audio while you are still speaking and only the tail is left when you stop.
 Whisper is batch — it cannot begin until the utterance ends, so its entire
-run time is dead air. On this hardware Whisper-tiny has the *better* real-time
-factor and roughly ten times the perceived latency. Ranking on RTF alone would
+run time is dead air. On the hardware in FINDINGS.md, Whisper-tiny has the *better*
+real-time factor and roughly ten times the perceived latency. Ranking on RTF alone would
 pick the wrong engine.
 
 **WER is scored without punctuation.** Vosk's small models emit none, and
@@ -45,6 +47,12 @@ corpus/           prompts.txt, ground_truth.tsv, wav/
 results/          stt-*.json, tts.json
 ```
 
-The venv is built on the **system** interpreter with `--system-site-packages`,
-so the pacman-installed `python-vosk` and the wheel-installed `faster-whisper`
-and `piper-tts` are importable from one process.
+The venv is built by `uv` on its own CPython 3.13, from the same
+`requirements.txt` and `requirements-openwakeword.txt` the product installs --
+so a measurement describes the stack that ships, and it does not break when
+Arch bumps its system Python. It used to be the system interpreter with
+`--system-site-packages` and a pacman `python-vosk`; it is not any more.
+
+Those requirements give version *ranges*, not pins, so two runs weeks apart
+can resolve different wheels. Record the resolved versions alongside any
+number worth keeping.

@@ -3,7 +3,7 @@
 # openwakeword's package __init__, and sklearn exists only to fit the
 # personal verifier's logistic regression.
 #
-# Worth it for the rejection it buys. Measured on this hardware:
+# Worth it for the rejection it buys. Measured on a 2014 MacBook Pro:
 #
 #   Vosk grammar    "hey claude" 1.00  vs  "hey cloud"  1.00   (no separation)
 #   openWakeWord    "hey jarvis" 0.996 vs  near-miss    0.898  (separable at 0.90)

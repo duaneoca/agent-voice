@@ -5,7 +5,7 @@ right for a general detector and wrong for a microphone in your living room:
 a podcast saying the wake phrase produces the correct phonemes in the wrong
 voice, and nothing else in the pipeline can tell the difference. The energy
 gate only helps if the other speaker is quiet, and a grammar's confidence is
-no help at all -- measured on this machine, Vosk scored "hey cloud" 1.00
+no help at all -- measured on a 2014 MacBook Pro, Vosk scored "hey cloud" 1.00
 against a "hey claude" grammar.
 
 A verifier is the only speaker-aware layer available. It is a small logistic
@@ -19,7 +19,6 @@ model already learned rather than learning speech from scratch.
 """
 from __future__ import annotations
 
-import os
 import warnings
 
 # openWakeWord asks onnxruntime for a CUDA provider it will not find on a CPU
@@ -37,9 +36,8 @@ import sys
 import wave
 from pathlib import Path
 
-from paths import (  # noqa: F401
-    DATA_DIR, VERIFIERS as VERIFIER_DIR, WAKEWORDS, piper_voices,
-)
+from paths import VERIFIERS as VERIFIER_DIR
+from paths import WAKEWORDS, piper_voices
 
 RATE = 16_000
 
@@ -177,6 +175,11 @@ def train(model_name: str, positives: Path, negatives: Path,
             model_name=str(model_path),
         )
     except ValueError as e:
+        # Positives only contribute features from frames the base model
+        # already scores above 0.5, so a clip it never hears contributes
+        # nothing. Upstream signals that with a ValueError whose message has
+        # the sense inverted ("The positive features were created!"), which
+        # is worth translating before anybody reads it.
         if "positive features" in str(e):
             raise ClipProblem(
                 f"the {key} model did not recognise the wake phrase in any "
@@ -184,10 +187,6 @@ def train(model_name: str, positives: Path, negatives: Path,
                 "the right phrase, and that the microphone level looked healthy."
             ) from e
         raise
-    # Positives only contribute features from frames the base model already
-    # scores above 0.5, so a clip it never hears contributes nothing. Upstream
-    # signals that with a ValueError whose message has the sense inverted
-    # ("The positive features were created!"), which is worth translating.
     return output
 
 
@@ -333,7 +332,6 @@ def suggest_threshold(model: str, positives: Path,
 
 def main() -> int:
     import argparse
-    import sys
 
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)

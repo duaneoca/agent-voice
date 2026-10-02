@@ -7,3 +7,26 @@ bench/.venv/
 bench/models/
 bench/corpus/wav/
 bench/results/
+
+# Local review notes, not for the repo.
+review.md
+
+# This repository invites people to record their own voice and to train a
+# verifier from it, and to put an API key in a file. None of that belongs in
+# a commit, and the recordings and models are not reconstructable from one
+# anyway. Listed by extension rather than by location, because the training
+# tool writes under $XDG_DATA_HOME but a checkout is where someone will
+# experiment.
+.env
+.env.*
+*.key
+endpoint.key
+.venv/
+venv/
+*.wav
+*.onnx
+*.onnx.json
+*.joblib
+*.pkl
+*.npy
+*.tflite

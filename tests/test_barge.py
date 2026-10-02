@@ -34,7 +34,8 @@ class TestGate:
         """Our own voice starts the utterance; it must set the bar, not clear
         it. Otherwise every reply interrupts itself on its first syllable."""
         b = BargeIn()
-        loud = tone(WARM := 0.2, 0.3)
+        # WARMUP_FRAMES of our own voice, which is the calibration window.
+        loud = tone(0.2, 0.3)
         assert not b.feed(loud), "the calibration window itself triggered"
 
     def test_a_quiet_room_after_calibration_stays_quiet(self):

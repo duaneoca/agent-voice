@@ -1,4 +1,7 @@
-.venv/
-models/
-corpus/wav/
-results/
+# Intentionally almost empty. The root .gitignore covers everything here --
+# bench/.venv/, bench/models/, bench/corpus/wav/, bench/results/, plus the
+# recordings, keys and model files by extension. This file used to repeat
+# those four paths, which meant two places to keep in step.
+#
+# What is tracked in corpus/ is the prompts and the transcripts; the audio is
+# not, and is recorded locally with `python bench/record.py`.

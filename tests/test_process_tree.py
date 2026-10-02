@@ -29,18 +29,38 @@ def alive(pid: int) -> bool:
     return True
 
 
+def until(predicate, timeout: float = 5.0) -> bool:
+    """Poll `predicate` until it is true, or give up.
+
+    Rather than sleeping a fixed 0.4s and asserting. A signal usually lands
+    in milliseconds, so a fixed wait is both slower than it needs to be and
+    occasionally shorter than it needs to be -- a loaded CI runner was the
+    one place it mattered, and the failure looked like a real bug.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
 class TestStopTree:
     def test_a_group_leader_and_its_children_all_go(self):
         proc = subprocess.Popen(
             ["bash", "-c", "sleep 60 & sleep 60"], start_new_session=True)
-        time.sleep(0.5)
-        kids = subprocess.run(["pgrep", "-P", str(proc.pid)],
-                              capture_output=True, text=True).stdout.split()
-        assert kids, "expected the shell to have spawned a child"
+
+        def children():
+            return subprocess.run(["pgrep", "-P", str(proc.pid)],
+                                  capture_output=True, text=True).stdout.split()
+
+        assert until(lambda: bool(children())), \
+            "expected the shell to have spawned a child"
+        kids = children()
         stop_tree(proc)
-        time.sleep(0.5)
-        assert proc.poll() is not None
-        assert not any(alive(int(k)) for k in kids), "a child outlived the kill"
+        assert until(lambda: proc.poll() is not None)
+        assert until(lambda: not any(alive(int(k)) for k in kids)), \
+            "a child outlived the kill"
 
     def test_it_refuses_to_kill_the_caller(self):
         """The bug this closes, which it caused before it was caught: for a
@@ -51,8 +71,8 @@ class TestStopTree:
         proc = subprocess.Popen(["sleep", "30"])          # same group as us
         assert os.getpgid(proc.pid) == os.getpgid(0), "expected a non-leader"
         stop_tree(proc)
-        time.sleep(0.4)
-        assert proc.poll() is not None, "the child should still be stopped"
+        assert until(lambda: proc.poll() is not None), \
+            "the child should still be stopped"
         assert alive(os.getpid()), "we killed ourselves"
 
     def test_an_already_dead_process_is_not_an_error(self):
@@ -69,8 +89,7 @@ class TestStopTree:
     def test_both_signals_work(self, sig):
         proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
         stop_tree(proc, sig)
-        time.sleep(0.4)
-        assert proc.poll() is not None
+        assert until(lambda: proc.poll() is not None)
 
 
 class TestAdaptersStartTheirOwnGroup:

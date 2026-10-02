@@ -31,8 +31,17 @@ PYTHON_VERSION=3.13
 # True when this script is the installed copy rather than a checkout or the
 # plugin directory -- which changes what it is safe to delete. Both sides are
 # resolved because either can be a symlink.
+#
+# A *dev* install is the exception, and the reason for the -L test: --dev
+# points $APP at the checkout, so afterwards every path resolves to the same
+# place and a plain `./install.sh` from that checkout decided it was already
+# installed and left the link in place. There was then no way back to a real
+# install short of deleting $APP by hand.
 SELF_IS_APP=0
-[[ "$(readlink -f "$ROOT")" == "$(readlink -f "$APP")" ]] && SELF_IS_APP=1
+if [[ ! -L $APP ]] \
+   && [[ "$(readlink -f "$ROOT")" == "$(readlink -f "$APP")" ]]; then
+  SELF_IS_APP=1
+fi
 
 ASSUME_YES=0
 WANT_OWW=""
@@ -136,7 +145,18 @@ remove_keybinds() {
   # -e, because the marker starts with "--" and grep parses that as the end of
   # its own options: without it the match silently never happened and the block
   # was left in place while the uninstall reported success.
-  if grep -qF -e "$KEYBIND_BEGIN" "$file"; then
+  if grep -qF -e "$KEYBIND_BEGIN" "$file" \
+     && ! grep -qF -e "$KEYBIND_END" "$file"; then
+    # Half a marker pair is not something to guess at. The filter below walks
+    # forward from the begin marker looking for the end one, so with the end
+    # marker gone -- edited out by hand, or lost to a merge -- it would drop
+    # every line to the bottom of the file. Hyprland raises no config error
+    # about a shorter file, so the rollback would not fire either, and it
+    # would print "Removed the keybinds".
+    warn "${file/#$HOME/~} has the agentvoice start marker but not the end one,"
+    warn "so it was left alone. Delete these lines by hand:"
+    grep -nF -e "$KEYBIND_BEGIN" -A6 "$file" | sed 's/^/    /' >&2
+  elif grep -qF -e "$KEYBIND_BEGIN" "$file"; then
     local backup="$file.agentvoice-backup.$(date -u +%Y%m%d%H%M%S)"
     cp "$file" "$backup"
     local tmp="$file.agentvoice-tmp.$$"
@@ -258,10 +278,26 @@ if [[ $UNINSTALL == 1 ]]; then
   systemctl --user daemon-reload 2>/dev/null || true
   ok "Stopped and removed the user service"
 
+  # Only the symlinks this installed. They are created with `ln -sf` pointing
+  # into $APP, so anything else of that name belongs to somebody else -- a
+  # wrapper script of their own, or a different checkout -- and deleting it
+  # would be this script tidying up after a program it did not install.
+  REMOVED=0 FOREIGN=""
   for cmd in agentvoice agentvoice-train-verifier; do
-    rm -f "$BINDIR/$cmd"
+    link="$BINDIR/$cmd"
+    [[ -e $link || -L $link ]] || continue
+    if [[ -L $link && "$(readlink "$link")" == "$APP/bin/$cmd" ]]; then
+      rm -f "$link"
+      REMOVED=1
+    else
+      FOREIGN="$FOREIGN\n    $link"
+    fi
   done
-  ok "Removed the commands from $BINDIR"
+  (( REMOVED )) && ok "Removed the commands from $BINDIR"
+  if [[ -n $FOREIGN ]]; then
+    warn "These are not the links this installed, so they stay:"
+    printf "%b\n" "$FOREIGN" >&2
+  fi
 
   rm -rf "$VENV" "$MODELS"
   ok "Removed the environment and the models"
@@ -443,8 +479,8 @@ if [[ -z $WANT_OWW ]]; then
   cat <<'WHY'
 
   Wake word: Vosk, which takes any phrase. It scores phonetic neighbours as
-  high as the real one -- measured here, "hey cloud" scores 1.00 against a
-  "hey claude" grammar, which is how a podcast wakes it.
+  high as the real one -- measured on a 2014 MacBook Pro, "hey cloud" scores
+  1.00 against a "hey claude" grammar, which is how a podcast wakes it.
 
   openWakeWord has four fixed phrases, real rejection, and can be trained on
   your own voice. It is a further 154MB and is not installed by default.
@@ -460,24 +496,78 @@ if [[ $WANT_OWW == 1 ]]; then
 fi
 
 # --- models ----------------------------------------------------------------
+# models.lock holds the revision to fetch voices from and a sha256 for every
+# file either script downloads. See the comments in it.
+MODELS_LOCK="$ROOT/models.lock"
+
+# The recorded hash for a file, or nothing.
+pinned_sha() {
+  [[ -f $MODELS_LOCK ]] || return 0
+  awk -v want="$1" '$1=="sha256" && $2==want {print $3; exit}' "$MODELS_LOCK"
+}
+
+# The piper-voices revision to fetch from. Falls back to `main` only when the
+# lock is missing entirely, which is a development checkout mid-edit rather
+# than an install.
+PIPER_REV="$(awk '$1=="revision" && $2=="piper" {print $3; exit}' \
+             "$MODELS_LOCK" 2>/dev/null || true)"
+PIPER_REV="${PIPER_REV:-main}"
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/$PIPER_REV/en/en_US"
+
+# Downloaded to a temp name, checked, and only then renamed into place.
+#
+# Two separate failures this closes. Writing straight to the final name meant
+# a Ctrl-C, a dropped connection or a full disk left a truncated file -- and
+# the "already here" check is by existence, so that file was never fetched
+# again; the symptom is a voice that loads and says nothing. And nothing
+# checked what arrived: the voices came from a mutable branch over a
+# connection whose far end we take on trust.
+#
+# --proto '=https': these URLs are https, and a redirect to http:// is not
+# something to follow quietly.
+download() {
+  local url="$1" dest="$2" name="${3:-$(basename "$2")}" tmp want got
+  want="$(pinned_sha "$name")"
+  if [[ -z $want ]]; then
+    warn "no hash recorded for $name, so it is not installed."
+    warn "Add it to models.lock with: ./bench/pin-models.sh > models.lock"
+    return 1
+  fi
+  tmp="$(mktemp "$(dirname "$dest")/.download.XXXXXX")"
+  if ! curl -fL --proto '=https' --progress-bar -o "$tmp" "$url"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  got="$(sha256sum "$tmp" | cut -d' ' -f1)"
+  if [[ $got != "$want" ]]; then
+    rm -f "$tmp"
+    warn "$name does not match the hash in models.lock:"
+    warn "  expected $want"
+    warn "  received $got"
+    warn "Nothing was installed. Either the file upstream changed -- refresh"
+    warn "the lock with ./bench/pin-models.sh -- or it was not the file."
+    return 1
+  fi
+  mv -f "$tmp" "$dest"
+}
+
 fetch_vosk() {
   local dir="$MODELS/vosk-model-small-en-us-0.15"
   [[ -d $dir ]] && return 0
   say "Downloading the Vosk model (40MB)…"
-  curl -fL --progress-bar -o "$MODELS/.vosk.zip" \
-    https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+  download https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip \
+    "$MODELS/.vosk.zip" vosk-model-small-en-us-0.15.zip
   bsdtar -xf "$MODELS/.vosk.zip" -C "$MODELS" && rm -f "$MODELS/.vosk.zip"
 }
 
 fetch_voice() {
-  local name="$1" quality="$2"
   local dir="$MODELS/piper" file="en_US-$1-$2.onnx"
   mkdir -p "$dir"
   [[ -f "$dir/$file" ]] && return 0
-  local base="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/$1/$2"
+  local base="$PIPER_BASE/$1/$2"
   say "Downloading the voice $file (60MB)…"
-  curl -fL --progress-bar -o "$dir/$file"      "$base/$file"
-  curl -fL --progress-bar -o "$dir/$file.json" "$base/$file.json"
+  download "$base/$file"      "$dir/$file"
+  download "$base/$file.json" "$dir/$file.json"
 }
 
 # What the settings already ask for. An uninstall leaves shell.json alone,
@@ -509,9 +599,24 @@ fetch_voice lessac medium
 # Deduplicated, and silent about the ones already here: fetch_voice announces
 # a real download and returns early otherwise, so an extra line of its own said
 # "fetching" twice for one voice and once for a voice already on disk.
+# A Piper voice name, or nothing. Both sources are untrusted in the same way:
+# the flag is built by the settings screen from shell.json, and `configured`
+# reads shell.json directly. The name becomes a URL path and a filename, so a
+# value of "../../x" or "a b" is not a voice, it is a different request.
+#
+# Shape only. Whether it is a voice this will actually install is decided by
+# models.lock, in download(): a name with no recorded hash is refused there.
+voice_name_ok() {
+  [[ $1 =~ ^[a-z][a-z0-9_]*-(x_low|low|medium|high)$ ]]
+}
+
 fetched=""
 for v in "$WANT_VOICE_ARG" "$(configured voice)"; do
   [[ -n $v && $v != lessac-medium ]] || continue
+  if ! voice_name_ok "$v"; then
+    warn "ignoring \"$v\": that is not the shape of a Piper voice name"
+    continue
+  fi
   [[ " $fetched " == *" $v "* ]] && continue
   fetched="$fetched $v"
   fetch_voice "${v%-*}" "${v##*-}"
@@ -537,7 +642,7 @@ else
   mkdir -p "$APP"
   cp -r "$ROOT/daemon" "$ROOT/bin" "$ROOT/desktop" "$APP/"
   cp "$ROOT/install.sh" "$ROOT/requirements.txt" \
-     "$ROOT/requirements-openwakeword.txt" "$APP/"
+     "$ROOT/requirements-openwakeword.txt" "$ROOT/models.lock" "$APP/"
   ok "Installed the daemon into $APP"
 fi
 

@@ -35,6 +35,34 @@ _EMOJI = re.compile(
     "]+"
 )
 _WHITESPACE = re.compile(r"[ \t]+")
+
+#: C0 and C1 control characters, less tab and newline. Transcripts and model
+#: replies are printed, and a terminal does not merely display these: OSC 52
+#: writes the system clipboard in foot, and a CSI sequence can rewrite lines
+#: that have already scrolled past. The daemon normally runs under systemd,
+#: where they land in the journal instead -- but `agentvoice listen` in a
+#: terminal is how it is developed and debugged, which is exactly when the
+#: text being printed is the text nobody trusts.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def safe_for_terminal(text: str) -> str:
+    """`text` with control characters taken out, for printing or logging."""
+    return _CONTROL.sub("", str(text))
+
+
+def as_prompt(text: str) -> str:
+    """A transcript, in the shape it can be handed to a CLI as an argument.
+
+    Every backend here passes the transcript in argv -- `claude -p <text>`,
+    `codex exec <text>` -- where a leading hyphen is read as a flag and not
+    as speech. Whisper does produce one: a pause, a dictated dash, or a false
+    start comes back as "- something". The worst case is an unknown-flag
+    error rather than anything running, but it is a turn lost to a character
+    nobody said, and nothing a person says starts with a hyphen.
+    """
+    cleaned = _CONTROL.sub("", str(text)).strip()
+    return cleaned.lstrip("-‐‑‒–— \t").strip()
 _SENTENCE_END = (".", "!", "?", ":", ";", ",")
 
 
@@ -67,12 +95,55 @@ def make_speakable(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
-# A boundary is .!? followed by whitespace -- but not inside a decimal number
-# ("2.47 PM") and not after a single capital initial ("J. Smith").
-_BOUNDARY = re.compile(r"(?<!\d)(?<![A-Z])[.!?]+(?=\s)")
+# A boundary is .!? followed by whitespace -- but not after a single capital
+# initial ("J. Smith"), which is what `\b[A-Z]` describes: a capital that is
+# a word on its own.
+#
+# It used to be `(?<!\d)(?<![A-Z])`, which was too broad on both counts and
+# refused to end a sentence after *any* digit or *any* capital: "shipped in
+# 2024." and "fix the GPU." were never boundaries, so the rest of the reply
+# merged into one long utterance. The decimal case it was guarding does not
+# need a guard at all -- the "2.47" period is followed by a digit, and a
+# boundary already has to be followed by whitespace.
+_BOUNDARY = re.compile(r"(?<!\b[A-Z])[.!?]+(?=\s)")
 
 #: Sentences shorter than this merge forward so TTS does not sound choppy.
 MIN_CHUNK_CHARS = 20
+
+#: A code fence. Matters here and not only in make_speakable, because the
+#: splitting happens first: `make_speakable` turns a *whole* fenced block
+#: into "Code omitted", but it is handed one sentence at a time, so a block
+#: containing ". " used to be cut up -- the opening piece became "Code
+#: omitted" and every piece after it was read out as code.
+_FENCE = "```"
+
+
+def _next_boundary(buffer: str):
+    """The first sentence boundary outside a code fence, or None.
+
+    Inside a fence nothing is a sentence, however much it looks like one: the
+    whole block is going to become "Code omitted", and splitting it first
+    means the opening piece becomes those two words and every piece after it
+    is read out as code, one line at a time.
+
+    A *closed* fence is skipped over, so a boundary after it is still found
+    and the emitted chunk carries the complete block for make_speakable to
+    flatten. An unclosed one ends the scan: the rest of it may still be on
+    its way.
+    """
+    pos = 0
+    while True:
+        opens_at = buffer.find(_FENCE, pos)
+        end = len(buffer) if opens_at < 0 else opens_at
+        match = _BOUNDARY.search(buffer, pos, end)
+        if match:
+            return match
+        if opens_at < 0:
+            return None
+        closes_at = buffer.find(_FENCE, opens_at + len(_FENCE))
+        if closes_at < 0:
+            return None
+        pos = closes_at + len(_FENCE)
 
 
 def iter_sentences(deltas):
@@ -82,7 +153,7 @@ def iter_sentences(deltas):
     for delta in deltas:
         buffer += delta
         while True:
-            match = _BOUNDARY.search(buffer)
+            match = _next_boundary(buffer)
             if not match:
                 break
             sentence = buffer[:match.end()]

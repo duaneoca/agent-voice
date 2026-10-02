@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Wake word -> utterance -> transcript -> spoken reply.
 
-The loop, with no agent behind it yet: it says back what it heard, which is
-enough to feel the timing and to surface the echo problem early.
+The loop. An agent answers the transcript and the reply is spoken a sentence
+at a time; with no agent installed it says back what it heard instead, which
+is also how the timing and the echo problem are exercised without one.
 
 Two recognisers, because they are good at different things:
 
@@ -20,7 +21,8 @@ daemon/agentvoice.toml. Both are re-read between utterances.
 
     python daemon/wake_listen.py
     python daemon/wake_listen.py --simulate bench/corpus/wav/11.wav
-    agentvoice toggle          # or: kill -USR1 $(cat $XDG_RUNTIME_DIR/agentvoice/pid)
+    agentvoice start|stop      # the service
+    agentvoice mic             # release or re-engage the microphone, service up
 """
 from __future__ import annotations
 
@@ -40,14 +42,22 @@ from adapters import (  # noqa: E402
     explain as explain_agent, load as load_adapter, omarchy_default, sentences,
 )
 from adapters.base import speech_safe  # noqa: E402
-from speech_text import is_stop_command  # noqa: E402
+from speech_text import (  # noqa: E402
+    as_prompt, is_stop_command, safe_for_terminal,
+)
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
-from paths import (  # noqa: F401
-    ROOT, endpoint_key, project_dir, vocab_file, vosk_model,
+from paths import (  # noqa: E402
+    endpoint_key, project_dir, vocab_file, vosk_model,
 )
 
-RATE, CHUNK = 16_000, 3200          # 100ms frames
+#: `blocksize` is in frames, not bytes: 3200 frames at 16kHz is 200ms, not
+#: the 100ms this said for a long time. Every figure derived from it was
+#: therefore stated at half its real value -- the echo drop, the loudness
+#: run-up, monitor's end-of-speech wait. CHUNK_MS exists so the next one
+#: cannot be written down by hand and be wrong.
+RATE, CHUNK = 16_000, 3200
+CHUNK_MS = 1000 * CHUNK // RATE     # 200
 
 
 def _host(url: str) -> str:
@@ -101,11 +111,17 @@ def vocab_stamp() -> tuple[str, float]:
 
 
 def load_vocab() -> str | None:
+    """The user's term list as one prompt line, or None.
+
+    Comments are tested after stripping: an indented `  # notes` was being
+    read as a vocabulary term, and a term is a word Whisper is told to
+    expect, so the file's own commentary ended up in the prompt.
+    """
     path = vocab_file()
     if not path.exists():
         return None
-    terms = [l.strip() for l in path.read_text().splitlines()
-             if l.strip() and not l.startswith("#")]
+    terms = [stripped for line in path.read_text().splitlines()
+             if (stripped := line.strip()) and not stripped.startswith("#")]
     return ", ".join(terms) + "." if terms else None
 
 
@@ -194,28 +210,28 @@ class Pipeline:
     def apply(self, cfg: Config) -> None:
         """Pick up the current knobs. Called between utterances only, so a
         turn in progress is never disturbed."""
-        engine = cfg.str("engine")
+        engine = cfg.get_str("engine")
         # The verifier's mtime belongs in the spec: retraining rewrites that
         # file, and without it the daemon keeps the copy it loaded at startup
         # for ever. A freshly trained verifier then appears to do nothing --
         # or worse, a replaced bad one goes on suppressing every wake.
         want = (engine,
-                cfg.str("owwModel") if engine == "openwakeword"
-                else cfg.str("phrase").lower(),
+                cfg.get_str("owwModel") if engine == "openwakeword"
+                else cfg.get_str("phrase").lower(),
                 self._verifier_stamp(cfg) if engine == "openwakeword" else 0.0,
                 # In the spec, not assigned after the fact: openWakeWord takes
                 # the verifier as a constructor argument, so turning it off
                 # means building the engine without it. The threshold is the
                 # opposite case -- a number the running engine can be handed.
-                cfg.bool("useVerifier") if engine == "openwakeword" else False)
+                cfg.get_bool("useVerifier") if engine == "openwakeword" else False)
         if want != getattr(self, "_wake_spec", None):
             self._wake_spec = want
             self._build_wake(cfg, engine)
 
-        self.lead_in_ms = cfg.int("leadInMs")
-        self.trailing_ms = cfg.int("trailingSilenceMs")
-        self.min_utterance_ms = cfg.int("minUtteranceMs")
-        self.max_utterance_ms = cfg.int("maxUtteranceMs")
+        self.lead_in_ms = cfg.get_int("leadInMs")
+        self.trailing_ms = cfg.get_int("trailingSilenceMs")
+        self.min_utterance_ms = cfg.get_int("minUtteranceMs")
+        self.max_utterance_ms = cfg.get_int("maxUtteranceMs")
         self.threshold_db = float(cfg["micThresholdDb"])
         # Assigned here rather than added to the spec above, like every other
         # knob on this list: it needs a different number, not a different model,
@@ -230,21 +246,24 @@ class Pipeline:
         # change the spec, which rebuilt the engine at whatever the number had
         # become by then.
         if self._oww is not None:
-            self._oww.threshold = cfg.int("owwThresholdPct") / 100.0
+            self._oww.threshold = cfg.get_int("owwThresholdPct") / 100.0
         self.refractory_ms = int(cfg["refractoryMs"])
         self.wake_confidence = float(cfg["wakeConfidence"])
         # Changing the transcription model used to be a silent no-op: it was
         # built once in __init__ and never consulted again, so the setting
         # appeared to do nothing until the service restarted.
-        wanted = self._whisper_override or cfg.str("model")
+        wanted = self._whisper_override or cfg.get_str("model")
         if wanted != self._whisper_size:
             self._load_whisper(wanted)
 
-        self._partials = cfg.str("livePartials")
-        self.conversation = cfg.bool("conversationMode")
-        self.follow_up_ms = cfg.int("followUpMs")
-        # 300ms of continuous speech-level audio before a partial may wake it.
-        self.min_loud_frames = 3
+        self._partials = cfg.get_str("livePartials")
+        self.conversation = cfg.get_bool("conversationMode")
+        self.follow_up_ms = cfg.get_int("followUpMs")
+        # 600ms of continuous speech-level audio before a partial may wake
+        # it. Written as a duration rather than a frame count because the
+        # frame is 200ms, and this was described as 300ms for as long as the
+        # frame was described as 100ms.
+        self.min_loud_frames = max(1, 600 // CHUNK_MS)
 
     @property
     def detection_threshold(self) -> float | None:
@@ -256,7 +275,7 @@ class Pipeline:
         """Modification time of the verifier this engine would load, or 0."""
         try:
             from verifier import installed_verifiers, resolve_model
-            _, key = resolve_model(cfg.str("owwModel"))
+            _, key = resolve_model(cfg.get_str("owwModel"))
             found = installed_verifiers().get(key)
             return found.stat().st_mtime if found else 0.0
         except Exception:
@@ -269,13 +288,13 @@ class Pipeline:
         self.engine = engine
         if engine == "openwakeword":
             try:
-                self._oww = OwwWake(cfg.str("owwModel"),
-                                    cfg.int("owwThresholdPct") / 100.0,
-                                    use_verifier=cfg.bool("useVerifier"))
+                self._oww = OwwWake(cfg.get_str("owwModel"),
+                                    cfg.get_int("owwThresholdPct") / 100.0,
+                                    use_verifier=cfg.get_bool("useVerifier"))
                 self.phrase = self._oww.phrase
                 if self._oww.verifier:
                     verifier = "with your verifier"
-                elif not cfg.bool("useVerifier"):
+                elif not cfg.get_bool("useVerifier"):
                     # Said plainly, because "no verifier yet" would describe a
                     # trained one that is switched off as though none existed.
                     verifier = "anyone may wake it -- your verifier is off"
@@ -296,7 +315,7 @@ class Pipeline:
         if self._oww is not None:
             self._oww = None
             self._release()
-        self.phrase = cfg.str("phrase").lower()
+        self.phrase = cfg.get_str("phrase").lower()
         self._reset_wake()
 
     @staticmethod
@@ -357,7 +376,7 @@ class Pipeline:
     def vosk_model_lazy(self):
         """The Vosk acoustic model, loaded the first time something needs it.
 
-        It costs 156MB resident -- a fifth of the daemon -- and on the
+        It costs 114MB resident -- measured, see bench/FINDINGS.md -- and on the
         openWakeWord engine it buys only the live partial text shown while you
         speak. Endpointing is energy-based and does not need it. So it is no
         longer loaded just in case.
@@ -450,7 +469,7 @@ class Pipeline:
             if self._loud_frames < self.min_loud_frames:
                 return False
         elif conf < self.wake_confidence:
-            print(f"  {DIM}(rejected \"{text}\" — confidence {conf:.2f}"
+            print(f"  {DIM}(rejected \"{safe_for_terminal(text)}\" — confidence {conf:.2f}"
                   f" < {self.wake_confidence:.2f}){OFF}")
             self._reset_wake()
             self._loud_frames = 0
@@ -485,8 +504,11 @@ class Pipeline:
         t0 = time.perf_counter()
         segments, _ = self._whisper.transcribe(
             audio, language="en", beam_size=1, initial_prompt=self._vocab)
-        text = " ".join(s.text for s in segments).strip()
-        return text, (time.perf_counter() - t0) * 1000
+        text = " ".join(s.text for s in segments)
+        # Cleaned here, once, rather than in each adapter: this is the only
+        # place a transcript is made, and every backend puts it straight into
+        # argv where a leading hyphen would be read as a flag.
+        return as_prompt(text), (time.perf_counter() - t0) * 1000
 
 
 def _empty_turn() -> dict:
@@ -529,8 +551,22 @@ class Daemon:
         # an interrupt is an explicit act -- a keybind, or the Stop button.
         self._interrupt = threading.Event()
         self._barge = None
+        #: Last line printed under each key, so the reconcilers can report a
+        #: state rather than repeat it. They run on the idle poll, every
+        #: couple of seconds, and the ones that cannot succeed -- no agent
+        #: installed, no voice downloaded -- used to write the same line to
+        #: the journal twenty times a minute, forever.
+        self._said: dict[str, str] = {}
         signal.signal(signal.SIGUSR1, self._on_toggle)
         signal.signal(signal.SIGUSR2, self._on_interrupt)
+
+    def say_once(self, key: str, line: str) -> bool:
+        """Print `line` if it is not what was last printed under `key`."""
+        if self._said.get(key) == line:
+            return False
+        self._said[key] = line
+        print(line, flush=True)
+        return True
 
     def _on_toggle(self, *_):
         self.enabled = not self.enabled
@@ -555,7 +591,7 @@ class Daemon:
         """
         endpoint = self.endpoint_spec()
         want_name = "endpoint" if endpoint else omarchy_default()
-        want_cwd = str(project_dir(self.cfg.str("projectDir")))
+        want_cwd = str(project_dir(self.cfg.get_str("projectDir")))
         want_level = self.cfg.level_for(want_name)
         want_ask = want_level != "trusted"
         # The endpoint's identity is its URL and model, not just its name:
@@ -586,21 +622,25 @@ class Daemon:
         self.session_id = None
         self.publish_agent()
         where = f" · {want_cwd}" if getattr(self.agent, "has_tools", True) else ""
-        print(f"  {CYA}agent: {want_name or 'nobody'}{where}{OFF}"
-              f"  {DIM}({self.posture()}){OFF}")
+        # say_once, because with no agent installed self.agent stays None and
+        # the guard above can never match, so this ran on every idle poll.
+        self.say_once("agent", f"  {CYA}agent: {want_name or 'nobody'}{where}{OFF}"
+                               f"  {DIM}({self.posture()}){OFF}")
         chosen = omarchy_default()
         if want_name == "endpoint" and chosen:
-            print(f"  {YEL}the endpoint setting is answering instead of "
-                  f"{chosen} — clear it to use the desktop's agent{OFF}")
+            self.say_once("override",
+                          f"  {YEL}the endpoint setting is answering instead of "
+                          f"{chosen} — clear it to use the desktop's agent{OFF}")
         # Said here as well as in the banner, because the banner only reprints
         # when our own config changes and switching agents writes Omarchy's
         # file -- so on the one occasion this matters most, it would not run.
         if (self.agent is not None and self.pipe is not None
                 and getattr(self.pipe, "conversation", False)
                 and not getattr(self.agent, "remembers", False)):
-            print(f"  {YEL}conversation is on, but {self.agent.name} starts "
-                  f"fresh every turn — it saves you the wake word and "
-                  f"nothing more{OFF}")
+            self.say_once("forgets",
+                          f"  {YEL}conversation is on, but {self.agent.name} starts "
+                          f"fresh every turn — it saves you the wake word and "
+                          f"nothing more{OFF}")
 
     def endpoint_spec(self) -> dict | None:
         """The configured OpenAI-compatible endpoint, or None.
@@ -609,15 +649,15 @@ class Daemon:
         its own file at the moment it is needed, so it cannot end up in
         shell.json, in the state file, or in anything published to the panel.
         """
-        url = self.cfg.str("endpointUrl").strip()
-        model = self.cfg.str("endpointModel").strip()
+        url = self.cfg.get_str("endpointUrl").strip()
+        model = self.cfg.get_str("endpointModel").strip()
         if not url or not model:
             return None
         # No key here: this runs on the idle poll, every couple of seconds,
         # and reading the keyring means spawning secret-tool. The key is
         # fetched once, where the adapter is actually built.
         return {"url": url, "model": model,
-                "is_agent": self.cfg.bool("endpointIsAgent")}
+                "is_agent": self.cfg.get_bool("endpointIsAgent")}
 
     def level(self) -> str:
         return self.cfg.level_for(getattr(self.agent, "name", None))
@@ -786,23 +826,28 @@ class Daemon:
         means loading a different model. Cheap when nothing has changed: every
         branch below is a comparison.
         """
-        if not self.cfg.bool("speakReplies"):
+        if not self.cfg.get_bool("speakReplies"):
             self.speaker = None
             return
-        wanted = self.cfg.str("voice")
+        wanted = self.cfg.get_str("voice")
         if (self.speaker is not None
                 and self.speaker.requested == wanted
                 and not self.speaker.superseded()):
             return
         try:
             self.speaker = Speaker(wanted)
-            if self.speaker.substituted_for:
-                print(f"  {YEL}the voice {self.speaker.substituted_for} is not "
-                      f"downloaded; speaking as {self.speaker.name}{OFF}")
-            else:
-                print(f"  {CYA}voice: {self.speaker.name}{OFF}")
         except Exception as e:
-            print(f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
+            # Reported once, not every two seconds: no voice on disk at all
+            # is a standing condition, and it used to reprint the whole
+            # banner with it on every idle poll.
+            self.say_once("voice", f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
+            return
+        if self.speaker.substituted_for:
+            self.say_once("voice",
+                          f"  {YEL}the voice {self.speaker.substituted_for} is not "
+                          f"downloaded; speaking as {self.speaker.name}{OFF}")
+        else:
+            self.say_once("voice", f"  {CYA}voice: {self.speaker.name}{OFF}")
         self.banner()
 
     def deafen(self, tail_ms: int) -> None:
@@ -823,7 +868,7 @@ class Daemon:
             except Exception:
                 break
         if dropped:
-            print(f"  {DIM}(dropped {dropped * 100}ms of echo){OFF}")
+            print(f"  {DIM}(dropped {dropped * CHUNK_MS}ms of echo){OFF}")
 
     def speak(self, text: str, tail_ms: int) -> None:
         """Say something, then make sure we did not hear ourselves say it."""
@@ -843,16 +888,16 @@ class Daemon:
         own output, because the two arrive at the same level. `agentvoice
         calibrate` says which kind of room this is.
         """
-        if not self.cfg.bool("bargeIn") or self._frames is None:
+        if not self.cfg.get_bool("bargeIn") or self._frames is None:
             return None
         if self._barge is None:
             try:
                 from barge import BargeIn
-                self._barge = BargeIn(factor=self.cfg.int("bargeFactor") / 100.0)
+                self._barge = BargeIn(factor=self.cfg.get_int("bargeFactor") / 100.0)
             except Exception as e:
                 print(f"  {YEL}barge-in unavailable: {e}{OFF}")
                 return None
-        self._barge.factor = self.cfg.int("bargeFactor") / 100.0
+        self._barge.factor = self.cfg.get_int("bargeFactor") / 100.0
         self._barge.reset()
 
         def watch() -> bool:
@@ -879,7 +924,7 @@ class Daemon:
         the loop by an order of magnitude -- local transcription is ~300ms and
         time-to-first-token is measured in seconds.
         """
-        tail_ms = self.cfg.int("echoTailMs")
+        tail_ms = self.cfg.get_int("echoTailMs")
         self._interrupt.clear()
         if not self.agent:
             if self.speaker:
@@ -913,7 +958,7 @@ class Daemon:
                 # what the agent had written by the time it was stopped.
                 if self._interrupt.is_set():
                     break
-                print(f"  {CYA}{sentence}{OFF}", flush=True)
+                print(f"  {CYA}{safe_for_terminal(sentence)}{OFF}", flush=True)
                 reply_parts.append(sentence)
                 # Published per sentence rather than once at the end. The answer
                 # used to reach the state file only after the last word was
@@ -938,8 +983,17 @@ class Daemon:
             # asked for silence.
             self.deafen(tail_ms)
         elif error:
-            print(f"  {YEL}agent error: {error}{OFF}")
-            self.speak("Sorry, the agent failed.", tail_ms)
+            print(f"  {YEL}agent error: {safe_for_terminal(error)}{OFF}")
+            # Inside a try of its own: this is the apology for a turn that
+            # already went wrong, and the speaker is one of the things that
+            # can be wrong. A PortAudio failure here was caught above as an
+            # agent error and then re-raised out of this line, which is
+            # outside the handler -- so a bad audio device ended the daemon.
+            try:
+                self.speak("Sorry, the agent failed.", tail_ms)
+            except Exception as e:
+                print(f"  {YEL}and could not say so: "
+                      f"{type(e).__name__}: {e}{OFF}")
 
         reply = " ".join(reply_parts)
         last["reply"] = reply[:400]
@@ -1055,7 +1109,7 @@ class Daemon:
                     last_voice = time.time()
                 if partial and partial != shown_partial:
                     shown_partial = partial
-                    print(f"\r  {DIM}{partial[:100]}{OFF}{' ' * 20}",
+                    print(f"\r  {DIM}{safe_for_terminal(partial)[:100]}{OFF}{' ' * 20}",
                           end="", flush=True)
                     # Published, not merely printed. "Live transcript while
                     # you speak" costs 114MB and went to stdout alone, which
@@ -1108,7 +1162,8 @@ class Daemon:
                     # people actually wait through.
                     self.state.publish("transcribing", **last)
                     text, ms = self.pipe.transcribe(buf)
-                    print(f"\r{' ' * 120}\r  {BLD}{text or '(nothing)'}{OFF}")
+                    print(f"\r{' ' * 120}\r  "
+                          f"{BLD}{safe_for_terminal(text) or '(nothing)'}{OFF}")
                     print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
                           f"whisper {ms:.0f}ms{OFF}")
                     last = {**_empty_turn(), "transcript": text,
@@ -1135,6 +1190,22 @@ class Daemon:
                         follow_up = False
                     elif text:
                         self.answer(text, last)
+                        # Uncapped on purpose, and worth stating because it
+                        # reads like an oversight: a follow-up window opens
+                        # after every answered turn, it uses neither the wake
+                        # word nor the speaker verifier, and it re-arms each
+                        # time. So a television that keeps producing speech
+                        # inside the window can chain turns indefinitely after
+                        # one legitimate wake.
+                        #
+                        # Decided, not missed. A cap would end a real
+                        # conversation mid-sentence at an arbitrary number,
+                        # which is the failure people notice; the chaining
+                        # case needs a room with a television in it and a
+                        # permission level that can act. The window length,
+                        # conversation mode itself, and the permission level
+                        # are all settings, which is where that trade-off
+                        # belongs.
                         follow_up = self.pipe.conversation
                     else:
                         follow_up = False
@@ -1165,13 +1236,18 @@ def run_simulated(pipe: Pipeline, speaker: Speaker | None, wav: Path,
     print(f"\n  {DIM}simulating: {wav.name} ({len(pcm) / 32000:.1f}s)"
           f" — no wake phrase, capturing the whole clip{OFF}\n")
     cap = pipe.new_capture()
-    for off in range(0, len(pcm), CHUNK):
-        if cap is not None and not cap.AcceptWaveform(pcm[off:off + CHUNK]):
+    # In bytes here, because `pcm` is bytes: CHUNK is a frame count, and
+    # int16 mono is two bytes a frame. Slicing by CHUNK fed 100ms blocks to
+    # a recogniser that sees 200ms blocks live, so a simulation was not
+    # reproducing what the daemon does.
+    step = CHUNK * 2
+    for off in range(0, len(pcm), step):
+        if cap is not None and not cap.AcceptWaveform(pcm[off:off + step]):
             p = json.loads(cap.PartialResult()).get("partial", "")
             if p:
                 print(f"\r  {DIM}{p[:100]}{OFF}", end="", flush=True)
     text, ms = pipe.transcribe(pcm)
-    print(f"\r{' ' * 120}\r  {BLD}{text}{OFF}")
+    print(f"\r{' ' * 120}\r  {BLD}{safe_for_terminal(text)}{OFF}")
     print(f"  {DIM}whisper {ms:.0f}ms{OFF}")
     if text and daemon is not None:
         daemon.answer(text, {"transcript": text, "ms": round(ms), "audio_s": 0.0})
@@ -1195,9 +1271,9 @@ def main() -> int:
     pipe = Pipeline(cfg, args.whisper)
 
     speaker = None
-    if cfg.bool("speakReplies") and not args.no_speak:
+    if cfg.get_bool("speakReplies") and not args.no_speak:
         try:
-            speaker = Speaker(cfg.str("voice"))
+            speaker = Speaker(cfg.get_str("voice"))
             if speaker.substituted_for:
                 print(f"  {YEL}the voice {speaker.substituted_for} is not "
                       f"downloaded; speaking as {speaker.name}{OFF}")
@@ -1206,14 +1282,19 @@ def main() -> int:
 
     agent = None
     if not args.no_agent:
-        level = cfg.level_for(omarchy_default())
-        url = cfg.str("endpointUrl").strip()
-        model = cfg.str("endpointModel").strip()
+        # Deliberately the same resolution the run loop uses, which is why
+        # the name comes from endpoint_spec rather than being assumed:
+        # `cfg.level_for(omarchy_default())` here against
+        # `cfg.level_for("endpoint")` there meant the first turn after startup
+        # could run at a different permission level from every turn after it.
+        url = cfg.get_str("endpointUrl").strip()
+        model = cfg.get_str("endpointModel").strip()
         spec = ({"url": url, "model": model, "key": endpoint_key(_host(url)),
-                 "is_agent": cfg.bool("endpointIsAgent")}
+                 "is_agent": cfg.get_bool("endpointIsAgent")}
                 if url and model else None)
+        level = cfg.level_for("endpoint" if spec else omarchy_default())
         agent = load_adapter(ask_permission=level != "trusted", level=level,
-                             cwd=str(project_dir(cfg.str("projectDir"))),
+                             cwd=str(project_dir(cfg.get_str("projectDir"))),
                              endpoint=spec)
         if agent is None:
             which = omarchy_default()
@@ -1231,6 +1312,11 @@ def main() -> int:
         return 0
     finally:
         state.clear()
+        # The unit keeps its runtime directory across restarts, so a pidfile
+        # left behind here is a pid some unrelated process will eventually be
+        # given -- and `agentvoice mic` sends SIGUSR1 to whatever it names,
+        # whose default action is to terminate.
+        (RUNTIME_DIR / "pid").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

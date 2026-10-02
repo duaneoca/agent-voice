@@ -220,6 +220,30 @@ def test_hand_written_bindings_are_named_not_deleted(tmp_path):
     assert "SUPER + V" in combined
 
 
+def test_a_missing_end_marker_does_not_eat_the_rest_of_the_file(tmp_path):
+    """The filter walks forward from the begin marker looking for the end one.
+    Without it, every line to the bottom of the file was dropped -- and
+    Hyprland raises no config error about a shorter file, so nothing rolled
+    back and it still said "Removed the keybinds".
+    """
+    _run(tmp_path, "1", bindings=OTHER)
+    f = tmp_path / "config" / "hypr" / "bindings.lua"
+    installed = f.read_text()
+    begin = next(l for l in installed.splitlines() if ">>> agentvoice" in l)
+    end = next(l for l in installed.splitlines() if "<<< agentvoice" in l)
+    tail = 'o.bind("SUPER + Z", "Mine", "notify-send hi")\n'
+    f.write_text(installed.replace(end + "\n", "") + tail)
+    before = f.read_text()
+
+    done = _remove(tmp_path, None)
+
+    assert f.read_text() == before, "it must not touch a file it cannot parse"
+    combined = done.stdout + done.stderr
+    assert "WARN" in combined and "end one" in combined
+    assert "Removed the keybinds" not in combined
+    assert begin.strip()[:20] in combined, "it has to say which lines"
+
+
 def test_removing_when_nothing_was_added_changes_nothing(tmp_path):
     done = _remove(tmp_path, OTHER)
     assert (tmp_path / "config" / "hypr" / "bindings.lua").read_text() == OTHER

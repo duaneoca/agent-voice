@@ -92,6 +92,8 @@ def project_dir(configured: str = "") -> Path:
 
     Falls back to home when the configured path has gone: a directory that was
     deleted or unmounted must not leave the agent running somewhere arbitrary.
+    Where the agent *runs* and where it may write without asking are two
+    different questions, though -- see `scope_root`.
     """
     home = Path.home()
     if not configured.strip():
@@ -101,6 +103,37 @@ def project_dir(configured: str = "") -> Path:
     except (OSError, RuntimeError):
         return home
     return p if p.is_dir() else home
+
+
+def scope_root(configured: str = "") -> Path | None:
+    """The one directory "edits" may write in without asking, or None.
+
+    Deliberately not `project_dir`. That answers "where should the agent
+    run", and its answer for an unset or vanished setting is the home
+    directory -- the right place to start a shell, and the wrong thing to
+    hand a blanket write permission to. Home holds ~/.bashrc, the systemd
+    user units, ~/.ssh and shell.json -- and shell.json holds the permission
+    level itself, so an agent that could write it unasked could promote
+    itself to "trusted".
+
+    So: no configured project, or one that has gone, means no silent writes,
+    and "edits" behaves as "ask" until a real directory is chosen. A typo
+    narrows the permission rather than widening it to all of home.
+    """
+    if not configured.strip():
+        return None
+    try:
+        p = Path(configured.strip()).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not p.is_dir():
+        return None
+    # An "edits" scope of / or of home itself is the same blanket grant by
+    # another route, so it is refused the same way.
+    home = Path.home()
+    if p == Path(p.root) or p == home or p in home.parents:
+        return None
+    return p
 
 
 def _keyring(**attrs) -> str:
@@ -138,7 +171,10 @@ def _keyring_has_hosts() -> bool:
     if not tool:
         return False
     try:
-        out = subprocess.run([tool, "search", "service", "agentvoice"],
+        # --all, because without it `search` stops at the first match -- and
+        # the first match may well be the generic entry, which would make a
+        # keyring full of per-host keys look as though it had none.
+        out = subprocess.run([tool, "search", "--all", "service", "agentvoice"],
                              capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -164,9 +200,17 @@ def endpoint_key(host: str = "") -> str:
     A local endpoint such as Ollama needs no key at all, so absence is
     normal rather than an error.
     """
-    for var in ("AGENTVOICE_ENDPOINT_KEY", "OPENAI_API_KEY", "XAI_API_KEY"):
+    # AGENTVOICE_ENDPOINT_KEY is ours: whoever set it meant it for whatever
+    # endpoint is configured. A vendor's variable is not -- it is a credential
+    # for that vendor, and the docstring's own worry about handing an OpenAI
+    # key to api.x.ai was happening here, as was handing it to a LAN box.
+    value = os.environ.get("AGENTVOICE_ENDPOINT_KEY", "").strip()
+    if value:
+        return value
+    for var, owner in (("OPENAI_API_KEY", "api.openai.com"),
+                       ("XAI_API_KEY", "api.x.ai")):
         value = os.environ.get(var, "").strip()
-        if value:
+        if value and host.split(":")[0].lower() == owner:
             return value
 
     if host:
@@ -184,9 +228,21 @@ def endpoint_key(host: str = "") -> str:
     if found:
         return found
 
+    key_file = CONFIG_DIR / "endpoint.key"
     try:
-        raw = (CONFIG_DIR / "endpoint.key").read_text()
+        raw = key_file.read_text()
     except OSError:
+        return ""
+    # A key anyone else on the machine can read is not a secret. Refused
+    # rather than fixed silently, because the right mode is the user's to
+    # set and a 401 with an explanation beats a quiet chmod.
+    try:
+        mode = key_file.stat().st_mode & 0o077
+    except OSError:
+        mode = 0
+    if mode:
+        print(f"agentvoice: ignoring {key_file}: mode {mode | 0o600:o} lets "
+              f"others read it. chmod 600 it.")
         return ""
     # Tolerant about shape, because the failure is otherwise a 401 that says
     # nothing: people reasonably write OPENAI_API_KEY=sk-... out of habit, or

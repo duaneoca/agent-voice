@@ -97,3 +97,66 @@ def test_a_failed_fetch_says_why():
     fetch = TRAINER[TRAINER.index("Could not fetch"):]
     fetch = fetch[:fetch.index("rm -f")]
     assert "SPIN_ERR" in fetch, "the captured reason must be shown"
+
+
+class TestRecordFreshKeepsTheOldClipsUntilItHasNew:
+    """"Record fresh" deleted twenty-five recordings before making one.
+
+    `rm -f "$POS"/*.wav` ran the moment the question was answered, so a
+    cancel halfway through recording left the user with neither set -- and
+    the cancel path then said "Nothing was saved", which was the opposite of
+    what had just happened.
+    """
+
+    def _harness(self, pos, old_marker="", action="restore"):
+        script = (
+            "set -uo pipefail\n"
+            f"POS={pos}\n"
+            + _block("restore_old_positives() {")
+            + _block("discard_old_positives() {")
+            + f'OLD_POS="$POS.previous.$$"\n'
+            + 'mkdir -p "$OLD_POS"\n'
+            + 'mv "$POS"/*.wav "$OLD_POS"/ 2>/dev/null || true\n'
+            + f"{action}_old_positives\n"
+        )
+        return subprocess.run(["bash", "-c", script], capture_output=True,
+                              text=True, timeout=30)
+
+    def test_a_cancel_puts_them_back(self, tmp_path):
+        pos = tmp_path / "positives"
+        pos.mkdir()
+        for i in range(3):
+            (pos / f"{i}.wav").write_text("clip")
+
+        done = self._harness(pos, action="restore")
+
+        assert done.returncode == 0, done.stderr
+        assert sorted(p.name for p in pos.glob("*.wav")) == \
+            ["0.wav", "1.wav", "2.wav"]
+        assert not list(tmp_path.glob("*.previous.*")), "left a stray directory"
+
+    def test_a_finished_run_discards_them(self, tmp_path):
+        pos = tmp_path / "positives"
+        pos.mkdir()
+        (pos / "0.wav").write_text("clip")
+
+        done = self._harness(pos, action="discard")
+
+        assert done.returncode == 0, done.stderr
+        assert not list(pos.glob("*.wav"))
+        assert not list(tmp_path.glob("*.previous.*"))
+
+    def test_nothing_is_deleted_before_the_new_clips_exist(self):
+        """The guard this closes, read off the source: the only `rm` of the
+        positives must be the one that runs after training."""
+        body = _code(TRAINER)
+        assert 'rm -f "$POS"/*.wav' not in body, \
+            "clips must be moved aside, not deleted, before recording"
+        train_at = body.index('"$VERIFIER" train ')
+        discard_at = body.index("discard_old_positives\n", train_at)
+        assert discard_at > train_at
+
+    def test_the_cancel_message_does_not_claim_a_loss_that_did_not_happen(self):
+        block = _block("cancelled() {")
+        assert "Nothing was saved" not in block
+        assert "restore_old_positives" in block

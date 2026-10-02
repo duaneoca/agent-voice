@@ -8,6 +8,10 @@ import qs.Ui
 Column {
   id: knob
 
+  // Passed straight through to PanelSlider, which is Omarchy's own control
+  // and takes it. Nothing here sets it -- both callers are overlays, not
+  // bar items -- so it is null in practice and kept because the component
+  // it forwards to declares it.
   property QtObject bar: null
   property color foreground: Color.foreground
   property color dim: Qt.darker(foreground, 1.55)

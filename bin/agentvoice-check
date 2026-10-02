@@ -27,12 +27,18 @@ if ! git -C "$ROOT" ls-files --error-unmatch manifest.json >/dev/null 2>&1; then
   exit 1
 fi
 
-# 1. every schema key is rendered somewhere in the overlay
+# 1. every schema key has a control on the settings page
+#
+# Settings.qml only. It used to read Panel.qml as well, which made the check
+# weaker than it looks: the panel carried `setting("leadInMs", ...)` lines
+# that nothing drew, so the check stayed green for keys whose control had
+# been deleted from the settings page. The panel is a readout; the settings
+# page is where a key is edited, and that is what this is checking for.
 out=$(python3 - "$ROOT" <<'PY'
 import json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 declared = {k["key"] for k in json.loads((root/"manifest.json").read_text())["barWidget"]["schema"]}
-qml = (root/"Settings.qml").read_text() + (root/"Panel.qml").read_text()
+qml = (root/"Settings.qml").read_text()
 missing = sorted(k for k in declared if not re.search(r'["\']' + re.escape(k) + r'["\']', qml))
 print(" ".join(missing))
 PY
@@ -172,26 +178,94 @@ QQ
 if [[ -n ${out// } ]]; then say "comment after a line continuation" "FAIL: $out"; fail=1
 else say "no comment orphaning a continued line" "ok"; fi
 
-# 9. the Piper download URL is written in two places -- install.sh fetches the
-# configured voice, the verifier trainer fetches other speakers to contrast
-# against -- and a silent drift there is a 404 inside a gum spinner.
+# 9. every model download is pinned to a revision and checked against a hash,
+# in all three scripts that fetch one. Three things can go wrong here and all
+# of them are quiet: a URL drifting between the scripts is a 404 inside a gum
+# spinner; a voice the settings page offers but the lock does not name cannot
+# be installed at all; and a fetch that checks nothing is a model of unknown
+# provenance loaded by the daemon.
 out=$(python3 - "$ROOT" <<'QQ'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
-inst = (root / "install.sh").read_text()
+bad = []
+lock = (root / "models.lock")
+if not lock.is_file():
+    print("models.lock is missing, so nothing is pinned or verified")
+    raise SystemExit
+text = lock.read_text()
+
+rev = re.search(r"^revision piper ([0-9a-f]{40})$", text, re.M)
+if not rev:
+    bad.append("models.lock has no 40-character piper revision")
+
+# All three scripts must build the URL from the lock rather than from a
+# branch name, and must verify what arrives.
+sources = {
+    "install.sh": root / "install.sh",
+    "bench/setup.sh": root / "bench" / "setup.sh",
+    "bin/agentvoice-train-verifier": root / "bin" / "agentvoice-train-verifier",
+}
+for name, path in sources.items():
+    body = path.read_text()
+    if "resolve/main" in body:
+        bad.append(f"{name} still fetches from resolve/main")
+    if 'revision" && $2=="piper"' not in body:
+        bad.append(f"{name} does not read the revision from models.lock")
+    if "sha256sum" not in body:
+        bad.append(f"{name} does not check a hash")
+
+# Every voice the settings page offers has to be installable, which now means
+# it has to be in the lock.
+hashed = set(re.findall(r"^sha256 (\S+)", text, re.M))
+offered = re.findall(r'value: "([a-z_]+-(?:x_low|low|medium|high))"',
+                     (root / "Settings.qml").read_text())
+for voice in sorted(set(offered)):
+    for suffix in ("", ".json"):
+        wanted = f"en_US-{voice}.onnx{suffix}"
+        if wanted not in hashed:
+            bad.append(f"{voice} is offered in the UI but {wanted} is not in "
+                       f"models.lock, so choosing it cannot install it")
+
+# And every speaker the trainer fetches for contrast.
 train = (root / "bin" / "agentvoice-train-verifier").read_text()
-m = re.search(r'local base="([^"$]*)', inst)
-n = re.search(r'PIPER_BASE="([^"]*)"', train)
-if not m or not n:
-    print("could not find both URLs")
-elif not m.group(1).startswith(n.group(1)):
-    print(f"{n.group(1)} is not a prefix of {m.group(1)}")
+speakers = re.search(r"OTHER_SPEAKERS=\(([^)]*)\)", train)
+for voice in (speakers.group(1).split() if speakers else []):
+    if f"en_US-{voice}.onnx" not in hashed:
+        bad.append(f"the trainer fetches {voice}, which is not in models.lock")
+
+print("; ".join(bad))
 QQ
 )
-if [[ -n ${out// } ]]; then say "Piper URL drifted between the two scripts" "FAIL: $out"; fail=1
-else say "both scripts fetch voices from one URL" "ok"; fi
+if [[ -n ${out// } ]]; then say "model pinning" "FAIL: $out"; fail=1
+else say "every model download is pinned and hashed" "ok"; fi
 
-# 12. the QML references properties that exist. Nothing here runs the overlay,
+# 10. a numeric setting declares its range the way Omarchy spells it. `min`,
+# `max` and `step` -- not `minimum`/`maximum`, which is what QML's own slider
+# calls them and what two settings here were written with, and not a range
+# with no step. Omarchy reads the schema to draw the control, so the wrong
+# spelling is a control with no bounds and a slider that moves by one.
+out=$(python3 - "$ROOT" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+schema = json.loads((root/"manifest.json").read_text())["barWidget"]["schema"]
+bad = []
+for entry in schema:
+    wrong = sorted(k for k in entry if k in ("minimum", "maximum"))
+    if wrong:
+        bad.append(f"{entry['key']}: {'/'.join(wrong)} should be min/max")
+        continue
+    ranged = [k for k in ("min", "max", "step") if k in entry]
+    if ranged and len(ranged) != 3:
+        missing = [k for k in ("min", "max", "step") if k not in entry]
+        bad.append(f"{entry['key']}: has {'/'.join(ranged)}, missing "
+                   f"{'/'.join(missing)}")
+print("; ".join(bad))
+PY
+)
+if [[ -n ${out// } ]]; then say "schema ranges" "FAIL: $out"; fail=1
+else say "every numeric setting declares min/max/step" "ok"; fi
+
+# 11. the QML references properties that exist. Nothing here runs the overlay,
 # so this is the only automated check the interface gets -- and the interface
 # is where this project's bugs have landed: a KnobRow given `suffix` when it
 # takes `unit`, a `voiceOptions` renamed without its callers, a Timer nested
@@ -248,10 +322,22 @@ else
   say "installer-in-a-box not run (AGENTVOICE_BOX=1)" "--"
 fi
 
-# 12. the behavioural tests, when pytest is available
+# 13. the behavioural tests, when pytest is available
 if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
   if out=$("$PY" -m pytest "$ROOT/tests" -q 2>&1); then
-    say "tests" "$(tail -1 <<<"$out")"
+    summary="$(tail -1 <<<"$out")"
+    # On a runner that installed the whole stack, a skip means a test that
+    # was meant to run did not. Opt-in rather than part of AGENTVOICE_STRICT,
+    # because the light CI job installs pytest alone and skips the numeric
+    # tests on purpose -- so "no skips" is only true of the full job, and a
+    # check that is only sometimes true is not a check.
+    if [[ -n ${AGENTVOICE_NO_SKIPS:-} && $summary == *skipped* ]]; then
+      say "tests" "FAIL: something skipped on a runner with the full stack"
+      echo "$out" | grep -i 'skipped' | tail -10 | sed 's/^/    /'
+      fail=1
+    else
+      say "tests" "$summary"
+    fi
   else
     say "tests" "FAIL"
     echo "$out" | tail -20 | sed 's/^/    /'

@@ -29,6 +29,11 @@ class Handler(BaseHTTPRequestHandler):
         RECEIVED.append({"body": json.loads(body or b"{}"),
                          "auth": self.headers.get("Authorization"),
                          "agent": self.headers.get("User-Agent")})
+        if BEHAVIOUR["mode"] == "redirect":
+            self.send_response(307)
+            self.send_header("Location", BEHAVIOUR["redirect_to"])
+            self.end_headers()
+            return
         if BEHAVIOUR["mode"] == "http_error":
             self.send_response(401)
             self.end_headers()
@@ -122,6 +127,63 @@ class TestKeyHandling:
         assert "sekrit" not in a.posture("ask")
 
 
+class TestTheKeyDoesNotTravel:
+    """Two ways a bearer token leaves for somewhere it was not meant for.
+
+    Both are urllib defaults rather than mistakes in this file, which is why
+    they are tested rather than remembered: `HTTPRedirectHandler` copies
+    every header except the Content-* ones onto the redirected request, and
+    `http://` carries the lot in the clear.
+    """
+
+    def test_a_redirect_is_not_followed_with_a_key_attached(self, server):
+        elsewhere = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=elsewhere.serve_forever, daemon=True).start()
+        try:
+            BEHAVIOUR["mode"] = "redirect"
+            BEHAVIOUR["redirect_to"] = \
+                f"http://127.0.0.1:{elsewhere.server_address[1]}/v1/chat/completions"
+            RECEIVED.clear()
+            chunks = list(OpenAICompatible(base_url=server, model="m",
+                                           api_key="sekrit").send("hi"))
+            errors = [c.error for c in chunks if c.error]
+            assert errors and "redirect" in errors[0]
+            # The second server must never have been asked anything at all.
+            assert len(RECEIVED) == 1, RECEIVED
+        finally:
+            BEHAVIOUR["mode"] = "ok"
+            elsewhere.shutdown()
+
+    def test_a_key_is_not_sent_over_plain_http_to_a_public_host(self):
+        a = OpenAICompatible(base_url="http://api.example.com/v1", model="m",
+                             api_key="sekrit")
+        chunks = list(a.send("hi"))
+        errors = [c.error for c in chunks if c.error]
+        assert errors and "plain http" in errors[0]
+        assert "sekrit" not in errors[0]
+
+    def test_plain_http_is_still_fine_on_your_own_network(self, server):
+        """Which is how Ollama and Hermes are actually run."""
+        list(OpenAICompatible(base_url=server, model="m",
+                              api_key="sekrit").send("hi"))
+        assert RECEIVED[-1]["auth"] == "Bearer sekrit"
+
+    def test_https_to_a_public_host_is_fine(self):
+        a = OpenAICompatible(base_url="https://api.example.com/v1", model="m",
+                             api_key="sekrit")
+        assert a._key_is_safe_to_send()
+
+    def test_a_refused_turn_is_not_left_in_the_transcript(self):
+        """A failed turn used to stay in the history, so the next one sent
+        two `user` messages in a row and replayed the prompt that failed."""
+        a = OpenAICompatible(base_url="http://api.example.com/v1", model="m",
+                             api_key="sekrit")
+        chunks = list(a.send("hi"))
+        sid = next(c.session_id for c in chunks if c.session_id)
+        roles = [m["role"] for m in a._sessions[sid]]
+        assert "user" not in roles, roles
+
+
 class TestSelection:
     def test_a_configured_endpoint_beats_the_desktop_agent(self):
         a = load("claude", endpoint={"url": "http://x/v1", "model": "m"})
@@ -135,8 +197,8 @@ class TestSelection:
     @pytest.mark.parametrize("url,local", [
         ("http://localhost:11434/v1", True),
         ("http://127.0.0.1:11434/v1", True),
-        ("http://192.168.1.50:11434/v1", True),
-        ("http://macmini.local:11434/v1", True),
+        ("http://10.0.0.5:11434/v1", True),
+        ("http://box.local:11434/v1", True),
         ("https://api.openai.com/v1", False),
         ("https://api.x.ai/v1", False),
     ])
@@ -198,6 +260,13 @@ class TestKeyFileShape:
     error; accepting them costs six lines.
     """
 
+    @staticmethod
+    def write_key(path, text):
+        """0600, as the daemon now insists on: a key a second local account
+        can read is not a secret, and the file is refused rather than used."""
+        path.write_text(text)
+        path.chmod(0o600)
+
     @pytest.fixture
     def keyfile(self, tmp_path, monkeypatch):
         import importlib
@@ -221,20 +290,26 @@ class TestKeyFileShape:
         "# the key for openai\nsk-abc123\n",
     ])
     def test_every_plausible_shape_yields_the_key(self, keyfile, written):
-        (keyfile.CONFIG_DIR / "endpoint.key").write_text(written)
+        self.write_key(keyfile.CONFIG_DIR / "endpoint.key", written)
         assert keyfile.endpoint_key() == "sk-abc123"
 
     def test_an_empty_file_is_no_key_not_a_crash(self, keyfile):
-        (keyfile.CONFIG_DIR / "endpoint.key").write_text("\n\n# nothing\n")
+        self.write_key(keyfile.CONFIG_DIR / "endpoint.key", "\n\n# nothing\n")
         assert keyfile.endpoint_key() == ""
 
     def test_a_missing_file_is_no_key(self, keyfile):
         assert keyfile.endpoint_key() == ""
 
     def test_the_environment_wins_over_the_file(self, keyfile, monkeypatch):
-        (keyfile.CONFIG_DIR / "endpoint.key").write_text("sk-from-file")
+        self.write_key(keyfile.CONFIG_DIR / "endpoint.key", "sk-from-file")
         monkeypatch.setenv("AGENTVOICE_ENDPOINT_KEY", "sk-from-env")
         assert keyfile.endpoint_key() == "sk-from-env"
+
+
+def write_key(path, text):
+    """0600, as the daemon now insists on."""
+    path.write_text(text)
+    path.chmod(0o600)
 
 
 class TestKeySources:
@@ -260,20 +335,20 @@ class TestKeySources:
 
     def test_the_environment_beats_everything(self, fresh):
         paths, mp = fresh
-        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        write_key(paths.CONFIG_DIR / "endpoint.key", "from-file")
         mp.setattr(paths, "_keyring", lambda **k: "from-keyring")
         mp.setenv("AGENTVOICE_ENDPOINT_KEY", "from-env")
         assert paths.endpoint_key("api.openai.com") == "from-env"
 
     def test_the_keyring_beats_the_file(self, fresh):
         paths, mp = fresh
-        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        write_key(paths.CONFIG_DIR / "endpoint.key", "from-file")
         mp.setattr(paths, "_keyring", lambda **k: "from-keyring")
         assert paths.endpoint_key("api.openai.com") == "from-keyring"
 
     def test_the_file_is_the_fallback(self, fresh):
         paths, mp = fresh
-        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        write_key(paths.CONFIG_DIR / "endpoint.key", "from-file")
         mp.setattr(paths, "_keyring", lambda **k: "")
         mp.setattr(paths, "_keyring_has_hosts", lambda: False)
         assert paths.endpoint_key("api.openai.com") == "from-file"
@@ -283,7 +358,7 @@ class TestKeySources:
         endpoint switched to xAI, the OpenAI credential would have gone to
         api.x.ai. Once anything is filed by host, a miss means no key."""
         paths, mp = fresh
-        (paths.CONFIG_DIR / "endpoint.key").write_text("openai-key")
+        write_key(paths.CONFIG_DIR / "endpoint.key", "openai-key")
         mp.setattr(paths, "_keyring",
                    lambda **k: "openai-key" if k.get("endpoint") == "api.openai.com" else "")
         mp.setattr(paths, "_keyring_has_hosts", lambda: True)
@@ -294,8 +369,51 @@ class TestKeySources:
         """Most machines have a keyring; a headless one may not."""
         paths, mp = fresh
         mp.setattr(paths.shutil, "which", lambda _: None)
-        (paths.CONFIG_DIR / "endpoint.key").write_text("from-file")
+        write_key(paths.CONFIG_DIR / "endpoint.key", "from-file")
         assert paths.endpoint_key("api.openai.com") == "from-file"
+
+    @pytest.mark.parametrize("mode", [0o644, 0o640, 0o604, 0o666])
+    def test_a_key_file_others_can_read_is_refused(self, fresh, mode):
+        """It is a plaintext credential in the home directory. If the mode
+        says another local account may read it, it is not a secret, and
+        using it anyway would be pretending otherwise."""
+        paths, mp = fresh
+        mp.setattr(paths, "_keyring", lambda **k: "")
+        mp.setattr(paths, "_keyring_has_hosts", lambda: False)
+        f = paths.CONFIG_DIR / "endpoint.key"
+        f.write_text("from-file")
+        f.chmod(mode)
+        assert paths.endpoint_key("api.openai.com") == ""
+
+    def test_a_vendor_variable_only_serves_its_own_vendor(self, fresh):
+        """OPENAI_API_KEY is a credential for api.openai.com. It was being
+        sent to whatever the endpoint happened to be -- a LAN box, or
+        api.x.ai, which is the leak the docstring here warned about."""
+        paths, mp = fresh
+        mp.setattr(paths, "_keyring", lambda **k: "")
+        mp.setattr(paths, "_keyring_has_hosts", lambda: False)
+        mp.setenv("OPENAI_API_KEY", "sk-openai")
+        assert paths.endpoint_key("api.openai.com") == "sk-openai"
+        assert paths.endpoint_key("api.openai.com:443") == "sk-openai"
+        assert paths.endpoint_key("api.x.ai") == ""
+        assert paths.endpoint_key("192.0.2.10:8642") == ""
+        assert paths.endpoint_key("") == ""
+
+    def test_our_own_variable_serves_any_endpoint(self, fresh):
+        """AGENTVOICE_ENDPOINT_KEY is ours: whoever set it meant it for
+        whatever endpoint is configured."""
+        paths, mp = fresh
+        mp.setenv("AGENTVOICE_ENDPOINT_KEY", "sk-ours")
+        assert paths.endpoint_key("192.0.2.10:8642") == "sk-ours"
+
+    def test_the_keyring_search_asks_for_every_match(self):
+        """Without --all, `secret-tool search` stops at the first hit, so a
+        keyring full of per-host keys could look as though it had none --
+        and a miss would then fall through to somebody else's key."""
+        import inspect
+
+        import paths as p
+        assert '"--all"' in inspect.getsource(p._keyring_has_hosts)
 
 
 class TestStallAndInterrupt:
@@ -406,7 +524,7 @@ class TestKeyScope:
 
     def test_a_port_distinguishes_two_services_on_one_host(self):
         from wake_listen import _host
-        assert _host("http://192.168.1.10:8642/v1") != _host("http://192.168.1.10:11434/v1")
+        assert _host("http://192.0.2.10:8642/v1") != _host("http://192.0.2.10:11434/v1")
 
     def test_a_url_without_a_port_keeps_the_bare_hostname(self):
         """So entries filed before this still resolve."""
@@ -434,9 +552,9 @@ class TestWhatIsBehindTheUrlIsUnknown:
         assert "no tools from here" in posture
 
     def test_an_agent_endpoint_says_it_can_act(self):
-        a = OpenAICompatible(base_url="http://192.168.1.10:8642/v1", model="m",
+        a = OpenAICompatible(base_url="http://192.0.2.10:8642/v1", model="m",
                              is_agent=True)
-        assert "can act on 192.168.1.10" in a.posture("ask")
+        assert "can act on 192.0.2.10" in a.posture("ask")
         assert a.has_tools is True
 
     def test_an_agent_endpoint_is_given_longer_to_answer(self):
@@ -445,6 +563,35 @@ class TestWhatIsBehindTheUrlIsUnknown:
         plain = OpenAICompatible(base_url="http://x/v1", model="m")
         agent = OpenAICompatible(base_url="http://x/v1", model="m", is_agent=True)
         assert agent.idle_timeout_s > plain.idle_timeout_s
+
+    def test_the_longer_limit_actually_reaches_the_socket(self):
+        """It did not. The socket timeout was `min(timeout, idle_timeout_s)`,
+        which is `min(120, 300)` -- so the 300s the comment insists on never
+        applied to anything, and an agent running tools was cut off at 120.
+        """
+        import urllib.request
+
+        seen = {}
+
+        def fake_open(self, request, timeout=None):
+            seen["timeout"] = timeout
+            raise TimeoutError
+
+        from adapters import openai_compat
+        real = openai_compat._OPENER.open
+        openai_compat._OPENER.open = fake_open.__get__(
+            openai_compat._OPENER, urllib.request.OpenerDirector)
+        try:
+            agent = OpenAICompatible(base_url="http://x/v1", model="m",
+                                     is_agent=True)
+            list(agent.send("hi"))
+            assert seen["timeout"] == agent.idle_timeout_s == 300.0
+
+            plain = OpenAICompatible(base_url="http://x/v1", model="m")
+            list(plain.send("hi"))
+            assert seen["timeout"] == min(plain.timeout, plain.idle_timeout_s)
+        finally:
+            openai_compat._OPENER.open = real
 
     def test_no_endpoint_claims_agentvoice_can_restrain_it(self):
         """A CLI held in its safest mode is at least being held -- we choose
@@ -470,7 +617,7 @@ class TestWhereItActs:
     """
 
     def test_an_endpoint_has_no_local_directory_to_govern(self):
-        a = OpenAICompatible(base_url="http://192.168.1.10:8642/v1", model="m",
+        a = OpenAICompatible(base_url="http://192.0.2.10:8642/v1", model="m",
                              is_agent=True)
         assert getattr(a, "cwd", None) is None
 

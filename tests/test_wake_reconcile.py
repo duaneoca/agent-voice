@@ -51,9 +51,9 @@ def _pipeline_with(monkeypatch, threshold_pct: int):
     }
 
     class Cfg(dict):
-        def str(self, k): return str(self[k])
-        def int(self, k): return int(self[k])
-        def bool(self, k): return bool(self[k])
+        def get_str(self, k): return str(self[k])
+        def get_int(self, k): return int(self[k])
+        def get_bool(self, k): return bool(self[k])
 
     return pipe, Cfg(cfg)
 

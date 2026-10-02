@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from paths import VERIFIERS  # noqa: E402
 from runtime import Config  # noqa: E402
 from wake_listen import CHUNK, RATE, OwwWake, frame_db  # noqa: E402
 
@@ -35,7 +36,8 @@ def bar(value: float, width: int = 24) -> str:
     return "█" * filled + "·" * (width - filled)
 
 
-def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0) -> int:
+def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0,
+           device=None) -> int:
     """Score the same audio with and without the verifier, utterance by
     utterance, and report whether it helped, hurt, or did nothing."""
     import sounddevice as sd
@@ -45,7 +47,7 @@ def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0) -> int:
               f"is nothing to compare against.{OFF}")
         return 1
 
-    without = OwwWake(cfg.str("owwModel"), threshold, use_verifier=False)
+    without = OwwWake(cfg.get_str("owwModel"), threshold, use_verifier=False)
 
     print(f"\n  {BLD}{with_verifier.key}{OFF}  threshold {threshold:.2f}")
     print(f"  {DIM}Both detectors see identical audio. Say the wake phrase "
@@ -63,8 +65,11 @@ def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0) -> int:
     def cb(indata, _f, _t, status):
         frames.put(bytes(indata))
 
+    # device, not the default input: --device is the whole point of the
+    # monitor on a machine with more than one microphone, and this path
+    # ignored it while the other one honoured it.
     with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16",
-                           blocksize=CHUNK, callback=cb):
+                           blocksize=CHUNK, device=device, callback=cb):
         started = time.time()
         try:
             while seconds <= 0 or time.time() - started < seconds:
@@ -78,7 +83,7 @@ def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0) -> int:
                     speaking, quiet = True, 0
                 elif speaking:
                     quiet += 1
-                    if quiet >= 8:            # ~800ms of nothing ends it
+                    if quiet >= 8:            # ~1.6s of nothing ends it
                         n = len(rows) + 1
                         fa, fb = peak_a >= threshold, peak_b >= threshold
                         if fa and not fb:   verdict, col = "verifier SAVED it", GRN
@@ -107,7 +112,9 @@ def run_ab(cfg, threshold, with_verifier, seconds: float = 0.0) -> int:
     elif fb > fa:
         print(f"\n  {RED}The verifier is costing you {fb - fa} wake(s). "
               f"Delete it to fall back to the base model:{OFF}")
-        print(f"    rm ~/.local/share/agentvoice/verifiers/{with_verifier.key}.joblib")
+        # The real path, not ~/.local/share: a machine with XDG_DATA_HOME set
+        # keeps it somewhere else, and this line is meant to be pasted.
+        print(f"    rm {VERIFIERS / (with_verifier.key + '.joblib')}")
     else:
         print(f"\n  {DIM}No difference in what fires. Compare the mean peaks: "
               f"a lower mean with the verifier means less headroom.{OFF}")
@@ -131,7 +138,7 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = Config()
-    engine = cfg.str("engine")
+    engine = cfg.get_str("engine")
     gate = float(cfg["micThresholdDb"])
 
     if engine != "openwakeword":
@@ -141,8 +148,8 @@ def main() -> int:
               f"Switch engines in settings to use it.{OFF}")
         return 1
 
-    threshold = cfg.int("owwThresholdPct") / 100.0
-    oww = OwwWake(cfg.str("owwModel"), threshold,
+    threshold = cfg.get_int("owwThresholdPct") / 100.0
+    oww = OwwWake(cfg.get_str("owwModel"), threshold,
                   use_verifier=not args.no_verifier)
 
     # Running both detectors over the same frames is the only way to compare
@@ -150,7 +157,7 @@ def main() -> int:
     # times into another measures the difference between two performances at
     # least as much as the difference between two models.
     if args.ab:
-        return run_ab(cfg, threshold, oww, args.seconds)
+        return run_ab(cfg, threshold, oww, args.seconds, args.device)
 
     print(f"\n  {BLD}{oww.key}{OFF}  threshold {threshold:.2f}  "
           f"gate {gate:.0f} dBFS  "
@@ -177,12 +184,10 @@ def main() -> int:
                 level = frame_db(pcm)
                 gated = level < gate
 
-                # The daemon drops sub-gate frames before the detector sees
-                # them, so the monitor does the same -- otherwise it would be
-                # measuring a different pipeline from the one that runs.
-                # Every frame, gate or no gate -- the daemon no longer gates
+                # Every frame, gate or no gate. The daemon does not gate
                 # this path, and the monitor has to match it or it measures a
-                # pipeline that does not run.
+                # pipeline that does not run. `gated` below is only used to
+                # decide what is worth printing.
                 oww.feed(pcm)
                 score = oww.last_score
 

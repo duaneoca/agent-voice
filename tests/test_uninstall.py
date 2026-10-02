@@ -86,7 +86,8 @@ def _install_tree(home: Path) -> Path:
     app.mkdir(parents=True)
     for d in ("daemon", "bin", "desktop"):
         shutil.copytree(ROOT / d, app / d)
-    for f in ("install.sh", "requirements.txt", "requirements-openwakeword.txt"):
+    for f in ("install.sh", "requirements.txt",
+              "requirements-openwakeword.txt", "models.lock"):
         shutil.copy(ROOT / f, app / f)
 
     data = app.parent
@@ -94,8 +95,11 @@ def _install_tree(home: Path) -> Path:
     (data / "models").mkdir()
     (data / "verifiers").mkdir()
     (data / "verifiers" / "hey_jarvis.pkl").write_text("twenty-five recordings")
+    # Symlinks into $APP, which is what `ln -sf "$APP/bin/$cmd"` leaves and
+    # what the uninstaller now checks for before deleting anything.
     (home / ".local" / "bin").mkdir(parents=True)
-    (home / ".local" / "bin" / "agentvoice").write_text("#!/bin/sh\n")
+    for cmd in ("agentvoice", "agentvoice-train-verifier"):
+        (home / ".local" / "bin" / cmd).symlink_to(app / "bin" / cmd)
     (home / "config" / "systemd" / "user").mkdir(parents=True)
     (home / "config" / "systemd" / "user" / "agentvoice.service").write_text("[Unit]\n")
     return app
@@ -118,6 +122,23 @@ def test_uninstall_completes_from_inside_the_directory_it_removes(tmp_path):
     assert not (data / "models").exists()
     assert not (tmp_path / ".local" / "bin" / "agentvoice").exists()
     assert not (tmp_path / "config" / "systemd" / "user" / "agentvoice.service").exists()
+
+
+def test_uninstall_leaves_a_command_it_did_not_install(tmp_path):
+    """`rm -f "$BINDIR/agentvoice"*` deleted by name. A wrapper of your own,
+    or a link into a second checkout, is not this install's to remove."""
+    app = _install_tree(tmp_path)
+    mine = tmp_path / ".local" / "bin" / "agentvoice"
+    mine.unlink()
+    mine.write_text("#!/bin/sh\nexec ~/src/agent-voice/bin/agentvoice \"$@\"\n")
+
+    done = _run(app, tmp_path, "--uninstall", "--yes")
+
+    assert done.returncode == 0, done.stderr
+    assert mine.exists(), "deleted something it did not install"
+    assert str(mine) in done.stdout + done.stderr, "removed it silently"
+    # The one it did install still goes.
+    assert not (tmp_path / ".local" / "bin" / "agentvoice-train-verifier").exists()
 
 
 def test_uninstall_keeps_the_recordings_it_did_not_create(tmp_path):
@@ -257,14 +278,25 @@ def _daemon_section() -> str:
     return section
 
 
-def _run_section(root: Path, app: Path) -> subprocess.CompletedProcess:
+def _self_is_app_block() -> str:
+    """Lift the real SELF_IS_APP decision out of install.sh.
+
+    Lifted rather than retyped: it used to be a copy here, which meant the
+    tests could keep passing against a rule the installer no longer applied.
+    """
+    text = (ROOT / "install.sh").read_text().splitlines()
+    start = next(i for i, l in enumerate(text) if l.startswith("SELF_IS_APP=0"))
+    end = next(i for i in range(start + 1, len(text)) if text[i] == "fi")
+    return "\n".join(text[start:end + 1]) + "\n"
+
+
+def _run_section(root: Path, app: Path, dev: int = 0) -> subprocess.CompletedProcess:
     script = (
         'set -euo pipefail\n'
         'say() { :; }\n'
         'ok() { :; }\n'
-        f'ROOT={root}\nAPP={app}\nDEV=0\n'
-        'SELF_IS_APP=0\n'
-        '[[ "$(readlink -f "$ROOT")" == "$(readlink -f "$APP")" ]] && SELF_IS_APP=1\n'
+        f'ROOT={root}\nAPP={app}\nDEV={dev}\n'
+        + _self_is_app_block()
         + _daemon_section()
     )
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
@@ -281,13 +313,65 @@ def test_installing_from_the_installed_copy_does_not_delete_it(tmp_path):
     assert (app / "install.sh").exists()
 
 
+def test_the_installed_copy_carries_the_model_hashes(tmp_path):
+    """$APP/install.sh is what the Remove button and a reinstall run, and
+    bin/agentvoice-train-verifier reads the lock from $REPO -- which is $APP
+    on an installed machine. Without it, a voice fetch has no hash to check
+    against and refuses, which is the right direction but the wrong reason."""
+    app = _install_tree(tmp_path)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    for d in ("daemon", "bin", "desktop"):
+        shutil.copytree(ROOT / d, plugin / d)
+    for f in ("install.sh", "requirements.txt",
+              "requirements-openwakeword.txt", "models.lock"):
+        shutil.copy(ROOT / f, plugin / f)
+
+    done = _run_section(plugin, app)
+
+    assert done.returncode == 0, done.stderr
+    assert (app / "models.lock").is_file(), "the hashes did not travel"
+    assert "revision piper" in (app / "models.lock").read_text()
+
+
+def test_a_dev_link_can_be_replaced_by_a_real_install(tmp_path):
+    """--dev points $APP at the checkout. Every path then resolves to the
+    same place, so a plain install from that checkout used to decide it was
+    already installed and leave the link -- with no way back short of
+    deleting $APP by hand."""
+    app = _install_tree(tmp_path)
+    checkout = tmp_path / "checkout"
+    shutil.move(str(app), str(checkout))
+    app.symlink_to(checkout)
+    assert app.is_symlink()
+
+    done = _run_section(checkout, app)
+
+    assert done.returncode == 0, done.stderr
+    assert not app.is_symlink(), "still a dev link"
+    assert (app / "daemon").is_dir()
+    assert (checkout / "daemon").is_dir(), "the checkout must survive"
+
+
+def test_a_dev_install_still_links(tmp_path):
+    app = _install_tree(tmp_path)
+    checkout = tmp_path / "checkout"
+    shutil.move(str(app), str(checkout))
+
+    done = _run_section(checkout, app, dev=1)
+
+    assert done.returncode == 0, done.stderr
+    assert app.is_symlink() and app.resolve() == checkout.resolve()
+
+
 def test_installing_from_the_plugin_directory_still_replaces_the_copy(tmp_path):
     app = _install_tree(tmp_path)
     plugin = tmp_path / "plugin"
     plugin.mkdir()
     for d in ("daemon", "bin", "desktop"):
         shutil.copytree(ROOT / d, plugin / d)
-    for f in ("install.sh", "requirements.txt", "requirements-openwakeword.txt"):
+    for f in ("install.sh", "requirements.txt",
+              "requirements-openwakeword.txt", "models.lock"):
         shutil.copy(ROOT / f, plugin / f)
     (app / "stale.txt").write_text("from the previous version")
 

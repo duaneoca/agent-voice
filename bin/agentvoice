@@ -10,8 +10,9 @@
 #                                  is mid-reply, stop it
 #   agentvoice talk-end            push-to-talk released: that was the turn
 #   agentvoice status              JSON, for scripts and the bar
-#   agentvoice status              JSON, for scripts and the bar
+#   agentvoice is-active           yes|no, for a keybind that has to branch
 #   agentvoice calibrate           can this room support barge-in?
+#   agentvoice monitor             live wake-word scores, for tuning
 #   agentvoice permit <id> allow|deny   answer a pending permission request
 #   agentvoice pending             the request waiting for an answer, as JSON
 set -euo pipefail
@@ -32,15 +33,28 @@ vstate() {
   fi
 }
 
-# SIGUSR2's default action is to terminate. A daemon installed before the
-# interrupt existed does not catch it, so sending one blind would kill the
-# thing it was meant to interrupt. SigCgt is the caught-signal mask; bit 11
-# is signal 12.
-handles_interrupt() {
-  local mask
+# SIGUSR1 and SIGUSR2 both default to terminating the process. Two ways that
+# bites: a daemon installed before the interrupt existed does not catch
+# SIGUSR2, and a pidfile left behind by a crash names a pid the kernel has
+# since given to something else entirely. So nothing is signalled unless its
+# caught-signal mask says it is listening. SigCgt is that mask, and a signal
+# n sits at bit n-1.
+handles() {
+  local mask signo="$2"
   mask=$(awk '/^SigCgt:/{print $2}' "/proc/$1/status" 2>/dev/null) || return 1
   [[ -n $mask ]] || return 1
-  (( (0x$mask >> 11) & 1 ))
+  (( (0x$mask >> (signo - 1)) & 1 ))
+}
+
+# The pid to signal, or nothing. Written by the daemon and removed on the way
+# out -- but not on a kill -9, hence the check above.
+daemon_pid() {
+  local pid
+  [[ -r $PIDFILE ]] || return 1
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  [[ -d /proc/$pid ]] || return 1
+  printf '%s' "$pid"
 }
 
 # One-shot command to the run loop. Renamed into place so the daemon cannot
@@ -63,8 +77,12 @@ case "${1:-status}" in
     if active; then exec "$0" stop; else exec "$0" start; fi
     ;;
   mic)
-    if [[ -r $PIDFILE ]]; then
-      kill -USR1 "$(cat "$PIDFILE")"
+    # Via systemd where systemd is running it, because the unit knows which
+    # process is actually ours and a pidfile only claims to.
+    if active; then
+      systemctl --user kill -s USR1 "$UNIT"
+    elif pid=$(daemon_pid) && handles "$pid" 10; then
+      kill -USR1 "$pid"
     else
       echo "daemon not running" >&2
       exit 1
@@ -73,15 +91,12 @@ case "${1:-status}" in
   interrupt)
     # Cut the reply short. A no-op when the daemon is idle, so this is safe to
     # bind to a key you might hit at any time.
-    if [[ -r $PIDFILE ]]; then
-      pid=$(cat "$PIDFILE")
-      if handles_interrupt "$pid"; then
-        kill -USR2 "$pid"
-      else
-        echo "this daemon predates the interrupt; restart it:" >&2
-        echo "  agentvoice stop && agentvoice start" >&2
-        exit 1
-      fi
+    if pid=$(daemon_pid) && handles "$pid" 12; then
+      kill -USR2 "$pid"
+    elif [[ -n ${pid:-} ]]; then
+      echo "this daemon predates the interrupt; restart it:" >&2
+      echo "  agentvoice stop && agentvoice start" >&2
+      exit 1
     else
       echo "daemon not running" >&2
       exit 1
@@ -105,7 +120,13 @@ case "${1:-status}" in
     # Answer a pending permission request. The overlay calls this; so can you.
     #   agentvoice permit <id> allow|deny
     id="${2:-}"; verdict="${3:-deny}"
-    [[ -n $id ]] || { echo "usage: agentvoice permit <id> allow|deny" >&2; exit 2; }
+    # The id is a filename, so it is checked rather than trusted: the hook
+    # makes it from twelve hex characters, and `../../x` would otherwise write
+    # a .response anywhere it liked.
+    if [[ ! $id =~ ^[0-9a-f]{12}$ ]]; then
+      echo "usage: agentvoice permit <id> allow|deny   (id is 12 hex characters)" >&2
+      exit 2
+    fi
     D="$RUNDIR/permissions"
     if [[ $verdict == allow ]]; then
       printf '{"allow":true}' > "$D/$id.response"
@@ -114,17 +135,37 @@ case "${1:-status}" in
     fi
     ;;
   pending)
-    # Any permission request waiting for an answer, as JSON.
+    # A permission request waiting for an answer, as JSON.
+    #   agentvoice pending <id>   that exact one, so the overlay answers the
+    #                             question it was summoned about
+    #   agentvoice pending        the newest, for a person at a terminal
     D="$RUNDIR/permissions"
-    f=$(ls -t "$D"/*.request 2>/dev/null | head -1)
-    [[ -n ${f:-} ]] && cat "$f" || echo '{}'
+    want="${2:-}"
+    if [[ -n $want ]]; then
+      if [[ ! $want =~ ^[0-9a-f]{12}$ ]]; then echo '{}'; exit 0; fi
+      [[ -r "$D/$want.request" ]] && cat "$D/$want.request" || echo '{}'
+    else
+      # `|| true`, because of `set -euo pipefail`: with no permissions
+      # directory `ls` exits 2, pipefail carries that out of the pipeline, and
+      # a failing command substitution in an assignment ends the script -- so
+      # "nothing is pending" printed nothing at all and exited 2. The overlay
+      # survived it by failing to parse the empty output, which is not the
+      # same as being told there is nothing. Same shape as the jq-exits-2 bug
+      # in install.sh.
+      f=$(ls -t "$D"/*.request 2>/dev/null | head -1) || true
+      if [[ -n ${f:-} && -r ${f:-} ]]; then cat "$f"; else echo '{}'; fi
+    fi
     ;;
   calibrate)
     # Whether the user can be heard over the speaker is a property of the
     # room, not of the code, so it is measured rather than assumed.
     REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
     PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
-    exec "$PY" -c "import sys; sys.path.insert(0, '$REPO/daemon'); import barge; sys.exit(barge.calibrate())"
+    # The path goes through the environment, not through the source: a repo
+    # checked out somewhere with an apostrophe in the name would otherwise
+    # end the string literal and break the program.
+    AGENTVOICE_DAEMON_DIR="$REPO/daemon" exec "$PY" -c \
+      'import os, sys; sys.path.insert(0, os.environ["AGENTVOICE_DAEMON_DIR"]); import barge; sys.exit(barge.calibrate())'
     ;;
   monitor)
     # Live wake-word scores. Safe to run alongside the daemon: PipeWire allows

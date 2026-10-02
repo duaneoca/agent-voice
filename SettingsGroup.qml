@@ -26,12 +26,12 @@ Column {
   property color foreground: Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.4)
   property string fontFamily: Style.font.family
-  //: Outer padding inside the box. Named because the height below depends on
-  //: it twice and a mismatch clips the last control.
+  // Outer padding inside the box. Named because the height below depends on
+  // it twice and a mismatch clips the last control.
   readonly property int pad: Style.space(10)
 
-  //: Children land in the inner Column rather than here, so the box wraps
-  //: them. Without `default` every caller would have to name a slot.
+  // Children land in the inner Column rather than here, so the box wraps
+  // them. Without `default` every caller would have to name a slot.
   default property alias items: inner.data
 
   spacing: Style.space(4)

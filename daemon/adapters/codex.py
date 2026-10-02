@@ -28,18 +28,28 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
 import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
+from .base import (
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+)
 
 # Keys that have carried assistant text in this family of protocols. Checked
 # in order; the first non-empty string wins.
 _TEXT_KEYS = ("text", "delta", "content", "message")
+
+#: Item types that are not the answer. Where the text lives stays structural
+#: -- see the module docstring -- but not every item is something to say out
+#: loud: `reasoning` is the model thinking, and a plan or a todo list is
+#: scaffolding. Spoken, they came out as the assistant talking to itself.
+_NOT_SPEECH = frozenset({
+    "error", "reasoning", "reasoning_summary", "todo_list", "plan",
+    "web_search", "file_change", "patch_apply", "mcp_tool_call",
+})
 
 
 def _harvest_text(node: Any, depth: int = 0) -> str:
@@ -73,8 +83,10 @@ class Codex(Adapter):
         # --approve-for-me is Codex's unattended mode. Without it Codex uses
         # its own default, which asks -- and with no terminal to ask in, a
         # turn that needs approval stalls until the adapter is cancelled.
-        # That fails closed, which is the right direction, but it is a guess:
-        # this machine's Codex is not signed in and it has never been run.
+        # That fails closed, which is the right direction. The flag itself is
+        # read off `--help` rather than observed, which is a hypothesis and
+        # not a contract -- unlike the event envelope below, which was
+        # recorded from a real turn.
         self.full_auto = (not ask_permission) if full_auto is None else full_auto
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -121,11 +133,19 @@ class Codex(Adapter):
             yield Chunk(error=f"could not start codex: {e}")
             return
 
+        # Drained in the background from here on: stderr is a 64KB pipe
+        # and it is not read until stdout ends, so a chatty CLI fills it,
+        # blocks on its next write, and stops producing stdout -- which the
+        # watchdog then reports as "stopped responding".
+        errors = Drain(proc.stderr)
+
         with self._lock:
             self._proc = proc
         dog = Watchdog(proc, self.idle_timeout_s)
 
         spoken_any = False
+        incomplete = ""
+        tools_seen: set[str] = set()
         try:
             for line in proc.stdout:
                 dog.poke()
@@ -154,18 +174,34 @@ class Codex(Adapter):
                 elif kind.startswith("item."):
                     item = msg.get("item") or msg
                     itype = str(item.get("type", ""))
-                    if itype == "error":
-                        continue
                     if "tool" in itype or "command" in itype:
-                        yield Chunk(tool=item.get("name") or itype)
+                        # Announced once, on whichever event arrives first.
+                        if itype not in tools_seen:
+                            tools_seen.add(itype)
+                            yield Chunk(tool=item.get("name") or itype)
+                        continue
+                    if itype in _NOT_SPEECH:
                         continue
                     found = _harvest_text(item)
-                    if found.strip():
+                    if not found.strip():
+                        continue
+                    # Only `item.completed`. `item.started` and `item.updated`
+                    # carry the same item again as it grows, so harvesting all
+                    # three said the answer two or three times over.
+                    if kind == "item.completed":
                         spoken_any = True
                         yield Chunk(text=found)
+                    else:
+                        # Kept in case nothing ever completes. A silent turn is
+                        # the one failure a voice interface cannot report.
+                        incomplete = found
 
                 elif kind == "turn.completed":
                     pass
+
+            if not spoken_any and incomplete.strip():
+                yield Chunk(text=incomplete)
+                spoken_any = True
 
             code = proc.wait()
             if dog.fired:
@@ -176,7 +212,7 @@ class Codex(Adapter):
                                   f"{dog.idle_s:.0f}s")
                 return
             if code != 0 and not spoken_any and code not in (-15, 143, -9, 137):
-                err = (proc.stderr.read() or "").strip().splitlines()
+                err = errors.text().splitlines()
                 yield Chunk(error=(err[-1] if err else f"codex exited {code}"))
         finally:
             dog.stop()

@@ -47,7 +47,16 @@ run_case() {
   # No --tmpfs over $HOME: a fresh mktemp directory is already empty, and a
   # tmpfs exists only inside the namespace -- so the checks below, which run
   # on the outside, found nothing and called a real install a failure.
-  bwrap --dev-bind / / \
+  # --ro-bind, not --dev-bind: the point of the box is a stripped environment,
+  # but an installer bug is exactly what this is here to find, and `rm -rf`
+  # with an unset variable in a namespace that can write the real filesystem
+  # is not a box at all. /tmp is a tmpfs over the top with the box bound back
+  # through it, so the installer has somewhere to write and the outside checks
+  # can still read what it left.
+  bwrap --ro-bind / / \
+        --dev /dev --proc /proc \
+        --tmpfs /tmp --tmpfs /var/tmp \
+        --bind "$box" "$box" \
         --unsetenv DBUS_SESSION_BUS_ADDRESS \
         --unsetenv XDG_RUNTIME_DIR \
         --setenv HOME "$box/home" \
@@ -98,7 +107,10 @@ round_trip() {
   slim_path "$bin" "$@"
   local data="$box/home/.local/share/agentvoice"
 
-  bwrap --dev-bind / / \
+  bwrap --ro-bind / / \
+        --dev /dev --proc /proc \
+        --tmpfs /tmp --tmpfs /var/tmp \
+        --bind "$box" "$box" \
         --unsetenv DBUS_SESSION_BUS_ADDRESS \
         --setenv HOME "$box/home" \
         --setenv PATH "$bin" \

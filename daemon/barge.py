@@ -29,9 +29,13 @@ import numpy as np
 VAD_FRAME = 512
 VAD_SPEECH = 0.5
 
-#: Defaults are ours, not upstream's. Theirs floor the gate at 0.012 RMS
-#: (-38.4 dBFS), which is below the measured bleed here, so out of the box it
-#: interrupts itself within a second.
+#: The absolute floor, 0.012 RMS (-38.4 dBFS), is upstream's own figure and
+#: is kept. On its own it does nothing here: the measured bleed from our
+#: speaker into our microphone is above it, so a fixed floor alone interrupts
+#: us within a second of starting to talk. What makes the gate usable is the
+#: `factor` above the *running* bleed estimate, the three-in-four hit window,
+#: and `bargeIn` defaulting to off until `agentvoice calibrate` says the room
+#: can support it.
 DEFAULT_MIN_RMS = 0.012
 DEFAULT_FACTOR = 1.5
 WARMUP_FRAMES = 4
@@ -114,10 +118,12 @@ def calibrate(seconds: float = 8.0, device=None) -> int:
 
     import sounddevice as sd
 
-    sys_path_hack = pathlib.Path(__file__).resolve().parent
+    # Run as `agentvoice calibrate`, which imports this file directly, so the
+    # daemon's own directory is not necessarily on the path yet.
     import sys
-    if str(sys_path_hack) not in sys.path:
-        sys.path.insert(0, str(sys_path_hack))
+    here = pathlib.Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
     from runtime import Config, Speaker
 
     cfg = Config()
@@ -129,10 +135,15 @@ def calibrate(seconds: float = 8.0, device=None) -> int:
         if not len(x):
             return 0.0, 0.0
         per = [np.sqrt(np.mean(x[i:i+1280] ** 2)) / 32768.0
-               for i in range(0, len(x) - 1280, 1280)]
+               for i in range(0, len(x) - 1279, 1280)]
+        if not per:
+            # Less than one 80ms frame. np.median([]) is NaN, which compares
+            # false against every threshold and so reads as a clean silence
+            # rather than as the no-measurement it is.
+            return 0.0, 0.0
         return float(np.median(per)), float(np.percentile(per, 90))
 
-    speaker = Speaker(cfg.str("voice"))
+    speaker = Speaker(cfg.get_str("voice"))
     stream = sd.RawInputStream(samplerate=rate, channels=1, dtype="int16",
                                blocksize=chunk, device=device,
                                callback=lambda i, n, t, s: frames.append(bytes(i)))
@@ -171,5 +182,6 @@ def calibrate(seconds: float = 8.0, device=None) -> int:
     print("  microphone at about the same level, so no threshold separates")
     print("  them: every setting that hears you also fires on us. A headset,")
     print("  or moving the microphone away from the speaker, is the fix.")
-    print("  The microphone stays deaf while it speaks; press F8 to interrupt.")
+    print("  The microphone stays deaf while it speaks. Interrupt with the")
+    print("  push-to-talk key, Super+Ctrl+Space, or the panel's stop button.")
     return 1

@@ -1,8 +1,8 @@
 """Installing without openWakeWord has to be a real choice, not a broken one.
 
-install.sh asks, and --no-oww is a supported answer -- the engine default is
-Vosk, and openWakeWord is another ~100MB on top of a 750MB install. So both
-the daemon and the settings page have to behave when the package is absent.
+install.sh does not install it unless asked for with --oww -- the engine
+default is Vosk, and openWakeWord is another 154MB on top of a 750MB install.
+So both the daemon and the settings page have to behave when it is absent.
 
 The daemon's half already worked: choosing openWakeWord without it falls back
 to Vosk. What did not was the settings page, which had no idea whether the

@@ -1,6 +1,9 @@
-# Template. install.sh substitutes @ROOT@ and @VENV@ and writes the result to
-# ~/.config/systemd/user/agentvoice.service, so the unit carries the real path
-# of whichever checkout or plugin directory it was installed from.
+# Template. install.sh substitutes @VENV@ and writes the result to
+# $XDG_CONFIG_HOME/systemd/user/agentvoice.service, so the unit points at the
+# virtualenv of whichever install it came from. @ROOT@ is deliberately not
+# used for WorkingDirectory any more: install.sh deletes and recreates the
+# app directory, which left the daemon with an unlinked cwd, and Piper's
+# loader calls Path.cwd() -- so no new voice could ever load after an upgrade.
 [Unit]
 Description=Agent Voice — wake word, transcription, spoken replies
 Documentation=https://github.com/duaneoca/agent-voice
@@ -18,15 +21,34 @@ Type=simple
 # Nothing here needs the install directory as its cwd; every adapter is handed
 # one explicitly.
 WorkingDirectory=%h
-ExecStart=@VENV@/bin/python -u @ROOT@/daemon/wake_listen.py
+# Quoted: systemd splits ExecStart on whitespace, and both paths come from
+# $HOME, which can legally contain a space.
+ExecStart="@VENV@/bin/python" -u "@ROOT@/daemon/wake_listen.py"
 Restart=on-failure
 RestartSec=2
-# Whisper on four older cores is the whole budget; niceness keeps a long
+# Whisper is the whole CPU budget on an older machine; niceness keeps a long
 # transcription from making the desktop stutter.
 Nice=5
 # The state file the bar widget watches lives here.
 RuntimeDirectory=agentvoice
 RuntimeDirectoryPreserve=yes
+
+# Hardening, kept to what cannot get in the way. Everything here applies to
+# the agent CLI too -- it is a child of this unit, in this cgroup -- and the
+# agent exists to edit the user's files and run their commands on request. So
+# ProtectHome=, ReadOnlyPaths= and PrivateTmp= are all out: they would break
+# the purpose, or hide the agent's scratch files from the user looking for
+# them.
+#
+# NoNewPrivileges= is out for the same reason and is worth naming: it would
+# stop the agent running sudo or pkexec at all, so "install this package"
+# would fail with a permission error rather than a password prompt. It is the
+# obvious hardening line to add, and adding it would quietly remove a thing
+# the user can currently ask for.
+#
+# These two restrict nothing a voice assistant or an agent legitimately does:
+LockPersonality=yes
+RestrictSUIDSGID=yes
 
 [Install]
 WantedBy=graphical-session.target

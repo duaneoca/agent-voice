@@ -22,11 +22,15 @@ here; the exit code carries no information.
 `conversation_id` is returned in every output format and `--conversation`
 resumes it, so conversation mode works without the process staying alive.
 
-This is the only backend besides Claude Code that can honour "edits". It
-cannot put a question on screen -- a PreToolUse hook exists and, in headless
-mode, `allow` is ignored, so a hook there can restrict and never permit
-(upstream issue #1053) -- but `--mode` and `--add-dir` say the same thing
-declaratively, ahead of time, which is what the level actually means.
+"edits" is *not* offered here, and `levels` is the authority on that. The
+pieces look as though it could be: `--mode accept-edits` and `--add-dir`
+describe a scope declaratively, ahead of time, which is roughly what the
+level means. What is missing is the confinement -- there is no flag that
+restricts what is reachable outside the added directory, and a hook cannot
+supply one either, because in headless mode `allow` is ignored, so a hook
+there can refuse and never permit (upstream issue #1053). Offering the level
+under a name that means confinement on the same screen would import a
+guarantee that is not here. See the note above `levels`.
 """
 from __future__ import annotations
 
@@ -37,7 +41,9 @@ import subprocess
 import threading
 from typing import Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
+from .base import (
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+)
 
 
 class Antigravity(Adapter):
@@ -92,6 +98,16 @@ class Antigravity(Adapter):
                 "--add-dir", self.cwd,
                 # Bounded so a wedged turn cannot outlive the watchdog and
                 # leave an orphan holding the microphone's attention.
+                #
+                # Worth being clear about what this costs: agy's
+                # --print-timeout is a *total* limit, not an idle one, so
+                # unlike every other backend here a long agy task is cut off
+                # at 90s even while it is working. The alternative is an
+                # orphan `agy` with no way to notice it, and the watchdog
+                # cannot tell the difference from out here -- agy emits one
+                # JSON document at the end rather than streaming, so there is
+                # nothing to poke the watchdog with in between. Raise
+                # idle_timeout_s if agy is the backend doing real work.
                 "--print-timeout", f"{int(self.idle_timeout_s)}s"]
         if self.level == "trusted":
             argv.append("--dangerously-skip-permissions")
@@ -115,6 +131,12 @@ class Antigravity(Adapter):
         except OSError as e:
             yield Chunk(error=f"could not start agy: {e}")
             return
+
+        # Drained in the background from here on: stderr is a 64KB pipe
+        # and it is not read until stdout ends, so a chatty CLI fills it,
+        # blocks on its next write, and stops producing stdout -- which the
+        # watchdog then reports as "stopped responding".
+        Drain(proc.stderr)
 
         with self._lock:
             self._proc = proc

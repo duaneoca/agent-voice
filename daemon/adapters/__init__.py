@@ -118,13 +118,20 @@ def explain(name: str | None = None) -> str:
 
 
 def supported() -> dict[str, str]:
-    """Every agent we can drive, and how well its protocol is known."""
-    out = {"claude": "verified", "codex": "envelope only", "gemini": "flags only"}
+    """Every agent this can drive, and how well its protocol is known.
+
+    "observed" means a real turn was watched and its output recorded in a
+    test; the rest is read off a --help page. Not used by the daemon -- it is
+    here for the tests and for anyone asking what has actually been tried.
+    """
+    out = {"claude": "observed", "codex": "observed", "gemini": "observed",
+           "agy": "observed", "endpoint": "observed (wire format is public)"}
     for agent, (_, verified) in CLI_TEMPLATES.items():
         out.setdefault(agent, "text stream" if verified else "UNVERIFIED")
     return out
 
 
-__all__ = ["Adapter", "Chunk", "ClaudeCode", "CliAgent", "Codex", "Gemini",
-           "OpenAICompatible", "load", "omarchy_default", "sentences",
-           "speech_safe", "supported", "REGISTRY", "CLI_TEMPLATES"]
+__all__ = ["Adapter", "Antigravity", "Chunk", "ClaudeCode", "CliAgent",
+           "Codex", "Gemini", "OpenAICompatible", "load", "omarchy_default",
+           "sentences", "speech_safe", "supported", "REGISTRY",
+           "CLI_TEMPLATES"]

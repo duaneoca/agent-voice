@@ -46,8 +46,9 @@ proper noun. No engine at any size transcribed `kubectl` correctly:
 Vosk consumes audio while you are still speaking, so only the tail remains
 when you stop. Whisper cannot start until the utterance ends, so its whole
 run is dead air. whisper-tiny has the **better** RTF (0.13 vs 0.23) and **ten
-times** the perceived latency (323ms vs 30ms). Published RTF rankings pick the
-wrong engine for this workload.
+times** the perceived latency (317ms vs 30ms -- the no-vocab figure from the
+table in §1; this paragraph said 323ms, which is the RSS number from §6).
+Published RTF rankings pick the wrong engine for this workload.
 
 Voxtype's `whisper.eager_processing` ("transcribe overlapping chunks while you
 are still speaking") is the mitigation and is untested here.
@@ -343,7 +344,7 @@ Repeated with `allowNonWorkspaceAccess: false` in
 `~/.gemini/antigravity-cli/settings.json` -- the setting the docs describe
 as restricting access outside project directories -- with the same result.
 The workspace had also been trusted wholesale at login
-(`trustedWorkspaces: ["/home/duaneo"]`), which is the likeliest reason, and
+(`trustedWorkspaces: ["$HOME"]`), which is the likeliest reason, and
 there is no per-invocation flag that restricts: `--sandbox` is terminal
 restrictions, not file ones.
 

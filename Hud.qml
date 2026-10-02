@@ -20,8 +20,8 @@ import qs.Ui
 PanelWindow {
   id: hud
 
-  //: Live state, passed in rather than re-read: the widget already watches the
-  //: state file, and two watchers on one file would disagree during a write.
+  // Live state, passed in rather than re-read: the widget already watches the
+  // state file, and two watchers on one file would disagree during a write.
   property string vState: "off"
   property string stateLabel: ""
   property string icon: ""
@@ -29,18 +29,18 @@ PanelWindow {
   property string reply: ""
   property color accent: Color.foreground
 
-  //: `var`, not QtObject: the bar is reached for position and thickness, and
-  //: a QtObject-typed handle makes those unresolvable to qmllint -- which
-  //: the check script rejects, for the good reason that it cannot tell a
-  //: real typo from a duck-typed one.
+  // `var`, not QtObject: the bar is reached for position and thickness, and
+  // a QtObject-typed handle makes those unresolvable to qmllint -- which
+  // the check script rejects, for the good reason that it cannot tell a
+  // real typo from a duck-typed one.
   property var bar: null
   property string fontFamily: Style.font.family
   property int lingerMs: 2000
   property bool enabled: true
 
-  //: The states that mean an exchange is under way. `followup` is included:
-  //: the window is still open, another sentence may follow, and closing on it
-  //: would flicker between turns.
+  // The states that mean an exchange is under way. `followup` is included:
+  // the window is still open, another sentence may follow, and closing on it
+  // would flicker between turns.
   readonly property bool busy: enabled
     && (vState === "capture" || vState === "transcribing"
         || vState === "thinking" || vState === "speaking"
@@ -133,6 +133,11 @@ PanelWindow {
         maximumLineCount: 3
         elide: Text.ElideRight
         text: "“" + hud.transcript + "”"
+        // Whatever was said out loud, and whatever a model answered, are
+        // both strings this did not write. AutoText would render anything
+        // that looks like HTML as rich text, which hides characters and can
+        // make the bar fetch an <img src> of someone else's choosing.
+        textFormat: Text.PlainText
         color: Color.tooltip.text
         font.family: hud.fontFamily
         font.pixelSize: Style.font.body
@@ -148,6 +153,7 @@ PanelWindow {
         maximumLineCount: 6
         elide: Text.ElideRight
         text: "→ " + hud.reply
+        textFormat: Text.PlainText
         color: Qt.rgba(Color.tooltip.text.r, Color.tooltip.text.g,
                        Color.tooltip.text.b, 0.8)
         font.family: hud.fontFamily

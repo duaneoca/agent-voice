@@ -51,8 +51,11 @@ def check_level(path: Path) -> str | None:
     rms = float(np.sqrt((x ** 2).mean())) / 32768
     clipped = float((np.abs(x) >= 32700).mean())
     if clipped > 0.001:
-        return (f"CLIPPING ({clipped:.1%} of samples) — lower the mic gain:\n"
-                f"       amixer -c 0 sset Capture 49")
+        # Not a specific amixer line: `-c 0` and a level of 49 were one
+        # machine's card and one machine's gain, and on anything else that
+        # command either fails or changes the wrong device.
+        return (f"CLIPPING ({clipped:.1%} of samples) — lower the input gain "
+                f"for this microphone (wiremix, pavucontrol, or alsamixer)")
     if rms < 0.004:
         return "very quiet — move closer or raise the gain"
     if peak < 0.05:

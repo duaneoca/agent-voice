@@ -1,4 +1,4 @@
-"""Config, state publishing, and speech for the agentvoice prototype.
+"""Config, state publishing, and speech for the agentvoice daemon.
 
 Three small concerns that the wake loop should not have to know about:
 
@@ -10,15 +10,11 @@ Three small concerns that the wake loop should not have to know about:
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import threading
 import tomllib
 from pathlib import Path
 
-from paths import (  # noqa: F401
-    RUNTIME_DIR, ROOT, SHELL_JSON, config_toml, piper_voices,
-)
+from paths import RUNTIME_DIR, SHELL_JSON, config_toml, piper_voices
 
 PLUGIN_ID = "duaneoca.agentvoice"
 
@@ -44,9 +40,9 @@ DEFAULTS = {
     "speakReplies": True,
     "livePartials": "auto",
     "bargeIn": False,
-    # Drawn by the widget, not used by the daemon -- but it still belongs in
-    # DEFAULTS, because the check script requires every declared setting to
-    # have one and because `omarchy bar set` has to have something to compare.
+    # Every declared setting needs a default here: the check script requires
+    # one, `omarchy bar set` needs something to compare against, and the
+    # daemon has to run with no plugin installed and no config file at all.
     "useVerifier": True,
     "hud": True,
     "hudLingerMs": 2000,
@@ -75,7 +71,12 @@ TOML_ALIASES = {
     "model": ("stt", "model"),
     "micThresholdDb": ("audio", "mic_threshold_db"),
     "echoTailMs": ("audio", "echo_tail_ms"),
+    # No manifest entry, deliberately: a refractory window is a property of
+    # how the detector behaves, not a knob worth a slider. It still needs a
+    # default and an alias so the TOML path can reach it.
     "refractoryMs": ("wake", "refractory_ms"),
+    # Written as a float here and as a whole percent in the schema; see
+    # _from_toml, which converts.
     "wakeConfidence": ("audio", "wake_confidence"),
     "livePartials": ("stt", "live_partials"),
     "bargeIn": ("audio", "barge_in"),
@@ -131,6 +132,15 @@ class Config:
             value = (raw.get(section) or {}).get(name)
             if value is not None:
                 out[key] = value
+        # The file writes a float and __getitem__ reads the percent, which is
+        # always present from DEFAULTS -- so `wake_confidence = 0.80` in the
+        # TOML used to be read, merged, and then ignored by every caller.
+        # Converting it here is what makes editing the file do something.
+        if "wakeConfidence" in out and "wakeConfidencePct" not in out:
+            try:
+                out["wakeConfidencePct"] = round(float(out["wakeConfidence"]) * 100)
+            except (TypeError, ValueError):
+                pass
         return out
 
     def reload(self) -> bool:
@@ -154,17 +164,50 @@ class Config:
         # The bar schema has no float type, so confidence travels as a whole
         # percent and is converted here rather than everywhere it is read.
         if key == "wakeConfidence" and "wakeConfidencePct" in self._values:
-            return float(self._values["wakeConfidencePct"]) / 100.0
+            try:
+                return float(self._values["wakeConfidencePct"]) / 100.0
+            except (TypeError, ValueError):
+                return float(DEFAULTS["wakeConfidence"])
         return self._values.get(key, DEFAULTS.get(key))
 
-    def int(self, key: str) -> int:
-        return int(self[key])
+    #: get_int / get_bool / get_str rather than int / bool / str: the short
+    #: names shadowed the builtins inside this class and read oddly at the
+    #: call site (`cfg.str("voice")`).
+    #:
+    #: Every reader goes through one of these three, and every one of them
+    #: has to survive a value of the wrong type. shell.json is hand-edited,
+    #: written by `omarchy bar set`, and synced between machines, so
+    #: `"leadInMs": "abc"` is a thing it can hold -- and this is read from
+    #: inside the run loop, where a ValueError is the daemon stopping. The
+    #: built-in default is the answer instead, because a knob that cannot be
+    #: parsed has not been set.
+    def get_int(self, key: str) -> int:
+        try:
+            return int(self[key])
+        except (TypeError, ValueError):
+            return self._fallback(key, int)
 
-    def bool(self, key: str) -> bool:
-        return bool(self[key])
+    def get_bool(self, key: str) -> bool:
+        value = self[key]
+        if isinstance(value, str):
+            # JSON has a boolean; a TOML or hand edit may still say "true".
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        try:
+            return bool(value)
+        except (TypeError, ValueError):
+            return self._fallback(key, bool)
 
-    def str(self, key: str) -> str:
-        return str(self[key])
+    def get_str(self, key: str) -> str:
+        value = self[key]
+        return "" if value is None else str(value)
+
+    @staticmethod
+    def _fallback(key: str, cast):
+        """The shipped default for `key`, or the type's zero."""
+        try:
+            return cast(DEFAULTS[key])
+        except (KeyError, TypeError, ValueError):
+            return cast()
 
     def level_for(self, agent: str | None) -> str:
         """The permission level chosen for this agent, defaulting to "ask".
@@ -310,9 +353,16 @@ class Speaker:
 
     @staticmethod
     def sentences(text: str) -> list[str]:
-        import re
-        parts = re.split(r"(?<=[.!?])\s+", text.strip())
-        return [p for p in parts if p]
+        """Split for synthesis, by the same rules the streaming split uses.
+
+        It was `re.split(r"(?<=[.!?])\\s+")` here, which undid the care taken
+        in speech_text: that pattern splits "J. Smith" and "version 2.1. Next"
+        wherever the streaming path had deliberately kept them together, so
+        the same reply was chunked one way on its way to the screen and
+        another on its way to Piper.
+        """
+        from speech_text import iter_sentences
+        return list(iter_sentences([text.strip()]))
 
     def cancel(self) -> None:
         self._stop.set()

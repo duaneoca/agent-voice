@@ -106,7 +106,7 @@ class TestCustomWakeWords:
                         reason="the bundled models ship with openWakeWord, "
                                "which the test runner deliberately lacks")
     def test_a_bundled_phrase_still_resolves(self, custom):
-        path, key = custom.resolve_model("hey_jarvis")
+        _, key = custom.resolve_model("hey_jarvis")
         assert key.startswith("hey_jarvis")
 
     def test_yours_wins_over_a_bundled_name(self, custom):
@@ -136,5 +136,5 @@ class TestCustomWakeWords:
             return real(name, *a, **k)
 
         monkeypatch.setattr(builtins, "__import__", refuse)
-        path, key = custom.resolve_model("hey_claude")
+        _, key = custom.resolve_model("hey_claude")
         assert key == "hey_claude"

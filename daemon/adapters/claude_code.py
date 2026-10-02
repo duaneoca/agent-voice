@@ -3,17 +3,23 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import shlex
 import signal
 import subprocess
+import sys
 import threading
+from pathlib import Path
 from typing import Iterator
 
-from .base import Adapter, Chunk, SPOKEN_STYLE, Watchdog, installed, stop_tree
+from .base import (
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+)
 
-#: Tools that can change something or reach the network. Read-only tools are
-#: not listed: asking about every Read would train you to say yes.
-GUARDED_TOOLS = "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|KillShell"
+#: Every tool. The hook's `matcher` is also the limit of what the permission
+#: system can see, so naming the dangerous ones here put the rest outside it
+#: entirely. Which tools are free is decided in permission_hook.py, where it
+#: can be read, tested and said out loud -- see NO_EFFECT and READ_ONLY.
+GUARDED_TOOLS = ".*"
 
 
 class ClaudeCode(Adapter):
@@ -26,8 +32,9 @@ class ClaudeCode(Adapter):
     levels = ("ask", "edits", "trusted")
 
     # `auto` is the mode Omarchy's own `omarchy agent` uses for unattended
-    # launches. Until the permission overlay exists there is nothing to answer
-    # a prompt with, so a mode that can block is the wrong default.
+    # launches, and the one this runs in: the question is answered by the
+    # PreToolUse hook and the overlay, not by Claude's own prompt, which has
+    # no terminal to appear in. A mode that can block would simply hang.
     def __init__(self, model: str | None = None,
                  permission_mode: str = "auto",
                  cwd: str | None = None,
@@ -54,18 +61,31 @@ class ClaudeCode(Adapter):
         against 2.1.278 across every permission mode. Hooks fire in all of
         them, including `auto`.
         """
-        import json
-        import sys
-        from pathlib import Path
-
         hook = Path(__file__).resolve().parent.parent / "permission_hook.py"
+        # Quoted, because this string is run by a shell. A space anywhere in
+        # the interpreter path or the plugin path -- and the plugin lives
+        # under $HOME -- would split the command, give exit 127, and a hook
+        # that cannot start is read by Claude Code as a non-blocking error:
+        # the tool proceeds. Failing to quote here disables the guard.
+        command = " ".join(shlex.quote(part)
+                           for part in (sys.executable, str(hook), cls.name))
         return json.dumps({"hooks": {"PreToolUse": [{
             "matcher": GUARDED_TOOLS,
+            # ".*" -- every tool, with permission_hook.py deciding which ones
+            # are free. A matcher that named the dangerous tools left every
+            # other one outside the permission system altogether: `mcp__*`
+            # from the user's own servers (send mail, post to Slack, write a
+            # calendar), WebSearch, whose query *is* the exfiltration, Read
+            # of any path at all, and Task. Meanwhile the settings screen
+            # said "asks before every change".
+            #
+            # The cost is a process per tool call. The free tools return
+            # before importing anything but json and os, which is where that
+            # cost is paid back.
             # The agent's own name travels with the hook: permission levels
             # are per agent now, and the hook is a separate process that
             # cannot otherwise know which one spawned it.
-            "hooks": [{"type": "command",
-                       "command": f"{sys.executable} {hook} {cls.name}"}],
+            "hooks": [{"type": "command", "command": command}],
         }]}})
 
     def available(self) -> bool:
@@ -91,6 +111,13 @@ class ClaudeCode(Adapter):
 
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         argv = self._argv(text, session_id)
+        # The environment is inherited whole, including AGENTVOICE_ENDPOINT_KEY
+        # and OPENAI_API_KEY, which any Bash command the agent runs can read.
+        # Deliberately: Codex authenticates with OPENAI_API_KEY, so scrubbing
+        # it here would break a backend to protect a key from an agent the
+        # user is already trusting to run commands on their behalf. The key
+        # that matters is not in the environment on this machine anyway --
+        # endpoint_key() prefers the login keyring.
         try:
             proc = subprocess.Popen(argv, cwd=self.cwd, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, bufsize=1,
@@ -98,6 +125,12 @@ class ClaudeCode(Adapter):
         except OSError as e:
             yield Chunk(error=f"could not start claude: {e}")
             return
+
+        # Drained in the background from here on: stderr is a 64KB pipe
+        # and it is not read until stdout ends, so a chatty CLI fills it,
+        # blocks on its next write, and stops producing stdout -- which the
+        # watchdog then reports as "stopped responding".
+        errors = Drain(proc.stderr)
 
         with self._lock:
             self._proc = proc
@@ -151,7 +184,7 @@ class ClaudeCode(Adapter):
                                   f"{dog.idle_s:.0f}s")
                 return
             if code != 0:
-                err = (proc.stderr.read() or "").strip()
+                err = errors.text()
                 # A cancel closes the pipe under us; that is not a failure.
                 if code not in (-15, 143, -9, 137):
                     yield Chunk(error=err or f"claude exited {code}")

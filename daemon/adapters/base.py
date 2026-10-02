@@ -58,6 +58,45 @@ def stop_tree(proc, sig=signal.SIGKILL) -> None:
         pass
 
 
+class Drain:
+    """Reads a pipe in the background so the child never blocks on it.
+
+    Every adapter here pipes stderr and then reads it only after stdout has
+    ended. A pipe holds 64KB: a chatty CLI -- one deprecation warning per
+    tool call, a progress bar, a stack trace -- fills it, blocks on the next
+    write, and stops producing stdout, at which point nothing is read, the
+    watchdog eventually fires, and the turn is reported as "stopped
+    responding" when in fact it was waiting for us.
+
+    Started at Popen time and read at the end, which is where the text was
+    wanted anyway.
+    """
+
+    def __init__(self, stream, limit: int = 64_000) -> None:
+        self._parts: list[str] = []
+        self._limit = limit
+        self._stream = stream
+        self._thread = None
+        if stream is not None:
+            self._thread = threading.Thread(target=self._read, daemon=True)
+            self._thread.start()
+
+    def _read(self) -> None:
+        try:
+            for line in self._stream:
+                if sum(map(len, self._parts)) < self._limit:
+                    self._parts.append(line)
+        except Exception:
+            # The pipe closing under us is how this ends normally.
+            pass
+
+    def text(self, timeout: float = 1.0) -> str:
+        """Everything read, once the reader has finished or `timeout` passes."""
+        if self._thread is not None:
+            self._thread.join(timeout)
+        return "".join(self._parts).strip()
+
+
 class Watchdog:
     """Kills a subprocess that has gone quiet for too long.
 
@@ -146,8 +185,15 @@ def installed(binary: str) -> bool:
 class Chunk:
     """One thing that happened while the agent was answering.
 
-    A chunk carries at most one kind of news. `text` arrives many times,
-    everything else at most once per turn.
+    A chunk carries one kind of news. `text` arrives many times, and so do
+    `tool` and `session_id`: an agent runs several tools in a turn, and a CLI
+    announces its session at the start and again in its result. The rest
+    arrive once at most.
+
+    `done` marks the last chunk. Nothing in the daemon reads it -- the
+    consumer takes the iterator ending as the end of the turn -- but every
+    adapter sets it, and it is what a consumer that cannot wait for the
+    generator to close would key off.
     """
     text: str = ""
     session_id: str | None = None

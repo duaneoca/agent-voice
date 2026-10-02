@@ -138,15 +138,30 @@ echo_restore() {
   TTY_STATE=""
 }
 
+# Put back whatever "Record fresh" moved aside, if the run did not finish.
+restore_old_positives() {
+  [[ -n ${OLD_POS:-} && -d ${OLD_POS:-} ]] || return 0
+  mv "$OLD_POS"/*.wav "$POS"/ 2>/dev/null || true
+  rmdir "$OLD_POS" 2>/dev/null || true
+  OLD_POS=""
+}
+
+discard_old_positives() {
+  [[ -n ${OLD_POS:-} && -d ${OLD_POS:-} ]] || return 0
+  rm -rf "$OLD_POS"
+  OLD_POS=""
+}
+
 cancelled() {
   echo
   resume_daemon
   kbd_restore
-  gum style --foreground 3 "  Cancelled. Nothing was saved."
+  restore_old_positives
+  gum style --foreground 3 "  Cancelled. Your previous recordings are still there."
   exit 130
 }
 trap cancelled INT TERM
-trap 'resume_daemon; echo_restore; kbd_restore' EXIT
+trap 'resume_daemon; echo_restore; kbd_restore; restore_old_positives' EXIT
 
 find_python() {
   local candidates=(
@@ -206,9 +221,27 @@ fi
 # A default install has one Piper voice, and one voice makes four contrast
 # clips where training needs five -- so the stock install could not train a
 # verifier at all. These are the other speakers, most contrasting first, and
-# the URL is the same layout install.sh:fetch_voice uses; the check script
-# asserts the two stay in step.
-PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US"
+# the URL is the same layout install.sh:fetch_voice uses, read from the same
+# models.lock, and the check script asserts the two stay in step.
+
+# A contrast voice is a file this plays and a file the verifier learns from,
+# so it is checked against the same hashes install.sh checks. Exported
+# because the fetch happens inside spin()'s `bash -c`, a new process.
+lock_ok() { # <path> <name-in-the-lock>
+  local want got
+  want="$(awk -v n="$2" '$1=="sha256" && $2==n {print $3; exit}' \
+          "$MODELS_LOCK" 2>/dev/null || true)"
+  [[ -n $want ]] || return 1
+  got="$(sha256sum "$1" | cut -d' ' -f1)"
+  [[ $got == "$want" ]]
+}
+export -f lock_ok
+
+MODELS_LOCK="$REPO/models.lock"
+PIPER_REV="$(awk '$1=="revision" && $2=="piper" {print $3; exit}' \
+             "$MODELS_LOCK" 2>/dev/null || true)"
+PIPER_REV="${PIPER_REV:-main}"
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/$PIPER_REV/en/en_US"
 OTHER_SPEAKERS=(ryan-medium amy-medium joe-medium kristin-medium)
 
 # Fetch one voice into the Piper directory. Both files or neither: a voice
@@ -217,15 +250,16 @@ OTHER_SPEAKERS=(ryan-medium amy-medium joe-medium kristin-medium)
 # PIPER_BASE goes with it, since the function reads it. Necessary but not
 # sufficient: spin also had to stop using `exec`, which bypasses functions
 # entirely.
-export PIPER_BASE
+export PIPER_BASE MODELS_LOCK
 fetch_speaker() {
   local id="$1" dir="$2" name="${1%-*}" quality="${1##*-}"
   local file="en_US-$id.onnx"
   [[ -f "$dir/$file" ]] && return 0
   local base="$PIPER_BASE/$name/$quality"
   local tmp; tmp="$(mktemp -d)"
-  if curl -fsSL -o "$tmp/$file" "$base/$file" &&
-     curl -fsSL -o "$tmp/$file.json" "$base/$file.json"; then
+  if curl -fsSL --proto '=https' -o "$tmp/$file" "$base/$file" &&
+     curl -fsSL --proto '=https' -o "$tmp/$file.json" "$base/$file.json" &&
+     lock_ok "$tmp/$file" "$file" && lock_ok "$tmp/$file.json" "$file.json"; then
     mkdir -p "$dir"
     mv "$tmp/$file" "$tmp/$file.json" "$dir/"
     rm -rf "$tmp"
@@ -268,7 +302,13 @@ if (( HAVE_POS >= 10 )); then
   if gum confirm "Reuse them?" --affirmative "Reuse" --negative "Record fresh"; then
     REUSE=1
   else
-    rm -f "$POS"/*.wav
+    # Moved aside, not deleted. They were deleted here, before a single new
+    # clip existed, so cancelling halfway through recording lost the old set
+    # and then said "Nothing was saved". Restored by the cancel trap; removed
+    # on the way out of a run that got as far as retraining.
+    OLD_POS="$POS.previous.$$"
+    mkdir -p "$OLD_POS"
+    mv "$POS"/*.wav "$OLD_POS"/ 2>/dev/null || true
   fi
 fi
 
@@ -415,6 +455,9 @@ if ! spin "Training on $have clips of your voice" "$OUT_FILE" -- \
   exit 1
 fi
 OUT="$(tail -1 "$OUT_FILE")"; rm -f "$OUT_FILE" "${SPIN_ERR:-}"
+# The new recordings have now been trained on, so the previous set that
+# "Record fresh" moved aside is genuinely superseded.
+discard_old_positives
 
 # --- a threshold this model can actually reach ------------------------------
 # openWakeWord's default of 90 suits the four pretrained phrases, which peak

@@ -39,10 +39,19 @@ Panel {
   property string lastTranscript: ""
   property int lastMs: 0
   property real lastAudioS: 0
-  property real levelDb: -99
   property string lastReply: ""
 
   readonly property bool live: serviceActive && vState !== "off"
+
+  // Quote one argument for a shell: the floating-terminal launcher takes a
+  // command line, not an argv, so everything handed to it is shell source.
+  function shq(s) {
+    return "'" + String(s).replace(/'/g, "'\\''") + "'"
+  }
+
+  readonly property string configHome:
+      Quickshell.env("XDG_CONFIG_HOME")
+      || ((Quickshell.env("HOME") || "") + "/.config")
 
   readonly property string icon: {
     if (!serviceActive) return "󰍭"              // mic off
@@ -86,34 +95,14 @@ Panel {
   readonly property string owwModel: setting("owwModel", "hey_jarvis")
   readonly property string activePhrase:
       usingOww ? owwModel.replace(/_/g, " ") : phrase
-  readonly property int leadInMs: setting("leadInMs", 5000)
-  readonly property int trailingMs: setting("trailingSilenceMs", 1200)
-  readonly property int thresholdDb: setting("micThresholdDb", -38)
-  readonly property int confidencePct: setting("wakeConfidencePct", 70)
-  readonly property int echoTailMs: setting("echoTailMs", 350)
+  // Only what the panel actually shows. Every other knob is edited on the
+  // settings page, and the copies that used to live here were worse than
+  // unused: the check script read this file too when deciding whether a
+  // declared setting was drawn anywhere, so a dead `setting("leadInMs", ...)`
+  // here kept the check green after the real control was deleted.
   readonly property string voiceName: setting("voice", "lessac-medium")
   readonly property string model: setting("model", "tiny.en")
-
-  readonly property var phraseOptions: [
-    "hey computer", "okay computer", "hey agent", "hey claude", "okay claude",
-    "hey assistant", "hey jarvis", "hey machine", "computer"
-  ]
-  // Labelled, because a filename is not a description of a voice.
-  readonly property var voiceOptions: [
-    { label: "Lessac — female, medium", value: "lessac-medium" },
-    { label: "Lessac — female, low",    value: "lessac-low" },
-    { label: "Amy — female, medium",    value: "amy-medium" },
-    { label: "Ryan — male, medium",     value: "ryan-medium" },
-    { label: "Joe — male, medium",      value: "joe-medium" },
-    { label: "HFC — male, medium",      value: "hfc_male-medium" }
-  ]
   readonly property bool speakReplies: setting("speakReplies", true)
-
-  function persist(key, value) {
-    setter.command = ["omarchy", "bar", "set", "duaneoca.agentvoice",
-                      key, String(value), "--json"]
-    setter.running = true
-  }
 
   // The switch runs the service; `mic` only releases the microphone while
   // leaving the daemon up, which is the cheap panic button on right-click.
@@ -122,8 +111,6 @@ Panel {
     switcher.command = ["agentvoice", "toggle"]
     switcher.running = true
   }
-
-  Process { id: setter }
 
   Process {
     id: switcher
@@ -238,7 +225,8 @@ Panel {
         if (d.transcript !== undefined) voice.lastTranscript = String(d.transcript)
         if (d.ms !== undefined) voice.lastMs = Math.round(d.ms)
         if (d.audio_s !== undefined) voice.lastAudioS = d.audio_s
-        if (d.level_db !== undefined) voice.levelDb = d.level_db
+        // level_db is in the state file for `agentvoice status` and the
+        // monitor; the panel does not draw a meter, so it is not read here.
         if (d.reply !== undefined) voice.lastReply = String(d.reply)
         if (d.agent !== undefined) voice.vAgent = String(d.agent)
         if (d.level !== undefined) voice.permissionLevel = String(d.level)
@@ -418,9 +406,13 @@ Panel {
           text: "Install the voice engine…"
           fontFamily: voice.fontFamily
           onClicked: {
+            // Quoted, and XDG_CONFIG_HOME rather than ~/.config: the launcher
+            // runs this through `bash -c`, so a space in the path would split
+            // it into two commands, and the plugin is not under ~/.config at
+            // all on a machine that sets the variable.
             installer.command = ["omarchy-launch-floating-terminal-with-presentation",
-                                 Quickshell.env("HOME") +
-                                 "/.config/omarchy/plugins/duaneoca.agentvoice/install.sh"]
+                                 voice.shq(voice.configHome +
+                                   "/omarchy/plugins/duaneoca.agentvoice/install.sh")]
             installer.running = true
             voice.close()
           }
@@ -443,6 +435,10 @@ Panel {
           width: parent.width
           wrapMode: Text.WordWrap
           text: voice.lastTranscript
+          // Not AutoText: this is a transcript of speech and of a model's
+          // reply, so it is attacker-shaped input as far as the bar is
+          // concerned. Rich text would hide characters behind markup.
+          textFormat: Text.PlainText
           color: voice.fg
           font.family: voice.fontFamily
           font.pixelSize: Style.font.body
@@ -462,6 +458,7 @@ Panel {
           visible: voice.lastReply !== ""
           topPadding: Style.space(6)
           text: "→ " + voice.lastReply
+          textFormat: Text.PlainText
           color: voice.dim
           font.family: voice.fontFamily
           font.pixelSize: Style.font.body
