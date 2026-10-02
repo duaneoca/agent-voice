@@ -1197,6 +1197,23 @@ Item {
               fontFamily: root.fontFamily
               title: "MICROPHONE"
 
+              // Not a setting, deliberately: it is a security property, and a
+              // setting is a thing that gets switched off once and forgotten.
+              // Said here because behaviour nobody can see is behaviour
+              // nobody trusts -- and because "why did it stop answering"
+              // has exactly one answer worth printing.
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "The microphone closes while the screen is locked, and " +
+                      "opens again when you unlock. Locking does not change " +
+                      "the switch above: if you had released the microphone " +
+                      "before locking, it stays released afterwards."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
               // Named, so the bars inside address it directly. They reached it
               // through parent.parent, which resolves at runtime and silently
               // breaks the moment anything is nested between -- and which the

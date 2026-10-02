@@ -62,6 +62,13 @@ PanelWindow {
 
   onEnabledChanged: if (!enabled) { linger.stop(); showing = false }
 
+  // A lock hides it at once, with no linger. This is a layer-shell surface,
+  // so it draws over the lock screen: lingering would leave the last thing
+  // you said and the last thing the agent answered on screen above a locked
+  // machine, for up to the linger setting. Which is the one place a readout
+  // of the exchange must not be.
+  onVStateChanged: if (vState === "locked") { linger.stop(); showing = false }
+
   Timer {
     id: linger
     repeat: false

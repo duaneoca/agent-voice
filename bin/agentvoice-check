@@ -265,6 +265,36 @@ PY
 if [[ -n ${out// } ]]; then say "schema ranges" "FAIL: $out"; fail=1
 else say "every numeric setting declares min/max/step" "ok"; fi
 
+# 10b. every state the daemon can publish is drawn by the bar widget. A state
+# with no case falls through to the default and reads "STARTING" forever --
+# which is how the locked state would have shipped invisible, and the same
+# shape as the settings that were declared and never drawn.
+out=$(python3 - "$ROOT" <<'QQ'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+daemon = (root / "daemon" / "wake_listen.py").read_text()
+m = re.search(r"^STATES = \(([^)]*)\)", daemon, re.M)
+if not m:
+    print("daemon/wake_listen.py no longer declares STATES")
+    raise SystemExit
+states = re.findall(r'"([a-z]+)"', m.group(1))
+panel = (root / "Panel.qml").read_text()
+missing = []
+for block in ("icon", "stateLabel"):
+    start = panel.index(f"readonly property string {block}:")
+    body = panel[start:panel.index("\n  }", start)]
+    for state in states:
+        # "off" is drawn by the !serviceActive branch rather than by name.
+        if state == "off":
+            continue
+        if f'vState === "{state}"' not in body:
+            missing.append(f"{state} has no {block}")
+print("; ".join(missing))
+QQ
+)
+if [[ -n ${out// } ]]; then say "a published state the panel never draws" "FAIL: $out"; fail=1
+else say "every daemon state is drawn by the widget" "ok"; fi
+
 # 11. the QML references properties that exist. Nothing here runs the overlay,
 # so this is the only automated check the interface gets -- and the interface
 # is where this project's bugs have landed: a KnobRow given `suffix` when it

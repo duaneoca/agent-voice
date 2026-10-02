@@ -138,6 +138,52 @@ takes a *command line*, not an argv -- it does `cmd="$*"` and runs
 is quoted (`shq` in the QML), and a value read out of `shell.json` is checked
 against the shape it should have before it gets that far.
 
+## The microphone closes while the screen is locked
+
+Not a setting. A locked machine that still answers a wake word undoes every
+permission decision in this project by letting anyone walk up to the desk, so
+there is nothing to switch off.
+
+Two flags, and this is the part to get right: `Daemon.enabled` is what the
+*user* asked for -- the panel switch, the panic keybind -- and `Daemon.locked`
+is what the *session* is doing. Listening needs both (`Daemon.listening`).
+Nothing is saved and restored around a lock, so there is no stored copy to
+fall out of step, and unlocking cannot turn the microphone on for somebody
+who had deliberately turned it off. Toggling `enabled` on lock would do
+exactly that.
+
+Three things have to happen on the way in, and each of them was a separate
+leak:
+
+- **the frames are dropped before anything measures them**, not after the
+  wake word scores them;
+- **a capture already underway is abandoned, not suspended.** Frames stop
+  arriving either way, but `buf` keeps what was recorded up to the lock, so
+  the utterance would resume on unlock joined to whatever was said next;
+- **the HUD hides at once, with no linger.** It is a layer-shell surface, so
+  it draws *over* the lock screen -- lingering leaves the last thing you said
+  and the last thing the agent answered on a locked machine's display.
+
+Detection is Omarchy's own `omarchy-hyprland-session-locked` rather than a
+reimplementation, because the subtleties belong to whoever maintains it:
+Hyprland reports no lock state directly, so it infers one from
+`solitaryBlockedBy`, and that stays set once the lock's client has died. Its
+exit 2 ("undetermined") becomes `None` here and the daemon keeps whatever it
+last knew -- `false` is the fail-open answer and `true` would shut the
+microphone for good on a machine with no compositor to ask, which is every
+development run in a terminal. When nothing can answer at all, the daemon
+*says so*: a fail-open nobody is told about is worse than either answer.
+
+The 2s idle poll is the mechanism, because it needs nothing installed and
+cannot be forgotten. `agentvoice lock` and `agentvoice unlock` exist for
+binding to whatever locks the screen if that window matters; they are an
+optimisation, not the guarantee.
+
+To check it without locking yourself out: `agentvoice lock`, then
+`agentvoice locked` and `agentvoice status`, then `agentvoice unlock`. To
+check the real thing, lock the screen and read `journalctl --user -u
+agentvoice -f`.
+
 ## What is pinned, and what is deliberately not
 
 **Models are pinned and verified.** `models.lock` holds the piper-voices

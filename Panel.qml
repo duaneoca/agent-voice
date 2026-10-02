@@ -55,6 +55,7 @@ Panel {
 
   readonly property string icon: {
     if (!serviceActive) return "󰍭"              // mic off
+    if (vState === "locked") return "󰍭"         // closed while the screen is locked
     if (vState === "capture" || vState === "followup") return "󰑊"  // recording you
     if (vState === "transcribing") return "󰗊"   // turning speech into text
     if (vState === "thinking") return "󰔟"
@@ -72,6 +73,9 @@ Panel {
 
   readonly property string stateLabel: {
     if (!serviceActive) return "OFF"
+    // Its own state rather than OFF, because OFF invites you to switch it
+    // back on and then wonder why nothing happens.
+    if (vState === "locked") return "CLOSED WHILE LOCKED"
     if (vState === "capture") return "LISTENING TO YOU"
     // Still hot after a reply, waiting to see if you carry on.
     if (vState === "followup") return "STILL LISTENING"

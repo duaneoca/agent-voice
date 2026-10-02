@@ -56,19 +56,33 @@ def test_it_does_not_move_anything_else_on_screen():
 def test_it_shows_for_exactly_the_states_the_daemon_publishes():
     """Cross-file drift here is silent: rename a state in the daemon and the
     readout simply never appears, with nothing to explain why."""
-    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
-    published = set(re.findall(r'publish\("([a-z ]+)"', daemon))
-    published |= set(re.findall(r'publish\(\s*"([a-z ]+)"', daemon))
+    import wake_listen
+    published = set(wake_listen.STATES)
     assert {"capture", "transcribing", "thinking", "speaking", "followup",
             "listening"} <= published, \
         f"the daemon's states changed: {sorted(published)}"
 
-    busy = set(re.findall(r'vState === "([a-z]+)"', HUD))
-    assert busy == {"capture", "transcribing", "thinking", "speaking",
-                    "followup"}, busy
+    # Only the `busy` expression: vState is also compared elsewhere, to hide
+    # the readout the moment the screen locks.
+    busy_expr = HUD[HUD.index("readonly property bool busy:"):]
+    busy_expr = busy_expr[:busy_expr.index("\n\n")]
+    busy = set(re.findall(r'vState === "([a-z]+)"', busy_expr))
+    assert busy == set(wake_listen.BUSY_STATES), busy
     assert busy <= published, f"the HUD waits for states nothing publishes: {busy - published}"
     assert "listening" not in busy, "idle is not busy"
-    assert "off" not in busy
+    assert "locked" not in busy, "a locked screen is not a turn in progress"
+
+
+def test_a_lock_hides_the_readout_at_once_without_lingering():
+    """The HUD is a layer-shell surface, so it draws over the lock screen.
+    Lingering would leave the last thing you said and the last thing the
+    agent answered on screen above a locked machine for up to the linger
+    setting -- the one place a transcript of the exchange must not be."""
+    handler = HUD[HUD.index("onVStateChanged:"):]
+    handler = handler[:handler.index("\n")]
+    assert '"locked"' in handler
+    assert "linger.stop()" in handler, "it would fade out over the lock screen"
+    assert "showing = false" in handler
 
 
 def test_the_widget_passes_the_live_state_rather_than_re_reading_it():

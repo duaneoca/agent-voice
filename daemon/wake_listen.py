@@ -31,6 +31,7 @@ import json
 import os
 import queue
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -511,6 +512,63 @@ class Pipeline:
         return as_prompt(text), (time.perf_counter() - t0) * 1000
 
 
+#: Every value the state file can carry, in the order a turn moves through
+#: them. Declared rather than left implicit because three separate files
+#: switch on these -- the bar widget's icon, its label, and the HUD's "busy"
+#: test -- and a state nothing draws reads as "STARTING" forever. The tests
+#: and the check script read this list rather than grepping for publish()
+#: calls, which is what they used to do and what broke the moment one of
+#: these moved into a variable.
+STATES = ("off", "locked", "listening", "capture", "transcribing",
+          "thinking", "speaking", "followup")
+
+#: The subset that means a turn is underway, i.e. what the HUD shows for.
+BUSY_STATES = ("capture", "transcribing", "thinking", "speaking", "followup")
+
+
+def session_locked() -> bool | None:
+    """True while the compositor holds a session lock, None when unknowable.
+
+    Omarchy ships the detector -- `omarchy-hyprland-session-locked` -- and it
+    is used rather than reimplemented because the subtleties belong to
+    whoever maintains it: Hyprland reports no lock state directly, so it
+    infers one from `solitaryBlockedBy` containing LOCK, and that stays set
+    once the lock's client has died, which is the case worth catching.
+
+    Its exit codes are 0 locked, 1 unlocked, 2 undetermined. Undetermined
+    comes back as None here rather than as either answer, and the caller
+    keeps whatever it last knew: `false` would be the fail-open direction,
+    and `true` would leave the microphone shut for good on a machine with no
+    compositor to ask -- which is every development run in a terminal.
+
+    logind's LockedHint is the fallback for a machine without the helper.
+    Omarchy's own lock does not go through `loginctl lock-session`, so the
+    hint is not a substitute here; it is better than nothing elsewhere.
+    """
+    try:
+        done = subprocess.run(["omarchy-hyprland-session-locked"],
+                              capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return _logind_locked()
+    if done.returncode in (0, 1):
+        return done.returncode == 0
+    return None
+
+
+def _logind_locked() -> bool | None:
+    session = os.environ.get("XDG_SESSION_ID", "")
+    if not session:
+        return None
+    try:
+        done = subprocess.run(
+            ["loginctl", "show-session", session, "-p", "LockedHint",
+             "--value"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    answer = done.stdout.strip().lower()
+    return True if answer == "yes" else (False if answer == "no" else None)
+
+
 def _empty_turn() -> dict:
     """Nothing heard yet, nothing answered.
 
@@ -535,6 +593,9 @@ class Daemon:
         # Carried between turns so the agent remembers the conversation.
         self.session_id: str | None = None
         self.enabled = True
+        #: Set from the compositor's session lock, not from anything the user
+        #: asked for. See the `listening` property.
+        self.locked = False
         # Half duplex. One microphone six inches from the speakers has no
         # chance against its own output, so the microphone is simply deaf
         # while the machine talks -- and for a moment afterwards, because a
@@ -571,11 +632,72 @@ class Daemon:
     def _on_toggle(self, *_):
         self.enabled = not self.enabled
         if not self.enabled:
-            if self.speaker:
-                self.speaker.cancel()
-            if self.agent:
-                self.agent.cancel()
+            self.silence()
         print(f"\n  {CYA}mic {'engaged' if self.enabled else 'released'}{OFF}")
+        self._publish()
+
+    #: Listening needs both: the user has not released the microphone, and the
+    #: screen is not locked.
+    #:
+    #: Two flags rather than one, because a lock must not disturb what the
+    #: user chose. `enabled` is their intent -- the panel switch, the panic
+    #: keybind -- and `locked` is the session's state. Nothing is saved and
+    #: restored around a lock, so there is no stored copy to get out of step:
+    #: unlocking reveals the intent that was there all along. Toggling
+    #: `enabled` on lock would have turned the microphone *on* for anyone who
+    #: had deliberately turned it off.
+    @property
+    def listening(self) -> bool:
+        return self.enabled and not self.locked
+
+    def silence(self) -> None:
+        """Stop talking, stop thinking, and forget what is already captured.
+
+        Draining matters as much as the gate. Frames queue while the loop is
+        busy, so without this the audio recorded during the first moments of
+        a lock would be waiting to be processed on unlock.
+        """
+        if self.speaker:
+            self.speaker.cancel()
+        if self.agent:
+            self.agent.cancel()
+        self._interrupt.set()
+        self.deafen(0)
+
+    def reconcile_lock(self) -> None:
+        """Close the microphone while the screen is locked, open it after.
+
+        The hole this closes: the daemon kept listening behind a lock screen,
+        so anyone within earshot of a locked machine could hold a
+        conversation with an agent that had been granted "edits" or
+        "trusted" -- which is every permission decision in this project
+        undone by walking up to the desk.
+        """
+        locked = session_locked()
+        if locked is None:
+            # Said, not swallowed. A daemon that cannot tell whether the
+            # screen is locked is a daemon that will keep listening behind
+            # one, and that is worth hearing about rather than discovering.
+            # say_once, because this condition does not change on its own.
+            self.say_once("lockable",
+                          f"  {YEL}cannot tell whether the screen is locked, "
+                          f"so the microphone will not close on lock: no "
+                          f"omarchy-hyprland-session-locked on PATH and no "
+                          f"logind LockedHint{OFF}")
+            return
+        if locked == self.locked:
+            return
+        self.locked = locked
+        if locked:
+            # Mid-turn when it happens: the reply is being read aloud to
+            # whoever is standing there, so it stops too.
+            self.silence()
+            print(f"\n  {YEL}screen locked — microphone closed{OFF}", flush=True)
+        else:
+            self._interrupt.clear()
+            print(f"\n  {CYA}screen unlocked — microphone "
+                  f"{'open' if self.enabled else 'still released'}{OFF}",
+                  flush=True)
         self._publish()
 
     def reconcile_agent(self) -> None:
@@ -744,7 +866,12 @@ class Daemon:
             return None
 
     def _publish(self, **extra):
-        self.state.publish("listening" if self.enabled else "off", **extra)
+        # "locked" is its own state rather than "off": the panel should be
+        # able to say why the microphone is closed, because "off" invites
+        # someone to turn it back on and wonder why nothing happens.
+        state = "locked" if self.locked else ("listening" if self.enabled
+                                              else "off")
+        self.state.publish(state, **extra)
 
     def banner(self):
         p = self.pipe
@@ -805,6 +932,9 @@ class Daemon:
         # Outside the reload guard: `omarchy default agent` writes its own
         # file, which cfg.reload() does not watch, so a switch at the desktop
         # would otherwise not reach the daemon until it restarted.
+        # First, because everything below it is pointless while the screen
+        # is locked, and because this is the cheapest way to notice.
+        self.reconcile_lock()
         self.reconcile_agent()
         # Outside the guard for the same reason: a voice arrives on disk when
         # the installer fetches it, and a file appearing changes no setting.
@@ -967,7 +1097,7 @@ class Daemon:
                 # more. Publishing here puts the text up as that sentence
                 # begins, because speak() below blocks until it has been said.
                 last["reply"] = " ".join(reply_parts)[:400]
-                if self.speaker and self.enabled:
+                if self.speaker and self.listening:
                     self.state.publish("speaking", **last)
                     self.speak(sentence, tail_ms)
                 else:
@@ -1037,7 +1167,20 @@ class Daemon:
                 pcm = frames.get()
 
                 cmd = self.take_command()
-                if cmd == "talk" and self.enabled:
+                if cmd in ("lock", "unlock"):
+                    # An explicit transition, for a compositor hook or a
+                    # keybind that would rather not wait for the poll.
+                    self.locked = cmd == "lock"
+                    if self.locked:
+                        self.silence()
+                    else:
+                        self._interrupt.clear()
+                    print(f"\n  {YEL if self.locked else CYA}screen "
+                          f"{'locked' if self.locked else 'unlocked'} "
+                          f"(told, not polled){OFF}", flush=True)
+                    self._publish()
+                    continue
+                if cmd == "talk" and self.listening:
                     phase, buf, cap = "capture", b"", self.pipe.new_capture()
                     woke_at = last_voice = time.time()
                     heard = False
@@ -1059,7 +1202,21 @@ class Daemon:
 
                 level = frame_db(pcm)
 
-                if not self.enabled:
+                # Every frame recorded while the screen is locked is
+                # discarded here, before it is measured, fed to the wake
+                # word, or buffered.
+                if not self.listening:
+                    # And a capture already underway is abandoned rather than
+                    # suspended. Leaving the phase alone looked harmless --
+                    # frames stop arriving -- but `buf` keeps whatever was
+                    # recorded up to the moment of the lock, so the utterance
+                    # would resume and be transcribed on unlock, joined to
+                    # whatever was said next.
+                    if phase != "wake":
+                        phase, buf, cap, ptt, ptt_done = "wake", b"", None, False, False
+                        shown_partial = ""
+                        last = _empty_turn()
+                        self._publish(**last)
                     continue
 
                 # The meter in the panel is how the threshold becomes settable
@@ -1211,7 +1368,7 @@ class Daemon:
                         follow_up = False
                     print()
 
-                if follow_up and self.enabled:
+                if follow_up and self.listening:
                     phase, buf, cap = "capture", b"", self.pipe.new_capture()
                     woke_at = last_voice = time.time()
                     heard = False

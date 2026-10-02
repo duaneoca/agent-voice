@@ -17,7 +17,14 @@ PANEL = (ROOT / "Panel.qml").read_text()
 
 
 def published_states() -> set[str]:
-    return set(re.findall(r'publish\(\s*"([a-z ]+)"', DAEMON))
+    """What the daemon says it can publish.
+
+    Read from the declared list rather than grepped out of publish() calls:
+    the grep broke the moment one state moved into a variable, which is a
+    test failing for a reason that has nothing to do with what it checks.
+    """
+    import wake_listen
+    return set(wake_listen.STATES)
 
 
 def test_the_phases_a_turn_passes_through_are_all_distinct():
@@ -25,6 +32,17 @@ def test_the_phases_a_turn_passes_through_are_all_distinct():
     for phase in ("capture", "transcribing", "thinking", "speaking",
                   "followup", "listening"):
         assert phase in states, f"{phase} is not published"
+
+
+def test_every_declared_state_is_actually_reachable():
+    """The other direction: a name in the list that nothing publishes is a
+    case the panel carries for a state that can never arrive."""
+    import wake_listen
+    published = set(re.findall(r'publish\(\s*"([a-z]+)"', DAEMON))
+    # off / locked / listening come from _publish via a variable.
+    published |= set(re.findall(r'"(off|locked|listening)"', DAEMON))
+    for state in wake_listen.STATES:
+        assert state in published, f"{state} is declared but never published"
 
 
 def test_transcribing_is_published_before_transcription_and_thinking_after():
@@ -73,7 +91,7 @@ def test_stopping_during_transcription_discards_the_turn():
     assert '"transcribing"' in guard, "stop must be allowed while transcribing"
 
     loop = DAEMON[DAEMON.index('publish("transcribing"'):]
-    loop = loop[:loop.index("if follow_up and self.enabled")]
+    loop = loop[:loop.index("if follow_up and self.listening")]
     checked = loop.index("self._interrupt.is_set()")
     answered = loop.index("self.answer(text, last)")
     assert checked < answered, "the flag must be read before the agent is called"

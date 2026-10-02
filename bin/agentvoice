@@ -5,6 +5,9 @@
 #
 #   agentvoice start|stop|toggle   the service, i.e. the switch in the panel
 #   agentvoice mic                 release or re-engage the mic, service left up
+#   agentvoice lock|unlock         the screen locked or unlocked; closes the mic
+#                                  while locked without disturbing the above
+#   agentvoice locked              yes|no, is the mic closed by a lock
 #   agentvoice interrupt           stop the reply in progress, keep listening
 #   agentvoice talk                push-to-talk pressed: listen now, or, if it
 #                                  is mid-reply, stop it
@@ -111,6 +114,22 @@ case "${1:-status}" in
       *)                   send_command talk ;;
     esac
     ;;
+  lock|unlock)
+    # Tell the daemon at once rather than letting it notice on its next poll.
+    # The poll is the guarantee -- it needs nothing installed and cannot be
+    # forgotten -- so this is an optimisation, not the mechanism. Bind it to
+    # whatever locks the screen if the couple of seconds matter to you.
+    # `|| true`, because this is meant to be bound to whatever locks the
+    # screen: locking must not report a failure because voice happens to be
+    # off at the time.
+    { active && send_command "$1"; } || true
+    ;;
+  locked)
+    # Whether the microphone is closed because the screen is locked. For a
+    # script that wants to know, and for checking this works without having
+    # to lock yourself out to find out.
+    [[ "$(vstate)" == locked ]] && echo yes || echo no
+    ;;
   talk-end)
     # The key coming back up ends the turn. Ignored by the daemon unless a
     # push-to-talk capture is actually open.
@@ -183,7 +202,7 @@ case "${1:-status}" in
     active && echo yes || echo no
     ;;
   *)
-    echo "usage: agentvoice [start|stop|toggle|mic|talk|talk-end|interrupt|monitor|calibrate|permit|pending|status|is-active]" >&2
+    echo "usage: agentvoice [start|stop|toggle|mic|lock|unlock|locked|talk|talk-end|interrupt|monitor|calibrate|permit|pending|status|is-active]" >&2
     exit 2
     ;;
 esac
