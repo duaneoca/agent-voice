@@ -118,7 +118,20 @@ Panel {
 
   Process {
     id: switcher
-    onExited: function(code) {
+    // Not onExited. A spawn that never started -- `agentvoice` not on PATH,
+    // because the engine is a second install -- does not emit it: measured
+    // with a Process against a missing binary, which logs "failed to start",
+    // sets running back to false, and never exits. And onExited was the only
+    // thing clearing `busy`, which ToggleSwitch uses to swallow further
+    // clicks. So one click on the switch before the engine was installed
+    // left busy true for the life of the plugin instance, and the switch
+    // ignored every click afterwards -- including after a successful
+    // install, which is exactly when someone tries it again.
+    //
+    // `running` goes false in both cases, after onExited on a real exit and
+    // on its own when the spawn failed, so it is the signal that cannot be
+    // missed.
+    onRunningChanged: if (!running) {
       voice.busy = false
       probe.running = true            // re-read the truth rather than assume
     }
@@ -322,6 +335,11 @@ Panel {
 
         trailingControl: Component {
           ToggleSwitch {
+            // The offer below says the engine is a separate install and that
+            // a switch which cannot turn anything on should not be shown.
+            // It was still shown: the hero is never hidden, so the switch sat
+            // above that offer and inviting a click that could only fail.
+            visible: voice.engineInstalled
             checked: voice.serviceActive
             busy: voice.busy
             foreground: voice.fg

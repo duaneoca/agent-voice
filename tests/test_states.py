@@ -204,3 +204,55 @@ def test_the_service_is_started_and_never_enabled():
     assert "--user enable" not in cli, "enabling makes the mic outlive the session"
     readme = (ROOT / "README.md").read_text()
     assert "per session" in readme, "the promise has to be written down"
+
+
+# --- the switch that stopped answering --------------------------------------
+
+def _uncommented(qml: str) -> str:
+    """QML with its `//` comments removed.
+
+    Asserting against raw text keeps matching the prose that explains the
+    thing being asserted -- the sibling suites have the same helper for the
+    same reason, and this one caught it again immediately: a comment saying
+    "Not onExited" satisfied a search for "onExited".
+    """
+    out = []
+    for line in qml.splitlines():
+        if line.strip().startswith("//"):
+            continue
+        out.append(line.split("//", 1)[0] if "//" in line and "://" not in line
+                   else line)
+    return "\n".join(out)
+
+
+def test_the_switch_recovers_from_a_spawn_that_never_started():
+    """`busy` swallows clicks in Omarchy's ToggleSwitch, and onExited is not
+    emitted for a process that failed to start.
+
+    Measured against Quickshell rather than assumed: a Process pointed at a
+    missing binary logs "failed to start", sets `running` back to false, and
+    never emits `exited`. The engine is a second, larger install, so
+    `agentvoice` is genuinely absent the first time anyone opens the panel --
+    one click then left `busy` true for the life of the plugin instance and
+    the switch ignored every click afterwards, including after the install
+    that was supposed to fix it.
+    """
+    panel = (ROOT / "Panel.qml").read_text()
+    block = _uncommented(panel[panel.index("    id: switcher"):])
+    block = block[:block.index("\n  }")]
+    assert "onRunningChanged" in block, \
+        "busy must be cleared on a stop, not only on an exit"
+    assert "if (!running)" in block, "it fires on the way up as well"
+    assert "voice.busy = false" in block
+    assert "onExited" not in block, \
+        "onExited never fires for a failed spawn, so it cannot be the only path"
+
+
+def test_the_switch_is_hidden_until_there_is_an_engine_to_switch():
+    """The install offer in the same panel says a switch that cannot turn
+    anything on should not be shown. The hero is never hidden, so it was
+    shown anyway -- directly above that offer."""
+    panel = (ROOT / "Panel.qml").read_text()
+    block = panel[panel.index("trailingControl: Component {"):]
+    block = block[:block.index("\n        }")]
+    assert "visible: voice.engineInstalled" in block
