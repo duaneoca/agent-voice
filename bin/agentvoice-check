@@ -15,9 +15,27 @@ say() { printf '  %-46s %s\n' "$1" "$2"; }
 # 3.12 and a SyntaxError before it, so checking with whatever `python3` happens
 # to be says nothing about the range this project claims to support. CI caught
 # one of those; this machine could not, because its venv is newer.
-PY="${AGENTVOICE_PYTHON:-$HOME/.local/share/agentvoice/venv/bin/python}"
-[[ -x $PY ]] || PY="$ROOT/bench/.venv/bin/python"
-[[ -x $PY ]] || PY="$(command -v python3)"
+#
+# Chosen by what it can *run*, not by what exists: the runtime venv is the
+# daemon's, and install.sh deliberately puts only requirements.txt in it, so
+# the moment anyone reinstalls, the first existing interpreter is one with no
+# pytest -- and the suite skipped while the script still exited 0. The gate
+# for the whole project was one `./install.sh` away from being silent.
+#
+# AGENTVOICE_PYTHON is an answer, not a first guess: if someone names an
+# interpreter, searching past it would run the checks against a different one
+# than they asked for and report a pass about the wrong thing.
+if [[ -n ${AGENTVOICE_PYTHON:-} ]]; then
+  PY="$AGENTVOICE_PYTHON"
+else
+  for cand in "$HOME/.local/share/agentvoice/venv/bin/python" \
+              "$ROOT/bench/.venv/bin/python" "$(command -v python3)"; do
+    [[ -x $cand ]] || continue
+    [[ -n ${PY:-} ]] || PY="$cand"        # the fallback: first one that runs
+    if "$cand" -c "import pytest" 2>/dev/null; then PY="$cand"; break; fi
+  done
+  PY="${PY:-}"
+fi
 
 # Several checks below iterate `git ls-files`. Outside a repository that is
 # empty, and every one of them would pass having examined nothing -- the same
@@ -373,10 +391,14 @@ if [[ -x $PY ]] && "$PY" -c "import pytest" 2>/dev/null; then
     echo "$out" | tail -20 | sed 's/^/    /'
     fail=1
   fi
-elif [[ -n ${AGENTVOICE_STRICT:-}${CI:-} ]]; then
+elif [[ -n ${AGENTVOICE_STRICT:-}${CI:-}${AGENTVOICE_NO_SKIPS:-} ]]; then
   # A skip is a green run that proved nothing. Acceptable on a laptop with no
   # dev venv; never acceptable on a machine whose whole job is to check.
-  say "tests" "FAIL: pytest missing, and this is a strict run"
+  #
+  # NO_SKIPS belongs here too: it used to be read only *inside* the branch
+  # where pytest was found, so the one flag that means "nothing may quietly
+  # not run" exited 0 with the entire suite unrun.
+  say "tests" "FAIL: pytest missing, and this run must not skip it"
   fail=1
 else
   say "tests" "skipped (pip install -r requirements-dev.txt)"

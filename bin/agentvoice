@@ -7,7 +7,11 @@
 #   agentvoice mic                 release or re-engage the mic, service left up
 #   agentvoice lock|unlock         the screen locked or unlocked; closes the mic
 #                                  while locked without disturbing the above
-#   agentvoice locked              yes|no, is the mic closed by a lock
+#   agentvoice locked              is the mic closed by a lock: prints yes|no
+#                                  AND exits 0|1, so `if agentvoice locked`
+#                                  is correct. is-active below only prints --
+#                                  it is polled by the widget twice a second,
+#                                  where a nonzero exit is journal noise.
 #   agentvoice interrupt           stop the reply in progress, keep listening
 #   agentvoice talk                push-to-talk pressed: listen now, or, if it
 #                                  is mid-reply, stop it
@@ -128,7 +132,13 @@ case "${1:-status}" in
     # Whether the microphone is closed because the screen is locked. For a
     # script that wants to know, and for checking this works without having
     # to lock yourself out to find out.
-    [[ "$(vstate)" == locked ]] && echo yes || echo no
+    #
+    # The exit status is the answer, 0 locked and 1 not -- the same convention
+    # as omarchy-hyprland-session-locked, which this mirrors. It printed yes
+    # or no and exited 0 either way, so the obvious `if agentvoice locked`
+    # read as locked always: a script guarding anything on it did nothing,
+    # silently and in the unsafe direction.
+    if [[ "$(vstate)" == locked ]]; then echo yes; else echo no; exit 1; fi
     ;;
   talk-end)
     # The key coming back up ends the turn. Ignored by the daemon unless a

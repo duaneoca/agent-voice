@@ -316,3 +316,27 @@ class TestTheGateIsWhereItMatters:
         block = cli[cli.index("lock|unlock)"):]
         block = block[:block.index(";;")]
         assert "|| true" in block, "a lock hook must not report a failure"
+
+    def test_asking_whether_it_is_locked_answers_in_the_exit_status(self):
+        """`[[ x == locked ]] && echo yes || echo no` exits 0 either way, so
+        the obvious `if agentvoice locked; then` read as locked always --- a
+        script guarding anything on it did nothing, in the unsafe direction.
+
+        The shipped lines are run rather than grepped, because what is being
+        asserted is an exit status and the two paths are one `||` away from
+        being wrong again. They are lifted out of the script instead of
+        invoking it, so that no daemon and no systemd session are needed:
+        `vstate` consults both.
+        """
+        cli = (ROOT / "bin" / "agentvoice").read_text()
+        block = cli[cli.index("  locked)") + len("  locked)"):]
+        block = block[:block.index(";;")]
+        assert "echo yes" in block and "echo no" in block, block
+
+        for state, expect_yes in (("locked", True), ("listening", False)):
+            proc = subprocess.run(
+                ["bash", "-c", f"vstate() {{ echo {state}; }}\n{block}"],
+                capture_output=True, text=True)
+            assert (proc.stdout.strip() == "yes") is expect_yes, proc.stdout
+            assert (proc.returncode == 0) is expect_yes, \
+                f"{state!r} exited {proc.returncode}: the status is the answer"

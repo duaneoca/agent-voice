@@ -110,6 +110,14 @@ rhymes with it, and put the threshold between the two peaks.
    service is started, never enabled, so a reboot or a logout leaves it
    off and the switch back at the beginning. Turning it on is one click
    and deliberately not one you make once.
+
+   A locked screen closes the microphone, and that is not a setting.
+   A machine that still answers a wake word behind a lock screen undoes
+   every permission decision here by letting whoever walks up to the
+   desk talk to your agent, so there is nothing to switch off. Unlocking
+   restores what you had asked for and nothing else: if you had the mic
+   off before the lock, it is still off afterwards. `agentvoice locked`
+   answers it from a script, and the bar reads CLOSED WHILE LOCKED.
 4. **Local first.** Wake word, STT, and TTS run on device. Only the
    agent call leaves the machine, if your agent does.
 5. **Old hardware is the target, not the edge case.** Benchmarked on a

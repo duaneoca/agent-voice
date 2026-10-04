@@ -163,23 +163,51 @@ cancelled() {
 trap cancelled INT TERM
 trap 'resume_daemon; echo_restore; kbd_restore; restore_old_positives' EXIT
 
+# Chosen by what it can *train with*, not by what exists. The training import
+# is deferred inside verifier.py, as everything heavy there is, so an
+# interpreter missing scikit-learn got all the way to line one of the fit --
+# which is after twenty-five recordings and about two minutes of somebody
+# saying their wake word into a microphone. The cheapest possible moment to
+# refuse is before the first clip.
+#
+# find_spec rather than import: importing openwakeword costs seconds and
+# loads models, and all that is being asked here is whether it is present.
+can_train() {
+  "$1" -c 'import importlib.util as u, sys
+sys.exit(0 if all(u.find_spec(m) for m in ("sklearn", "openwakeword")) else 1)' \
+    2>/dev/null
+}
+
 find_python() {
   local candidates=(
     "${AGENTVOICE_PYTHON:-}"
     "$STATE/venv/bin/python"          # installed
     "$REPO/bench/.venv/bin/python"    # development checkout
   )
+  local first=""
   for p in "${candidates[@]}"; do
-    [[ -n $p && -x $p ]] && { echo "$p"; return 0; }
+    [[ -n $p && -x $p ]] || continue
+    [[ -n $first ]] || first="$p"
+    can_train "$p" && { echo "$p"; return 0; }
   done
+  # One that runs but cannot fit a model is worth naming, because the fix is
+  # a different one from "no environment found".
+  [[ -n $first ]] && { echo "$first"; return 2; }
   return 1
 }
 
-PY="$(find_python)" || {
+# `PY=$(...)` on its own line would swallow the status, so the two failures
+# are told apart explicitly: $? after an assignment is the assignment's.
+PY="$(find_python)"; found=$?
+if (( found == 1 )); then
   gum style --foreground 1 "  No agentvoice Python environment found."
   echo "  Run the installer first, or set AGENTVOICE_PYTHON."
   exit 1
-}
+elif (( found == 2 )); then
+  gum style --foreground 1 "  That Python cannot fit a verifier."
+  printf '%s\n' "$(printf '%s' "$PY is missing scikit-learn or openWakeWord, so the training step would fail after you had recorded all ${CLIPS} clips. Re-run the installer, which installs both, or point AGENTVOICE_PYTHON at an environment that has them." | wrapw)"
+  exit 1
+fi
 VERIFIER="$REPO/daemon/verifier.py"
 
 # --- why we are here ------------------------------------------------------
