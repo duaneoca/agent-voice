@@ -62,17 +62,45 @@ def test_nothing_at_all_is_a_different_answer():
     assert rc == 1, "no interpreter must not report the same thing as a poor one"
 
 
-def test_the_development_checkout_is_found_when_the_install_cannot_train():
-    """The order is install first, then checkout -- but capability wins over
-    position, or a reinstall that dropped a dependency would pin the trainer
-    to the environment that cannot run it while a working one sat next door."""
-    rc, path = _find("/nonexistent", str(ROOT))
-    bench = ROOT / "bench" / ".venv" / "bin" / "python"
-    if not bench.exists():
-        import pytest
-        pytest.skip("no development venv in this checkout")
-    assert rc == 0, "the checkout's venv has the training deps and was passed over"
-    assert path == str(bench)
+def _stub(path: Path, can_train: bool) -> Path:
+    """An executable standing in for an interpreter.
+
+    `can_train` only asks the candidate to run a `-c` snippet and looks at the
+    status, so a two-line script is a faithful stand-in -- and it keeps this
+    test off the question of what happens to be installed. The first version
+    used the checkout's own bench/.venv and skipped when there was none, which
+    is the case on every CI runner: it turned the one job that forbids skips
+    red, having proved nothing on any machine without a dev venv.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit %d\n" % (0 if can_train else 1))
+    path.chmod(0o755)
+    return path
+
+
+def test_capability_wins_over_position(tmp_path):
+    """The order is install first, then checkout -- but a reinstall that
+    dropped a dependency would otherwise pin the trainer to the environment
+    that cannot run it while a working one sat next door."""
+    state, repo = tmp_path / "state", tmp_path / "repo"
+    _stub(state / "venv" / "bin" / "python", can_train=False)
+    good = _stub(repo / "bench" / ".venv" / "bin" / "python", can_train=True)
+
+    rc, path = _find(str(state), str(repo))
+    assert rc == 0, "the candidate that can train was passed over"
+    assert path == str(good)
+
+
+def test_the_installed_environment_is_still_preferred_when_it_works(tmp_path):
+    """Capability is a tie-breaker, not a reordering: when both can train, the
+    daemon's own environment is the one the trainer should fit against."""
+    state, repo = tmp_path / "state", tmp_path / "repo"
+    installed = _stub(state / "venv" / "bin" / "python", can_train=True)
+    _stub(repo / "bench" / ".venv" / "bin" / "python", can_train=True)
+
+    rc, path = _find(str(state), str(repo))
+    assert rc == 0
+    assert path == str(installed)
 
 
 def test_the_two_failures_do_not_share_a_message():
