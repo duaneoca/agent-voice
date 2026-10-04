@@ -481,3 +481,34 @@ were made again -- 25 of 25 register above the noise floor now against 19 of 25,
 and the raw model's median rose from 0.362 to 0.808 on the new set. The raw
 column shows the recordings alone cannot account for the verifier's gain: at
 0.89 the raw model still only reaches 5 of 25.
+
+## 16. A DO_NOT_TRUST folder is escaped by a longer rule, not by a different one
+
+Measured 2026-10-04 against gemini-cli 0.60.0, in an isolated
+`GEMINI_CLI_HOME` so the machine's own answers were not touched.
+
+| trustedFolders.json | cwd | `gemini -p` |
+|---|---|---|
+| `{W: DO_NOT_TRUST}` | `W/project` | exit **55** |
+| `{W: DO_NOT_TRUST, W/project: TRUST_FOLDER}` | `W/project` | exit **0** |
+
+Two things follow, and the adapter had the first right and the second wrong.
+
+The refusal is inherited: an explicit `DO_NOT_TRUST` on a directory distrusts
+every folder beneath it, so on this machine -- which has one line, home marked
+`DO_NOT_TRUST` -- no project under home can run a Gemini turn. `folder_trust`
+mirrored that correctly.
+
+But `why_unavailable` told anyone in that position to set a project folder in
+the settings instead, which is advice that cannot work: the new folder inherits
+the same refusal. Longest prefix is what overrides it, so the fix is to trust
+*that folder specifically* -- the second row above. The guidance now branches on
+which refusal it is, because "nothing has been written about this folder" is
+escaped by choosing a different one and `DO_NOT_TRUST` is not.
+
+Worth noting what this does not say: with a trusted folder, Gemini answered in
+10.9s on this machine the same day. Nothing is wrong with the backend or its
+auth. The whole of its unavailability here is one line in a file the user wrote
+deliberately, which is the outcome the review was aiming for -- agentvoice used
+to set `GEMINI_CLI_TRUST_WORKSPACE=true` itself and hand every folder its own
+hooks, skills and MCP servers.

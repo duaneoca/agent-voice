@@ -83,6 +83,13 @@ def _folder_trust_enabled() -> bool:
     return True if value is None else bool(value)
 
 
+# The one refusal a *different* folder can escape: nothing has been written
+# about this path, so a project folder that is trusted works. An explicit
+# DO_NOT_TRUST on an ancestor is inherited by everything beneath it, and the
+# advice has to differ -- see why_unavailable.
+NEVER_ASKED = "Gemini has never been asked about this folder"
+
+
 def folder_trust(path: str) -> tuple[bool, str]:
     """Is `path` a folder Gemini has been told to trust, and why.
 
@@ -145,7 +152,7 @@ def folder_trust(path: str) -> tuple[bool, str]:
         return True, f"trusted by the rule for {best_rule}"
     if best_level == "DO_NOT_TRUST":
         return False, f"{best_rule} is marked DO_NOT_TRUST, and that covers this folder"
-    return False, "Gemini has never been asked about this folder"
+    return False, NEVER_ASKED
 
 
 class Gemini(Adapter):
@@ -207,6 +214,17 @@ class Gemini(Adapter):
             # Named in full, because the fix is per folder and permanent: one
             # interactive run in that directory writes the answer to
             # ~/.gemini/trustedFolders.json and it is never asked again.
+            #
+            # Which fix to name depends on *why*, and getting that wrong sends
+            # someone somewhere that cannot work. An explicit DO_NOT_TRUST is
+            # inherited by every folder beneath it until a longer rule
+            # overrides it, so when home carries one, "set a project folder"
+            # is advice that changes nothing: the new folder inherits the
+            # same refusal. Only an unasked-about home is escaped that way.
+            if why != NEVER_ASKED:
+                return (f"gemini does not trust {where} ({why}) — that covers "
+                        f"every folder inside it, so run `gemini` in the one "
+                        f"you want and say yes, which overrides it there")
             # Home is the one folder that cannot be trusted more specifically
             # than itself, so it gets its own sentence.
             if where == home:

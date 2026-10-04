@@ -271,6 +271,37 @@ class TestGeminiFolderTrust:
         assert folder_trust(str(project))[0] is True
         assert folder_trust(str(tmp_path))[0] is False
 
+    def test_the_advice_for_a_refusal_it_can_escape_differs_from_one_it_cannot(
+            self, home, tmp_path, monkeypatch):
+        """Both refusals name the folder; only one of them is escaped by
+        choosing a different project.
+
+        It used to tell anyone whose home was untrusted to set a project
+        folder in settings instead. With an explicit DO_NOT_TRUST on home
+        that changes nothing -- the rule covers every folder inside it -- so
+        the advice sent people somewhere that could not work. Verified
+        against the live CLI: exit 55 in a covered subfolder, exit 0 once a
+        longer TRUST_FOLDER rule is added.
+        """
+        from adapters.gemini import Gemini
+        monkeypatch.setattr("adapters.gemini.installed", lambda _b: True)
+        project = tmp_path / "src" / "app"
+        project.mkdir(parents=True)
+
+        self.rules(home, {str(tmp_path): "DO_NOT_TRUST"})
+        said = Gemini(cwd=str(project), ask_permission=False).why_unavailable()
+        assert "covers every folder inside it" in said, said
+        assert "set a project folder" not in said, \
+            "a different folder inherits the same refusal"
+
+        # Nothing written about it at all: a trusted project folder is exactly
+        # the fix, and that advice must survive.
+        self.rules(home, {})
+        monkeypatch.setattr("adapters.gemini.Path.home", classmethod(
+            lambda _c: tmp_path))
+        said = Gemini(cwd=str(tmp_path), ask_permission=False).why_unavailable()
+        assert "set a project folder" in said, said
+
     def test_the_users_own_environment_variable_still_wins(self, home, tmp_path,
                                                            monkeypatch):
         """Ours to stop setting, theirs to set."""
@@ -325,9 +356,13 @@ class TestGeminiHeadless:
 
     def test_an_untrusted_folder_is_reported_before_a_turn(self, tmp_path, monkeypatch):
         """Rather than as exit 55 afterwards, which tells nobody anything."""
+        from adapters.gemini import NEVER_ASKED
         monkeypatch.setattr("adapters.gemini.installed", lambda _: True)
+        # The real constant, not a paraphrase of it: the advice branches on
+        # this exact string, and a stub that merely resembled it tested the
+        # other branch while reading as though it tested this one.
         monkeypatch.setattr("adapters.gemini.folder_trust",
-                            lambda _p: (False, "Gemini has never been asked"))
+                            lambda _p: (False, NEVER_ASKED))
         agent = Gemini(cwd=str(tmp_path))
         assert agent.available() is False
         why = agent.why_unavailable()
@@ -336,10 +371,16 @@ class TestGeminiHeadless:
 
     def test_the_home_directory_gets_its_own_advice(self, monkeypatch):
         """Home cannot be trusted more specifically than itself, so "run
-        gemini there once" is the wrong instruction for it."""
+        gemini there once" is the wrong instruction for it.
+
+        Only when nothing has been written about home, though: an explicit
+        DO_NOT_TRUST there is inherited by the project folder too, and this
+        test asserted the opposite until the live CLI said otherwise.
+        """
+        from adapters.gemini import NEVER_ASKED
         monkeypatch.setattr("adapters.gemini.installed", lambda _: True)
         monkeypatch.setattr("adapters.gemini.folder_trust",
-                            lambda _p: (False, "marked DO_NOT_TRUST"))
+                            lambda _p: (False, NEVER_ASKED))
         why = Gemini(cwd=str(Path.home())).why_unavailable()
         assert "project folder" in why
 
