@@ -450,12 +450,20 @@ the only filter present is a speaker EQ.
 
 ## Open questions
 
-1. **Does a verifier reject a real stranger?** Trained on the owner's
+1. **Does a verifier reject a real stranger?** Answered for the
+   behaviour, still open on the attribution. Trained on the owner's
    voice it costs almost nothing and rejects everyone else: eleven live
    utterances fired 11/11 either way (mean 0.963 with, 0.987 without),
    while twelve held-out other-speaker clips were accepted 8/12 by the
-   base model and **0/12** with the verifier. But those speakers are
-   synthetic. A real person at the microphone is still untested.
+   base model and **0/12** with the verifier -- but those speakers were
+   synthetic. On 2026-10-04 a real person at the microphone said the
+   phrase six times and was acknowledged **0/6**, with the owner waking
+   it first try in the same session and configuration. What that does
+   not separate is the verifier's own contribution: the base model was
+   never run against those six utterances and they were not recorded,
+   so it measures the stack as configured rather than the layer under
+   test. Keeping the next stranger's attempts as wavs would settle it.
+   See `bench/FINDINGS.md` §17.
 2. **Streaming transcription.** faster-whisper cannot start before the
    utterance ends, which is why Vosk's partials exist at all: they give
    the screen something to show during the ~320ms wait. Voxtype's

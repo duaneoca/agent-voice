@@ -150,8 +150,15 @@ other-speaker clip the base model would have let through. That is the whole
 argument for openWakeWord's extra 154MB.
 
 Caveat: the other speakers are synthetic, and the verifier was trained on
-synthetic negatives from the same voices at different parameters. A real
-stranger at the microphone is still untested.
+synthetic negatives from the same voices at different parameters. So the
+attribution above -- 8/12 accepted against 0/12 -- is a result about TTS
+output.
+
+Corrected 2026-10-04: a real stranger at the microphone is no longer untested.
+Six utterances, none acknowledged, with the owner waking it first try in the
+same session. That result is end-to-end rather than attributable, for the
+reason §17 gives, so neither finding supersedes the other: this one says what
+the verifier contributes, and §17 says what happens to a person.
 
 ## 10. Memory, and what it costs to hold
 
@@ -512,3 +519,38 @@ auth. The whole of its unavailability here is one line in a file the user wrote
 deliberately, which is the outcome the review was aiming for -- agentvoice used
 to set `GEMINI_CLI_TRUST_WORKSPACE=true` itself and hand every folder its own
 hooks, skills and MCP servers.
+
+## 17. A real stranger, six attempts, none acknowledged
+
+Measured 2026-10-04, in the room, with the configuration the daemon logged at
+the time: openWakeWord `hey_claude` at **0.86** with the owner's verifier,
+energy gate -40 dBFS, after a from-scratch reinstall and a retrained verifier.
+
+| speaker | utterances of "hey claude" | acknowledged |
+|---|---|---|
+| one person other than the owner | 6 | **0** |
+| the owner, same session | 1 | 1, first try |
+
+The owner's turn is in the journal in full -- 3.0s of audio, whisper 324ms,
+first token 683ms, agent 8.5s -- and `journalctl` records exactly one wake
+event in the window, which corroborates the count independently of anyone
+remembering it.
+
+This closes the gap the first of the README's open questions had been
+carrying, and that §9 here left open: every previous other-speaker number came
+from synthetic voices, and 8/12 accepted by the base model against 0/12 with
+the verifier was a result about TTS output, not about a person.
+
+**What it does not establish.** The verifier's own contribution. The base model
+was never run against those six utterances, and they were not recorded, so
+0/6 is a measurement of the stack as configured and cannot separate "the
+verifier rejected them" from "the wake model never scored them above 0.86 at
+all". The synthetic test could make that attribution precisely because the same
+clips were replayed both ways. One speaker and n=6 is also a demonstration
+rather than a rate.
+
+So the honest claim is the end-to-end one: a stranger at this microphone, with
+this threshold and this verifier, did not get in, and the owner did. The
+cheapest way to earn the stronger claim is to keep the next stranger's attempts
+as wavs and replay them with the verifier disabled -- which is what
+`bench/record.py` is for, and which costs the stranger nothing extra.
