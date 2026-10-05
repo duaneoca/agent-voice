@@ -311,5 +311,6 @@
       }
     ]
   },
-  "keepLoaded": true
+  "keepLoaded": true,
+  "homepage": "https://github.com/duaneoca/agent-voice"
 }

@@ -7,6 +7,8 @@ installed on the box a natural voice interface: wake word or push to
 talk in, spoken replies out. Claude Code is the first target, not the
 only one.
 
+![The Agent Voice panel, open in the Omarchy bar: the switch on, the phrase it is waiting for, the permission posture for this folder, and the last exchange with how long it took](preview.png)
+
 Omarchy already ships dictation. Voxtype gives it push to talk on F9,
 running whisper.cpp locally, with a Dictation indicator in the bar.
 agentvoice is the other half: a wake word instead of a keypress, an
