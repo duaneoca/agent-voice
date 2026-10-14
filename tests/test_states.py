@@ -244,8 +244,28 @@ def test_the_switch_recovers_from_a_spawn_that_never_started():
         "busy must be cleared on a stop, not only on an exit"
     assert "if (!running)" in block, "it fires on the way up as well"
     assert "voice.busy = false" in block
-    assert "onExited" not in block, \
-        "onExited never fires for a failed spawn, so it cannot be the only path"
+    # onExited may exist -- it is how a failed spawn is told apart from a real
+    # one -- but it must not be what clears `busy`, because for the failure
+    # that matters it is never emitted at all.
+    exited_handler = block[block.index("onExited"):] if "onExited" in block else ""
+    exited_handler = exited_handler[:exited_handler.index("\n")] if exited_handler else ""
+    assert "busy" not in exited_handler, \
+        "busy must not be cleared from onExited, which a failed spawn never emits"
+
+
+def test_a_spawn_that_never_started_is_said_out_loud():
+    """The report was "the switch won't go on and there is no indication as to
+    why". Silence is the worst answer a control can give: it cannot be told
+    apart from a broken install, so the user has nothing to act on."""
+    panel = _uncommented((ROOT / "Panel.qml").read_text())
+    block = panel[panel.index("    id: switcher"):]
+    block = block[:block.index("\n  }")]
+    assert "exited" in block, "a failed spawn must be distinguishable from an exit"
+    assert "voice.note" in block, "and it must leave something the panel can show"
+
+    # And the panel has to actually draw it, or it is another silent flag.
+    assert "visible: voice.note !== \"\"" in panel
+    assert "text: voice.note" in panel
 
 
 def test_the_switch_is_hidden_until_there_is_an_engine_to_switch():
@@ -256,3 +276,29 @@ def test_the_switch_is_hidden_until_there_is_an_engine_to_switch():
     block = panel[panel.index("trailingControl: Component {"):]
     block = block[:block.index("\n        }")]
     assert "visible: voice.engineInstalled" in block
+
+
+def test_every_way_of_toggling_is_guarded_not_just_the_switch():
+    """Hiding the switch guarded one of three entry points.
+
+    The bar icon's middle click and its right click both call toggleService
+    directly, so with no engine installed they spawned `agentvoice toggle`,
+    the spawn failed, and the user got nothing -- which is exactly what was
+    reported, thirteen seconds after the plugin was added and two seconds
+    before the engine install was started.
+
+    So the guard belongs in toggleService, where every caller must pass.
+    """
+    panel = _uncommented((ROOT / "Panel.qml").read_text())
+    fn = panel[panel.index("function toggleService()"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "engineInstalled" in fn, \
+        "the guard must be in the function every entry point calls"
+    assert fn.index("engineInstalled") < fn.index("switcher.running"), \
+        "it has to refuse before it spawns, not after"
+    assert "return" in fn, "the refusal has to stop, not fall through"
+
+    # There must still be more than one caller -- if this ever drops to one,
+    # the comment above is stale and the reasoning should be re-read.
+    assert panel.count("toggleService()") >= 3, \
+        "fewer callers than the bug had; re-check whether the guard still belongs here"

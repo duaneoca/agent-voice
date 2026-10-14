@@ -35,6 +35,11 @@ Panel {
   // --- Daemon state -----------------------------------------------------------
   property bool serviceActive: false
   property bool busy: false
+  // The last reason a switch did nothing. Empty when there is nothing to say.
+  // It exists because "the switch won't go on and there is no indication as
+  // to why" was a real report, and silence is the worst answer a control can
+  // give: the user cannot tell a broken install from a broken switch.
+  property string note: ""
   property string vState: "off"
   property string lastTranscript: ""
   property int lastMs: 0
@@ -110,7 +115,20 @@ Panel {
 
   // The switch runs the service; `mic` only releases the microphone while
   // leaving the daemon up, which is the cheap panic button on right-click.
+  // Why this is the guard rather than the switch: there are three ways in.
+  // The panel's switch is one; the bar icon's middle click and its right
+  // click are the other two, and hiding the switch did nothing about either.
+  // A guard on one entry point is not a guard.
   function toggleService() {
+    if (!voice.engineInstalled) {
+      // Nothing to toggle, and the panel is where that is explained -- it
+      // carries the offer, the size, and the button. Opening it beats any
+      // message this could invent, and beats the silence it used to give.
+      voice.note = "The voice engine is not installed yet."
+      if (!voice.opened) voice.open()
+      return
+    }
+    voice.note = ""
     voice.busy = true
     switcher.command = ["agentvoice", "toggle"]
     switcher.running = true
@@ -118,6 +136,12 @@ Panel {
 
   Process {
     id: switcher
+    // Set by onExited, which a spawn that never started does not emit. It is
+    // how a failed spawn is told apart from a command that ran and returned
+    // something -- the difference between "the engine is gone" and "systemd
+    // refused", and the user is owed one of those rather than nothing.
+    property bool exited: false
+    onExited: exited = true
     // Not onExited. A spawn that never started -- `agentvoice` not on PATH,
     // because the engine is a second install -- does not emit it: measured
     // with a Process against a missing binary, which logs "failed to start",
@@ -133,6 +157,9 @@ Panel {
     // missed.
     onRunningChanged: if (!running) {
       voice.busy = false
+      if (!exited)
+        voice.note = "Could not run `agentvoice`. The engine may have been removed."
+      exited = false
       probe.running = true            // re-read the truth rather than assume
     }
   }
@@ -187,7 +214,13 @@ Panel {
     id: enginePresent
     command: ["bash", "-c", "command -v agentvoice >/dev/null && echo yes || echo no"]
     stdout: StdioCollector {
-      onStreamFinished: voice.engineInstalled = String(text).trim() === "yes"
+      onStreamFinished: {
+        var found = String(text).trim() === "yes"
+        // An engine that has arrived makes the complaint about it stale, and
+        // a message that outlives its cause is its own bug.
+        if (found && !voice.engineInstalled) voice.note = ""
+        voice.engineInstalled = found
+      }
     }
   }
   // The command is set at the call site, which knows the plugin's path.
@@ -346,6 +379,22 @@ Panel {
             onToggled: voice.toggleService()
           }
         }
+      }
+
+      // Why a switch did nothing, when it did nothing. Takes no space at all
+      // the rest of the time, which is almost always: `note` is set only by
+      // toggleService refusing, or by a spawn that never started.
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        visible: voice.note !== ""
+        text: voice.note
+        // Untrusted only in the sense that everything shown here is, but the
+        // rule in this file has no exceptions.
+        textFormat: Text.PlainText
+        color: voice.urgent
+        font.family: voice.fontFamily
+        font.pixelSize: Style.font.caption
       }
 
       // The MouseArea is the container rather than an overlay: a child with
