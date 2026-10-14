@@ -302,9 +302,12 @@ for block in ("icon", "stateLabel"):
     start = panel.index(f"readonly property string {block}:")
     body = panel[start:panel.index("\n  }", start)]
     for state in states:
-        # "off" is drawn by the !serviceActive branch rather than by name.
-        if state == "off":
-            continue
+        # No exemption for "off". It used to have one, on the grounds that
+        # the !serviceActive branch covered it -- and that was wrong, because
+        # "off" is published in two different situations: the service is not
+        # running, and the service IS running with the microphone released.
+        # The second one fell through to the default and read "STARTING"
+        # forever, and this check skipped the only state with the hole.
         if f'vState === "{state}"' not in body:
             missing.append(f"{state} has no {block}")
 print("; ".join(missing))

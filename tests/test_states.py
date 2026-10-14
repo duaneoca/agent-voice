@@ -302,3 +302,47 @@ def test_every_way_of_toggling_is_guarded_not_just_the_switch():
     # the comment above is stale and the reasoning should be re-read.
     assert panel.count("toggleService()") >= 3, \
         "fewer callers than the bug had; re-check whether the guard still belongs here"
+
+
+def test_a_released_microphone_has_its_own_label():
+    """`off` is published in two different situations and only one of them was
+    drawn: the service not running (the !serviceActive branch says OFF), and
+    the service running with the microphone released. The second fell through
+    to the default and read "STARTING" -- a daemon that had been up for days
+    describing itself as still starting, with nothing to say why it was deaf.
+
+    The check script skipped `off` on the grounds the first case covered it,
+    so the one state with a hole was the one state exempt from the check.
+    """
+    panel = _uncommented((ROOT / "Panel.qml").read_text())
+    for block in ("icon", "stateLabel"):
+        start = panel.index(f"readonly property string {block}:")
+        body = panel[start:panel.index("\n  }", start)]
+        assert 'vState === "off"' in body, f"{block} has no case for a released mic"
+
+    label = panel[panel.index("readonly property string stateLabel:"):]
+    label = label[:label.index("\n  }")]
+    assert label.index('vState === "off"') < label.index('return "STARTING"'), \
+        "the off case must come before the fallthrough it was lost in"
+
+
+def test_muting_is_reachable_from_the_panel_and_guarded_once():
+    """Reported as: "I had no idea that that's how mute worked, and I was
+    turning off voice and turning it back on when needed." A right click on
+    the bar icon and a keybind were the only ways in, and neither announces
+    itself. The icon that reports whether the microphone is open is now the
+    control that changes it.
+    """
+    panel = _uncommented((ROOT / "Panel.qml").read_text())
+    assert "function toggleMic()" in panel
+
+    fn = panel[panel.index("function toggleMic()"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "engineInstalled" in fn, "the same refusal as the service toggle"
+    assert "serviceActive" in fn, "nothing to mute when nothing is listening"
+
+    # Both entry points go through it, so there is one guard rather than two.
+    assert panel.count("voice.toggleMic()") >= 2, \
+        "the bar icon and the panel icon should share the one path"
+    assert "micToggle.running = true" not in panel[panel.index("onPressed:"):], \
+        "the bar's right click must not reach the Process directly any more"

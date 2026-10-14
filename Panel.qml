@@ -66,6 +66,7 @@ Panel {
     if (vState === "thinking") return "󰔟"
     if (vState === "speaking") return "󰕾"
     if (vState === "listening") return "󰍬"
+    if (vState === "off") return "󰍭"           // running, microphone released
     return "󰍭"
   }
 
@@ -90,6 +91,11 @@ Panel {
     if (vState === "thinking") return "THINKING"
     if (vState === "speaking") return "SPEAKING"
     if (vState === "listening") return "WAITING FOR \"" + voice.activePhrase.toUpperCase() + "\""
+    // The service is up and the microphone is released: the mic keybind, the
+    // panic key, a right click on the bar, or the panel's own icon. Its own
+    // label because it fell through to the default and read "STARTING"
+    // forever -- a running daemon describing itself as still starting.
+    if (vState === "off") return "MICROPHONE OFF"
     return "STARTING"
   }
 
@@ -119,6 +125,22 @@ Panel {
   // The panel's switch is one; the bar icon's middle click and its right
   // click are the other two, and hiding the switch did nothing about either.
   // A guard on one entry point is not a guard.
+  // Release or re-engage the microphone, leaving the service alone. Shared by
+  // the bar icon's right click and the panel's icon, so both get the same
+  // guard and the same refusal -- the right click used to reach the Process
+  // directly, which meant no check that `agentvoice` was even there.
+  function toggleMic() {
+    if (!voice.engineInstalled) {
+      voice.note = "The voice engine is not installed yet."
+      if (!voice.opened) voice.open()
+      return
+    }
+    // Nothing to mute when nothing is listening; the switch is that control.
+    if (!voice.serviceActive) return
+    voice.note = ""
+    micToggle.running = true
+  }
+
   function toggleService() {
     if (!voice.engineInstalled) {
       // Nothing to toggle, and the panel is where that is explained -- it
@@ -301,7 +323,7 @@ Panel {
     // WidgetButton emits pressed(buttonCode); there is no onClicked.
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) {
-        if (voice.serviceActive) micToggle.running = true
+        if (voice.serviceActive) voice.toggleMic()
         else voice.toggleService()
       } else if (buttonCode === Qt.MiddleButton) {
         voice.toggleService()
@@ -358,11 +380,34 @@ Panel {
         iconOpacity: voice.serviceActive ? 1.0 : 0.5
 
         iconComponent: Component {
-          Text {
-            text: voice.icon
-            color: voice.barIconColor
-            font.family: voice.fontFamily
-            font.pixelSize: Style.font.display
+          // Clickable, because the only ways to release the microphone were a
+          // right click on the bar icon and a keybind, and neither announces
+          // itself: the person this was built for had been stopping the whole
+          // service and starting it again instead, not knowing either existed.
+          // The icon already says whether the microphone is open, so making
+          // the thing that says it the thing that changes it is the shortest
+          // route between the question and the answer.
+          Item {
+            implicitWidth: glyph.implicitWidth
+            implicitHeight: glyph.implicitHeight
+
+            Text {
+              id: glyph
+              text: voice.icon
+              color: voice.barIconColor
+              font.family: voice.fontFamily
+              font.pixelSize: Style.font.display
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              // Only while something is listening. With the service down the
+              // switch beside it is the control, and a second one that looks
+              // identical and does nothing is worse than none.
+              enabled: voice.serviceActive
+              cursorShape: Qt.PointingHandCursor
+              onClicked: voice.toggleMic()
+            }
           }
         }
 
@@ -379,6 +424,19 @@ Panel {
             onToggled: voice.toggleService()
           }
         }
+      }
+
+      // Said where somebody who has just muted it will be looking. Only then:
+      // a hint that is always on screen stops being read.
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        visible: voice.serviceActive && voice.vState === "off"
+        text: "Click the microphone to start listening again."
+        textFormat: Text.PlainText
+        color: voice.dim
+        font.family: voice.fontFamily
+        font.pixelSize: Style.font.caption
       }
 
       // Why a switch did nothing, when it did nothing. Takes no space at all
