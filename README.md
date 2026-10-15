@@ -161,14 +161,22 @@ for two things.
    entirely, which makes it the reliable path when the room is noisy or
    the wake word is being stubborn. Distinct from Voxtype's F9, which
    dictates into the focused window -- a different job.
-3. **Mic toggle.** One key and one bar click to grab or release the
-   microphone entirely.
+3. **Mute.** Release the microphone without stopping anything. Three
+   ways, and they are the same action: click the microphone icon in the
+   panel, right click (two finger click) the bar icon, or press
+   Super+Alt+Space. The panel then reads MICROPHONE OFF and says how to
+   start listening again. See *Mute, not stop* below for why this is the
+   control you want rather than the switch.
 4. **Interrupt.** Press F8 while it is replying, or Super+Ctrl+Space, or
    the stop button in the panel. Deliberately not voice-triggered -- see
    below.
 
-Suggested binds. `install.sh` prints these rather than writing them,
-because `~/.config/hypr/bindings.lua` is yours:
+These binds. `install.sh` offers to add them and never overwrites a key
+that is already bound; it backs the file up first and puts it back if
+Hyprland rejects the result. They go in between markers, so `--uninstall`
+takes out exactly what was put in and leaves anything you wrote yourself
+alone. Say no and it prints them for you to paste, because
+`~/.config/hypr/bindings.lua` is yours:
 
   F8 (hold)            talk to the agent; a press mid-reply stops it
   F9 (hold)            Voxtype dictation, untouched
@@ -176,6 +184,33 @@ because `~/.config/hypr/bindings.lua` is yours:
   Super+Ctrl+Space     stop talking, keep listening
 
 Super+Space is Omarchy's application launcher and stays that way.
+
+### Mute, not stop
+
+The switch in the panel and the microphone icon beside it do different
+things, and reaching for the wrong one is expensive.
+
+The switch starts and stops the **service**. Stopping it unloads
+everything: the wake engine, Whisper, and the Piper voice, roughly 600MB
+resident. Starting it again reloads all of that and re-reads the config,
+which is three to four seconds on this machine before it can hear a word
+-- measured from `Started` to `listening for` in the journal. It is the
+right control for "I am done for now", and it is the per-session consent
+gate: the service is started and never enabled, so a reboot leaves voice
+off until you ask for it again.
+
+Mute releases the **microphone** and leaves the service running. It is
+instant, the models stay warm, and the next word you say is heard
+immediately. It is the right control for "not in front of this person",
+"I am about to dictate into something else", or "stop listening while I
+think".
+
+Muting also survives a screen lock correctly, which stopping does not
+approximate. A lock closes the microphone on its own and unlocking
+restores what you had asked for -- so if you muted before the lock, it is
+still muted afterwards, and if you had not, it starts listening again.
+Nothing is saved and restored around a lock, so there is no stored copy
+to fall out of step with.
 
 ### Why you cannot interrupt by voice
 

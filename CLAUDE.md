@@ -184,6 +184,36 @@ To check it without locking yourself out: `agentvoice lock`, then
 check the real thing, lock the screen and read `journalctl --user -u
 agentvoice -f`.
 
+## A control with more than one way in needs one guard, not one each
+
+Two bugs of this shape in one afternoon, both reported as "I can't turn it
+on" with nothing on screen to explain it.
+
+`toggleService` had three callers: the panel's switch, the bar icon's middle
+click, and its right click. Hiding the switch when no engine is installed
+looked like a fix and guarded one of the three. `toggleMic` had two, and the
+bar's right click reached the Process directly, so it never checked that
+`agentvoice` existed at all. The guard belongs in the function every entry
+point must pass through, and a test asserts the caller count so that dropping
+to one caller makes someone re-read the reasoning rather than quietly
+loosening it.
+
+The matching rule for the user: **a control that does nothing must say why.**
+Silence cannot be told apart from a broken install, which leaves nothing to
+act on. `note` exists for that, the panel draws it, and it clears itself when
+the thing it complained about stops being true -- a message that outlives its
+cause is its own bug. A spawn that never started is distinguishable from a
+command that ran, because `onExited` is not emitted for the first; use
+`running` going false, which is emitted for both.
+
+And the two controls are not interchangeable. The switch stops the *service*,
+which unloads ~600MB and costs three to four seconds to come back. Mute
+releases the *microphone* and keeps everything warm. Someone who only knows
+about the switch will use it as a mute and pay that price every time --
+which is exactly what happened here, because mute was reachable only by a
+right click and a keybind, and neither announces itself. Anything that
+changes what the microphone is doing belongs somewhere a person can find it.
+
 ## What is pinned, and what is deliberately not
 
 **Models are pinned and verified.** `models.lock` holds the piper-voices
