@@ -52,7 +52,8 @@
       "bargeFactor": 150,
       "hud": true,
       "hudLingerMs": 2000,
-      "useVerifier": true
+      "useVerifier": true,
+      "yieldToRecorders": true
     },
     "schema": [
       {
@@ -217,6 +218,13 @@
         "label": "Keep listening after a reply",
         "defaultValue": true,
         "description": "Carry on without repeating the wake word. Say 'stop', 'cancel that' or 'never mind' to end the exchange, or just stay quiet."
+      },
+      {
+        "key": "yieldToRecorders",
+        "type": "bool",
+        "label": "Step aside when another app records",
+        "defaultValue": true,
+        "description": "Stop listening while anything else is using the microphone -- a dictation tool, a call, a recorder -- and start again when it finishes. Without this, saying the wake phrase while dictating somewhere else makes the agent answer out loud into whatever you are dictating. Your own mute is untouched either way."
       },
       {
         "key": "followUpMs",

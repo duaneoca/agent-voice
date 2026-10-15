@@ -21,44 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from runtime import StateFile
-from wake_listen import Daemon
 
 ROOT = Path(__file__).resolve().parent.parent
 DAEMON_SRC = (ROOT / "daemon" / "wake_listen.py").read_text()
-
-
-class FakeSpeaker:
-    def __init__(self):
-        self.name = "test"
-        self.cancelled = False
-
-    def say(self, text, watch=None):
-        return 0.0
-
-    def cancel(self):
-        self.cancelled = True
-
-
-class FakeAgent:
-    def __init__(self):
-        self.cancelled = False
-
-    def send(self, text, session_id=None):
-        return iter(())
-
-    def cancel(self):
-        self.cancelled = True
-
-
-@pytest.fixture
-def daemon(cfg_factory):
-    saved = (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGUSR2))
-    d = Daemon(cfg_factory(echoTailMs=0), pipe=None, state=StateFile(),
-               speaker=FakeSpeaker(), agent=FakeAgent())
-    yield d
-    signal.signal(signal.SIGUSR1, saved[0])
-    signal.signal(signal.SIGUSR2, saved[1])
 
 
 def _stub_detector(tmp_path, monkeypatch, exit_code: int):

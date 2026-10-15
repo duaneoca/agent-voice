@@ -67,6 +67,7 @@ Panel {
     if (vState === "speaking") return "󰕾"
     if (vState === "listening") return "󰍬"
     if (vState === "off") return "󰍭"           // running, microphone released
+    if (vState === "yielded") return "󰍭"       // lent to another app
     return "󰍭"
   }
 
@@ -96,6 +97,10 @@ Panel {
     // label because it fell through to the default and read "STARTING"
     // forever -- a running daemon describing itself as still starting.
     if (vState === "off") return "MICROPHONE OFF"
+    // Named rather than folded into MICROPHONE OFF, because this one undoes
+    // itself and the other does not: nothing here is waiting for you to click
+    // anything.
+    if (vState === "yielded") return "ANOTHER APP IS RECORDING"
     return "STARTING"
   }
 
@@ -431,8 +436,11 @@ Panel {
       Text {
         width: parent.width
         wrapMode: Text.WordWrap
-        visible: voice.serviceActive && voice.vState === "off"
-        text: "Click the microphone to start listening again."
+        visible: voice.serviceActive
+                 && (voice.vState === "off" || voice.vState === "yielded")
+        text: voice.vState === "yielded"
+              ? "Listening again as soon as it stops."
+              : "Click the microphone to start listening again."
         textFormat: Text.PlainText
         color: voice.dim
         font.family: voice.fontFamily

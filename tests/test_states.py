@@ -39,8 +39,10 @@ def test_every_declared_state_is_actually_reachable():
     case the panel carries for a state that can never arrive."""
     import wake_listen
     published = set(re.findall(r'publish\(\s*"([a-z]+)"', DAEMON))
-    # off / locked / listening come from _publish via a variable.
-    published |= set(re.findall(r'"(off|locked|listening)"', DAEMON))
+    # off / locked / yielded / listening are chosen inside _publish and
+    # published through a variable, so they appear as bare literals there
+    # rather than as an argument to publish().
+    published |= set(re.findall(r'"(off|locked|yielded|listening)"', DAEMON))
     for state in wake_listen.STATES:
         assert state in published, f"{state} is declared but never published"
 

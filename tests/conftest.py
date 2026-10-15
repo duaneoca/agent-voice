@@ -61,3 +61,48 @@ def cfg_factory():
         return c
 
     return make
+
+
+# --- a Daemon with its moving parts replaced --------------------------------
+# Lived in test_lock.py until a second suite needed the same thing. Kept here
+# rather than imported across test modules, which pytest tolerates and nobody
+# can follow.
+
+class FakeSpeaker:
+    def __init__(self):
+        self.said = []
+        self.cancelled = 0
+
+    def say(self, text, watch=None):
+        self.said.append(text)
+
+    def cancel(self):
+        self.cancelled += 1
+
+
+class FakeAgent:
+    def __init__(self):
+        self.cancelled = 0
+
+    def send(self, text, session_id=None):
+        return iter(())
+
+    def cancel(self):
+        self.cancelled += 1
+
+
+@pytest.fixture
+def daemon(cfg_factory):
+    """Signals are process-global, and Daemon installs two in its constructor,
+    so they are put back afterwards or a later test inherits them."""
+    import signal
+
+    from runtime import StateFile
+    from wake_listen import Daemon
+
+    saved = (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGUSR2))
+    d = Daemon(cfg_factory(echoTailMs=0), pipe=None, state=StateFile(),
+               speaker=FakeSpeaker(), agent=FakeAgent())
+    yield d
+    signal.signal(signal.SIGUSR1, saved[0])
+    signal.signal(signal.SIGUSR2, saved[1])

@@ -53,6 +53,7 @@ DEFAULTS = {
     "endpointModel": "",
     "endpointIsAgent": False,
     "conversationMode": True,
+    "yieldToRecorders": True,
     "followUpMs": 7000,
     "voice": "lessac-medium",
 }
@@ -90,6 +91,7 @@ TOML_ALIASES = {
     "endpointModel": ("agent", "endpoint_model"),
     "endpointIsAgent": ("agent", "endpoint_is_agent"),
     "conversationMode": ("wake", "conversation_mode"),
+    "yieldToRecorders": ("wake", "yield_to_recorders"),
     "followUpMs": ("timing", "follow_up_ms"),
 }
 

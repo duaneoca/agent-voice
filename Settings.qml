@@ -142,6 +142,7 @@ Item {
   readonly property var modelOptions: ["tiny.en", "base.en", "small.en"]
 
   readonly property bool conversation: setting("conversationMode", true)
+  readonly property bool yieldToRecorders: setting("yieldToRecorders", true)
   // Published by the daemon, because what a level means depends on what the
   // running agent can honour and only the daemon knows that.
   property string vAgent: ""
@@ -707,6 +708,24 @@ Item {
                 fontFamily: root.fontFamily
                 onClicked: root.persist("conversationMode",
                                         root.conversation ? "false" : "true", true)
+              }
+
+              Toggle {
+                width: parent.width
+                label: "Step aside when another app records"
+                description: "Stop listening while something else is using " +
+                             "the microphone -- dictation, a call, a " +
+                             "recorder -- and start again when it finishes. " +
+                             "Without this, saying the wake phrase while " +
+                             "dictating elsewhere makes the agent answer out " +
+                             "loud into what you are dictating. Your own mute " +
+                             "is untouched either way."
+                checked: root.yieldToRecorders
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("yieldToRecorders",
+                                        root.yieldToRecorders ? "false" : "true",
+                                        true)
               }
 
               // Left on rather than switched off for a backend that forgets:

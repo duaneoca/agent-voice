@@ -519,7 +519,7 @@ class Pipeline:
 #: and the check script read this list rather than grepping for publish()
 #: calls, which is what they used to do and what broke the moment one of
 #: these moved into a variable.
-STATES = ("off", "locked", "listening", "capture", "transcribing",
+STATES = ("off", "locked", "yielded", "listening", "capture", "transcribing",
           "thinking", "speaking", "followup")
 
 #: The subset that means a turn is underway, i.e. what the HUD shows for.
@@ -529,6 +529,67 @@ BUSY_STATES = ("capture", "transcribing", "thinking", "speaking", "followup")
 #: to raise its lock surface and for `solitaryBlockedBy` to admit it, short
 #: enough that a stale announcement cannot hold the microphone shut.
 LOCK_HOLD_S = 10.0
+
+
+def other_recorders(our_pid: int) -> list[str] | None:
+    """Names of anything else capturing audio right now.
+
+    `[]` for nobody, a list of names for somebody, and **None when the
+    question cannot be answered** -- no pw-dump, no PipeWire, malformed
+    output, a timeout. None is not False: the caller keeps whatever it last
+    knew, exactly as it does for an undetermined lock, because guessing
+    "nobody" would reopen the microphone over somebody else's recording and
+    guessing "somebody" would shut it for good on a machine that cannot say.
+
+    Read from `pw-dump` rather than counted from `pactl` because the answer
+    needs a join: a capture stream's own node does not carry the pid that
+    owns it -- the *client* object does -- and without the pid there is no
+    way to tell our own stream from anyone else's except by matching on a
+    name, which `agentvoice monitor` shares with the daemon exactly.
+
+    Only streams PipeWire reports as `running` count. A browser with a tab
+    open keeps idle capture nodes around, and treating those as "recording"
+    would mute the wake word permanently on an ordinary desktop.
+    """
+    try:
+        out = subprocess.run(["pw-dump"], capture_output=True, text=True,
+                             timeout=5).stdout
+        graph = json.loads(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    # A list of anything-but-objects is not pw-dump's output, and answering
+    # "nobody is recording" to garbage is the fail-open direction: it would
+    # reopen the microphone over somebody else's call.
+    if not isinstance(graph, list) or not all(
+            isinstance(obj, dict) for obj in graph):
+        return None
+
+    # Two passes: a client can appear after the node that points at it.
+    pids: dict[str, str] = {}
+    streams: list[dict] = []
+    for obj in graph:
+        if not isinstance(obj, dict):
+            continue
+        props = ((obj.get("info") or {}).get("props") or {})
+        if not isinstance(props, dict):
+            continue
+        if str(obj.get("type", "")).endswith(":Client"):
+            pid = (props.get("application.process.id")
+                   or props.get("pipewire.sec.pid"))
+            if pid is not None:
+                pids[str(obj.get("id"))] = str(pid)
+        elif props.get("media.class") == "Stream/Input/Audio":
+            if (obj.get("info") or {}).get("state") == "running":
+                streams.append(props)
+
+    others = []
+    for props in streams:
+        owner = pids.get(str(props.get("client.id")))
+        if owner is not None and owner == str(our_pid):
+            continue
+        others.append(str(props.get("application.name")
+                          or props.get("node.name") or "something"))
+    return others
 
 
 def session_locked() -> bool | None:
@@ -601,6 +662,13 @@ class Daemon:
         #: Set from the compositor's session lock, not from anything the user
         #: asked for. See the `listening` property.
         self.locked = False
+        #: Something else is recording, so the microphone is lent out. A third
+        #: flag rather than a second use of `enabled`, for the same reason
+        #: `locked` is: `enabled` is what the user asked for, and writing to it
+        #: here would mean that when the other app stopped recording we turned
+        #: the microphone back *on* for somebody who had deliberately muted it.
+        self.yielded = False
+        self._yielded_to = ""
         #: How long an explicitly announced lock outranks the poll, for the
         #: moment between the lock key being pressed and the compositor
         #: admitting to a lock.
@@ -657,7 +725,7 @@ class Daemon:
     #: had deliberately turned it off.
     @property
     def listening(self) -> bool:
-        return self.enabled and not self.locked
+        return self.enabled and not self.locked and not self.yielded
 
     def silence(self) -> None:
         """Stop talking, stop thinking, and forget what is already captured.
@@ -716,6 +784,52 @@ class Daemon:
             print(f"\n  {CYA}screen unlocked — microphone "
                   f"{'open' if self.enabled else 'still released'}{OFF}",
                   flush=True)
+        self._publish()
+
+    def reconcile_yield(self) -> None:
+        """Lend the microphone to whatever else has started recording.
+
+        Measured first: dictating into the editor and saying the wake phrase
+        made the agent answer out loud into the dictation, 17:34:05 against a
+        capture that opened at 17:33:57. Both streams run happily side by side
+        -- PipeWire does not arbitrate, so this is a courtesy rather than a
+        fix for contention -- and the eight seconds between the two is why a
+        2s poll is fast enough to have prevented it.
+        """
+        if not self.cfg.get_bool("yieldToRecorders"):
+            if self.yielded:                 # turned off while lent out
+                self.yielded = False
+                self._publish()
+            return
+        # Only while there is something to lend. Asking costs a subprocess,
+        # and a released or locked microphone is not listening anyway.
+        if not self.enabled or self.locked:
+            return
+
+        others = other_recorders(os.getpid())
+        if others is None:
+            self.say_once("recorders",
+                          f"  {YEL}cannot tell what else is using the "
+                          f"microphone, so it will not step aside for "
+                          f"anything: no pw-dump on PATH{OFF}")
+            return
+        busy = bool(others)
+        if busy == self.yielded:
+            return
+        self.yielded = busy
+        if busy:
+            self._yielded_to = others[0]
+            # Mid-reply when it happens is the whole point: that is the audio
+            # that lands in somebody's dictation.
+            self.silence()
+            print(f"\n  {YEL}microphone lent to {self._yielded_to} "
+                  f"— not listening{OFF}", flush=True)
+        else:
+            self._interrupt.clear()
+            print(f"\n  {CYA}{self._yielded_to or 'the other app'} finished "
+                  f"— microphone {'back' if self.enabled else 'still released'}"
+                  f"{OFF}", flush=True)
+            self._yielded_to = ""
         self._publish()
 
     def reconcile_agent(self) -> None:
@@ -887,8 +1001,16 @@ class Daemon:
         # "locked" is its own state rather than "off": the panel should be
         # able to say why the microphone is closed, because "off" invites
         # someone to turn it back on and wonder why nothing happens.
-        state = "locked" if self.locked else ("listening" if self.enabled
-                                              else "off")
+        # Ordered by which truth matters most. A locked screen outranks a
+        # borrowed microphone, and both outrank "listening": the panel has to
+        # be able to say *why* it is not hearing you, because "off" invites
+        # someone to turn it back on and wonder why nothing happens.
+        if self.locked:
+            state = "locked"
+        elif self.enabled and self.yielded:
+            state = "yielded"
+        else:
+            state = "listening" if self.enabled else "off"
         self.state.publish(state, **extra)
 
     def banner(self):
@@ -1226,6 +1348,12 @@ class Daemon:
                 if time.time() - last_lock_poll > 2.0:
                     last_lock_poll = time.time()
                     self.reconcile_lock()
+                    # Above the `listening` gate for the same reason the lock
+                    # poll is: once the microphone is lent out the loop stops
+                    # at the gate below, so a check placed after it would
+                    # never run again and the microphone would stay lent
+                    # forever. That exact bug shipped once already.
+                    self.reconcile_yield()
 
                 # Deaf window after our own speech: discard without even
                 # measuring, so a tail of reverb cannot register as input.
