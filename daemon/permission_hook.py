@@ -239,15 +239,64 @@ def _searchable(root: str) -> list[str] | None:
         proc = subprocess.run(
             ["rg", "--files", "--no-messages", root],
             capture_output=True, text=True, timeout=SEARCH_TIMEOUT_S)
+        # rg exits 1 for "no files", a real answer, and 2 for trouble.
+        if proc.returncode in (0, 1):
+            files = proc.stdout.splitlines()
+            return None if len(files) > SEARCH_FILE_CAP else files
     except (OSError, subprocess.SubprocessError):
+        pass
+
+    # Second choice, and it answers the same question: tracked files plus
+    # untracked ones git is not ignoring, which is the set rg would have
+    # searched. Without this the walk below sees everything a .gitignore
+    # hides -- and on this repository that is bench/.venv, whose certifi
+    # ships a cacert.pem: a public CA bundle matching the `.pem` rule, so
+    # every search prompted about a credential that is nothing of the kind.
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "ls-files", "--cached", "--others",
+             "--exclude-standard", "-z"],
+            capture_output=True, text=True, timeout=SEARCH_TIMEOUT_S)
+        if proc.returncode == 0:
+            names = [n for n in proc.stdout.split("\0") if n]
+            if len(names) > SEARCH_FILE_CAP:
+                return None
+            return [os.path.join(root, n) for n in names]
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    return _walk(root)
+
+
+def _walk(root: str) -> list[str] | None:
+    """The same question without ripgrep, and answered more cautiously.
+
+    Without rg there is nothing to read .gitignore for us, so this sees
+    ignored files too and will ask about an ignored .env that could never
+    have come back in results. That is the right way round: the alternative
+    was returning "cannot tell" whenever rg was absent, which made every
+    single search prompt -- a guard nobody can live with is a guard that
+    gets switched off.
+
+    `.git` is skipped. It is large, it is most of the walk on any real
+    repository, and the credential files this list names live in $HOME
+    rather than inside a checkout's object store.
+    """
+    out: list[str] = []
+    started = time.time()
+    try:
+        for here, dirs, names in os.walk(root, onerror=None):
+            if ".git" in dirs:
+                dirs.remove(".git")
+            for n in names:
+                out.append(os.path.join(here, n))
+                if len(out) > SEARCH_FILE_CAP:
+                    return None
+            if time.time() - started > SEARCH_TIMEOUT_S:
+                return None
+    except OSError:
         return None
-    # rg exits 1 for "no files", which is a real answer, and 2 for trouble.
-    if proc.returncode not in (0, 1):
-        return None
-    files = proc.stdout.splitlines()
-    if len(files) > SEARCH_FILE_CAP:
-        return None
-    return files
+    return out
 
 
 def _search_would_read(tool_input: dict) -> list[str] | None:

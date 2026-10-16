@@ -293,12 +293,64 @@ class TestContentSearch:
         assert hook.decide("Grep", {"pattern": "x", "path": root})[0] == "allow"
 
     def test_an_ignored_secret_does_not_prompt(self, tmp_path, monkeypatch):
-        """rg honours .gitignore, so an ignored .env cannot come back in
-        results. Asking about it would be a prompt about nothing."""
+        """An ignored .env cannot come back in results, so asking about it
+        would be a prompt about nothing -- and a guard that fires when it
+        need not is how people learn to click through the ones that matter.
+
+        True through rg and, where rg is absent, through `git ls-files
+        --cached --others --exclude-standard`, which is the same set.
+        """
         root = self._repo(tmp_path, {"app.py": "x=1\n", ".env": "TOKEN=abc\n"},
                           ignore=".env\n")
         monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "_ask", lambda t, i, note="": ("deny", note))
         assert hook.decide("Grep", {"pattern": "x", "path": root})[0] == "allow"
+
+    def test_the_bare_walk_is_the_conservative_one(self, tmp_path, monkeypatch):
+        """With neither rg nor git there is nothing to read .gitignore, so
+        the walk sees the ignored file and asks. That is the right way round
+        -- it is the last resort, and over-asking beats a silent read -- but
+        it is a different answer from the other two and worth pinning."""
+        root = self._repo(tmp_path, {"app.py": "x=1\n", ".env": "TOKEN=abc\n"},
+                          ignore=".env\n")
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "_ask", lambda t, i, note="": ("deny", note))
+
+        def nothing(*a, **k):
+            raise FileNotFoundError("no rg, no git")
+
+        monkeypatch.setattr(hook.subprocess, "run", nothing)
+        decision, note = hook.decide("Grep", {"pattern": "x", "path": root})
+        assert decision == "deny"
+        assert ".env" in note
+
+    def test_a_missing_ripgrep_does_not_make_every_search_prompt(
+            self, tmp_path, monkeypatch):
+        """The first version returned "cannot tell" whenever rg was absent,
+        so every search asked. A guard nobody can live with is a guard that
+        gets switched off -- and it turned CI red, where rg is not installed."""
+        root = self._repo(tmp_path, {"app.py": "x=1\n", "README.md": "hi\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+
+        def no_rg(*a, **k):
+            raise FileNotFoundError("rg")
+
+        monkeypatch.setattr(hook.subprocess, "run", no_rg)
+        assert hook.decide("Grep", {"pattern": "x", "path": root})[0] == "allow"
+
+    def test_the_fallback_still_catches_the_credential(self, tmp_path,
+                                                       monkeypatch):
+        root = self._repo(tmp_path, {"credentials.json": "token\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "_ask", lambda t, i, note="": ("deny", note))
+
+        def no_rg(*a, **k):
+            raise FileNotFoundError("rg")
+
+        monkeypatch.setattr(hook.subprocess, "run", no_rg)
+        decision, note = hook.decide("Grep", {"pattern": "token", "path": root})
+        assert decision == "deny"
+        assert "credentials.json" in note
 
     def test_trusted_still_skips_it(self, tmp_path, monkeypatch):
         """Which is what trusted means, and matches the direct read."""
