@@ -396,3 +396,42 @@ class TestContentSearch:
         body = body[:body.index("\ndef ")]
         assert "timeout=" in body
         assert "SEARCH_FILE_CAP" in body
+
+    def test_dotfiles_are_visible_to_the_pre_search(self, tmp_path, monkeypatch):
+        """`rg --files` skips hidden files by default, and almost everything on
+        the protected list is one -- .ssh, .aws, .gnupg, .env. Without
+        --hidden this looked like it worked and saw none of them, which would
+        have shipped a fix that missed the commonest case of all."""
+        src = (ROOT / "daemon" / "permission_hook.py").read_text()
+        body = src[src.index("def _searchable("):]
+        body = body[:body.index("\ndef ")]
+        assert '"--hidden"' in body, "rg without --hidden cannot see a .env"
+
+        root = self._repo(tmp_path, {"app.py": "x=1\n", ".env": "TOKEN=abc\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "_ask", lambda t, i, note="": ("deny", note))
+        decision, note = hook.decide("Grep", {"pattern": "x", "path": str(root)})
+        assert decision == "deny"
+        assert ".env" in note
+
+    def test_the_whole_question_shares_one_budget(self):
+        """Three strategies with five seconds each meant a Grep of $HOME sat
+        for 23 seconds inside a hook the tool is waiting on. Measured, not
+        feared: 23375 ms before, ~2000 ms after."""
+        src = (ROOT / "daemon" / "permission_hook.py").read_text()
+        assert "SEARCH_BUDGET_S" in src
+        assert "SEARCH_TIMEOUT_S" not in src, "a per-strategy timeout is back"
+        body = src[src.index("def _searchable("):]
+        body = body[:body.index("\ndef _walk(")]
+        assert "deadline = time.time() + SEARCH_BUDGET_S" in body
+        assert body.count("max(left(), 0.1)") >= 2, \
+            "each strategy must take what is left of the budget, not all of it"
+
+    def test_trusted_does_not_pay_for_a_search_it_will_ignore(self, monkeypatch):
+        """The level is consulted before the enumeration, not after."""
+        monkeypatch.setattr(hook, "_settings", lambda: ("trusted", None))
+        called = []
+        monkeypatch.setattr(hook, "_searchable",
+                            lambda root: called.append(root) or [])
+        assert hook.decide("Grep", {"pattern": "x", "path": "/"})[0] == "allow"
+        assert not called, "it enumerated the tree and then allowed anyway"

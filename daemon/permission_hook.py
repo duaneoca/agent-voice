@@ -220,7 +220,10 @@ CONTENT_SEARCH = {"Grep"}
 #: the hook open, and a search that cannot be enumerated inside them is
 #: answered by asking rather than by assuming it is clean.
 SEARCH_FILE_CAP = 20_000
-SEARCH_TIMEOUT_S = 5.0
+#: One budget for the whole question, not one per strategy. Three five second
+#: timeouts in a row meant a Grep of $HOME sat for 23 seconds inside a hook
+#: that blocks the tool -- measured, and the agent simply looks hung.
+SEARCH_BUDGET_S = 2.0
 
 
 def _searchable(root: str) -> list[str] | None:
@@ -235,10 +238,19 @@ def _searchable(root: str) -> list[str] | None:
     None when the question cannot be answered inside the caps. The caller
     asks in that case; "could not tell" is not "nothing there".
     """
+    deadline = time.time() + SEARCH_BUDGET_S
+
+    def left() -> float:
+        return deadline - time.time()
+
     try:
+        # --hidden, because rg skips dotfiles by default and almost everything
+        # on the protected list is one: .ssh, .aws, .gnupg, .env. Without it
+        # this looked like it worked and saw none of them. Ignore rules still
+        # apply with it, so an ignored .env is still not a prompt.
         proc = subprocess.run(
-            ["rg", "--files", "--no-messages", root],
-            capture_output=True, text=True, timeout=SEARCH_TIMEOUT_S)
+            ["rg", "--files", "--hidden", "--no-messages", root],
+            capture_output=True, text=True, timeout=max(left(), 0.1))
         # rg exits 1 for "no files", a real answer, and 2 for trouble.
         if proc.returncode in (0, 1):
             files = proc.stdout.splitlines()
@@ -256,7 +268,7 @@ def _searchable(root: str) -> list[str] | None:
         proc = subprocess.run(
             ["git", "-C", root, "ls-files", "--cached", "--others",
              "--exclude-standard", "-z"],
-            capture_output=True, text=True, timeout=SEARCH_TIMEOUT_S)
+            capture_output=True, text=True, timeout=max(left(), 0.1))
         if proc.returncode == 0:
             names = [n for n in proc.stdout.split("\0") if n]
             if len(names) > SEARCH_FILE_CAP:
@@ -265,10 +277,10 @@ def _searchable(root: str) -> list[str] | None:
     except (OSError, subprocess.SubprocessError):
         pass
 
-    return _walk(root)
+    return _walk(root, deadline)
 
 
-def _walk(root: str) -> list[str] | None:
+def _walk(root: str, deadline: float) -> list[str] | None:
     """The same question without ripgrep, and answered more cautiously.
 
     Without rg there is nothing to read .gitignore for us, so this sees
@@ -283,16 +295,17 @@ def _walk(root: str) -> list[str] | None:
     rather than inside a checkout's object store.
     """
     out: list[str] = []
-    started = time.time()
     try:
         for here, dirs, names in os.walk(root, onerror=None):
             if ".git" in dirs:
                 dirs.remove(".git")
             for n in names:
                 out.append(os.path.join(here, n))
-                if len(out) > SEARCH_FILE_CAP:
+                # Checked per file rather than per directory: one directory
+                # holding a million entries is the case that blew the budget.
+                if len(out) > SEARCH_FILE_CAP or time.time() > deadline:
                     return None
-            if time.time() - started > SEARCH_TIMEOUT_S:
+            if time.time() > deadline:
                 return None
     except OSError:
         return None
@@ -329,10 +342,12 @@ def decide(tool_name: str, tool_input: dict) -> tuple[str, str]:
         secrets = [p for p in _paths_in(tool_input) if _is_secret(p)]
         note = f"this reads {secrets[0]}" if secrets else ""
 
-        # A search is judged by what it would return, not by what it was
-        # handed. Only asked once the arguments themselves have come back
-        # clean, so the common case costs nothing extra.
-        if not secrets and tool_name in CONTENT_SEARCH:
+        # The level is consulted *before* the pre-search, not after. At
+        # "trusted" the answer is allow whatever the tree holds, and paying
+        # for an enumeration to then ignore it is pure latency -- 23 seconds
+        # of it on $HOME, inside a hook the tool is waiting on.
+        if not secrets and tool_name in CONTENT_SEARCH \
+                and _settings()[0] != "trusted":
             found = _search_would_read(tool_input)
             if found is None:
                 secrets = ["?"]
