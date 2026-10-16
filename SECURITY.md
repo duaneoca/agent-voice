@@ -103,6 +103,14 @@ even if nothing malicious is ever hosted.
   prompt sent down a channel a CLI does not read is a turn that hangs. Each
   one closes as somebody runs a real turn against it. On a single-user machine
   this is nothing; on a shared one, prefer a verified backend or an endpoint.
+- **Bash is not covered by the protected-file list.** That list governs the
+  file-reading tools; a shell command reaches the same bytes and the hook sees
+  only the tool name and a string. At `ask` and `edits` it still asks, but
+  without being able to say what is at stake, and at `trusted` it does not ask.
+  This is the same shape as the search finding -- a tool judged by its name
+  rather than by what it returns -- and it is the larger instance of it.
+  Inferring credential paths from shell is declined on purpose: `cd /; rm -rf .`
+  names no file either, so prefix matching buys confidence rather than safety.
 - **The protected-file list is names and locations.** A content search and a
   direct read now get the same answer for the same bytes, which is what the
   list is for. It will not recognise a `prod-dump.sql` full of passwords, and

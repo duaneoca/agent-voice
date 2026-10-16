@@ -566,6 +566,35 @@ It is not nothing on a 4GB machine, and principle 5 says that matters.
    with none of them. Invoking one triggers a minute-long install.
    Adapters check for a real install, not just a name on PATH.
 
+### And the ceiling
+
+Worth saying plainly, because the rest of this file is about things that were
+fixed. What agentvoice gives an agent is a microphone and your shell. It runs
+as you, with your files, your keys and your network, and the permission guard
+is a speed bump against an accident or a passing stranger rather than a
+sandbox. Three limits follow from the design and are not going away:
+
+- **Bash is outside the credential list.** The names and locations under
+  *Known risks* govern the file-reading tools -- Read, Grep, Glob. A shell
+  command can read the same bytes, and the guard sees only "Bash" and a
+  string: at `ask` or `edits` it asks, but it cannot tell you that the command
+  reads a private key, and at `trusted` it does not ask at all. Parsing shell
+  for credential paths is the game this project declines to play, because
+  `cd /; rm -rf .` names no file either.
+- **Replies are spoken out loud.** Ask for something sensitive and it comes
+  out of the speakers, in a room that may have other people in it. Nothing
+  filters what is said aloud.
+- **The input channel is the room.** A locked screen closes the microphone, a
+  personal verifier rejects other voices, and mute is a click away --- those
+  narrow the opening, they do not close it. A wake word is an open
+  microphone, and that is the deal.
+
+None of that is a reason not to use it. It is a reason to choose the
+permission level deliberately, to prefer `ask` or `edits` over `trusted` on a
+machine that matters, and to know that "trusted --- never asks" means exactly
+what it says. The licence disclaims warranty in the usual legal words; this is
+the same thing in plain ones.
+
 ## Prior art (and the gap)
 
 Voxtype: Omarchy's own dictation, local whisper.cpp, push to talk.
