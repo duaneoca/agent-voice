@@ -240,7 +240,17 @@ class StateFile:
     """
 
     def __init__(self) -> None:
-        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        # 0o700, and the file 0o600 below. This holds the verbatim transcript
+        # and the agent's reply, so it is the same thing the prompt in argv
+        # was: your speech, readable by somebody else with an account here.
+        # It was 0644 in a 0755 directory and safe only because systemd makes
+        # $XDG_RUNTIME_DIR 0700 -- which is a protection we inherit rather
+        # than one we set, and not ours to rely on.
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            RUNTIME_DIR.chmod(0o700)      # mkdir's mode is ignored if it exists
+        except OSError:
+            pass
         self.path = RUNTIME_DIR / "state"
         self._last: dict = {}
         # Facts that hold for the whole session and belong in every payload,
@@ -265,6 +275,9 @@ class StateFile:
         tmp = self.path.with_suffix(".tmp")
         try:
             tmp.write_text(json.dumps(payload))
+            # Before the rename, so the file is never briefly world readable
+            # under its real name.
+            tmp.chmod(0o600)
         except FileNotFoundError:
             # The state file lives in /run, which is tmpfs, is cleanable, and
             # is deleted outright by this project's own uninstaller. The

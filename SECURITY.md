@@ -103,6 +103,16 @@ even if nothing malicious is ever hosted.
   prompt sent down a channel a CLI does not read is a turn that hangs. Each
   one closes as somebody runs a real turn against it. On a single-user machine
   this is nothing; on a shared one, prefer a verified backend or an endpoint.
+- **Everything said and answered is written to the journal, and stays there.**
+  The daemon prints each transcript and each reply to stdout, which systemd
+  records; `journalctl --user -u agentvoice` reads a conversation back weeks
+  later. That is deliberate and it is how most of this project's bugs were
+  found -- a wake score, a latency, a lock transition, all of it needs the
+  history. But it means the honest answer to "where do my spoken words live"
+  is "in the journal until it rotates", readable by you and by the
+  `systemd-journal` group. Nothing here redacts it. If that is not the trade
+  you want, `journalctl --user --vacuum-time` and a `MaxRetentionSec` in
+  journald.conf are the levers, and neither is ours.
 - **Bash is not covered by the protected-file list.** That list governs the
   file-reading tools; a shell command reaches the same bytes and the hook sees
   only the tool name and a string. At `ask` and `edits` it still asks, but

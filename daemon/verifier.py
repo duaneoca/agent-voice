@@ -134,7 +134,11 @@ def record_clip(path: Path, seconds: float, device: int | None = None) -> float:
     frames = sd.rec(int(seconds * RATE), samplerate=RATE, channels=1,
                     dtype="int16", device=device)
     sd.wait()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # 0o700: these are recordings of somebody's voice and a model fitted to
+    # it. They were 0644 under 0755 directories, readable by any other local
+    # account on a machine whose $HOME is not itself 0700 -- which is a
+    # default, not a guarantee, and several distributions ship 0755.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
@@ -160,7 +164,7 @@ def train(model_name: str, positives: Path, negatives: Path,
 
     model_path, key = resolve_model(model_name)
     output = output or (VERIFIER_DIR / f"{key}.joblib")
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # The upstream docstring says these take "the path to a directory". They
     # do not -- the implementation iterates them as lists of file paths, and
     # passing a directory string makes it open the string's first character

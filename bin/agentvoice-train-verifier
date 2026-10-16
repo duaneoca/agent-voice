@@ -288,7 +288,7 @@ fetch_speaker() {
   if curl -fsSL --proto '=https' -o "$tmp/$file" "$base/$file" &&
      curl -fsSL --proto '=https' -o "$tmp/$file.json" "$base/$file.json" &&
      lock_ok "$tmp/$file" "$file" && lock_ok "$tmp/$file.json" "$file.json"; then
-    mkdir -p "$dir"
+    mkdir -p -m 700 "$dir"
     mv "$tmp/$file" "$tmp/$file.json" "$dir/"
     rm -rf "$tmp"
     return 0
@@ -305,7 +305,7 @@ SPOKEN="${MODEL//_/ }"
 
 POS="$WORK/$MODEL/positives"
 NEG="$WORK/$MODEL/negatives"
-mkdir -p "$POS" "$NEG"
+mkdir -p -m 700 "$POS" "$NEG"
 
 # --- is there already one? -------------------------------------------------
 # Running this a second time used to walk silently past both the existing
@@ -335,7 +335,7 @@ if (( HAVE_POS >= 10 )); then
     # and then said "Nothing was saved". Restored by the cancel trap; removed
     # on the way out of a run that got as far as retraining.
     OLD_POS="$POS.previous.$$"
-    mkdir -p "$OLD_POS"
+    mkdir -p -m 700 "$OLD_POS"
     mv "$POS"/*.wav "$OLD_POS"/ 2>/dev/null || true
   fi
 fi

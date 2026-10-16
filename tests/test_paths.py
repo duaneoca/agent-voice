@@ -138,3 +138,48 @@ class TestCustomWakeWords:
         monkeypatch.setattr(builtins, "__import__", refuse)
         _, key = custom.resolve_model("hey_claude")
         assert key == "hey_claude"
+
+
+class TestNothingSpokenIsWorldReadable:
+    """The two findings a reviewer raised were both "your speech is readable by
+    somebody else with an account here" -- once in argv, once through a search.
+    These are the other places the same content lands, found by looking for the
+    channel rather than re-reading the permission logic.
+    """
+
+    def test_the_state_file_is_not_world_readable(self, tmp_path, monkeypatch):
+        """It carries the verbatim transcript and the agent's reply. It was
+        0644 in a 0755 directory, safe only because systemd makes
+        $XDG_RUNTIME_DIR 0700 -- a protection inherited rather than set."""
+        import runtime
+        monkeypatch.setattr(runtime, "RUNTIME_DIR", tmp_path / "rt")
+        state = runtime.StateFile()
+        state.publish("listening", transcript="something said out loud")
+        assert state.path.exists()
+        assert oct(state.path.stat().st_mode)[-3:] == "600", \
+            "the transcript is readable by other local accounts"
+        assert oct((tmp_path / "rt").stat().st_mode)[-3:] == "700"
+
+    def test_the_directory_is_tightened_even_when_it_already_exists(
+            self, tmp_path, monkeypatch):
+        """mkdir's mode is ignored for a directory that is already there, and
+        systemd creates this one from the unit before the daemon runs."""
+        import runtime
+        rt = tmp_path / "rt"
+        rt.mkdir(mode=0o755)
+        monkeypatch.setattr(runtime, "RUNTIME_DIR", rt)
+        runtime.StateFile()
+        assert oct(rt.stat().st_mode)[-3:] == "700"
+
+    def test_the_verifier_and_its_recordings_are_private(self):
+        """Recordings of a voice and a model fitted to it. 0755 was safe only
+        on a machine whose $HOME is 0700, which is a default and not a
+        guarantee -- several distributions ship 0755."""
+        root = Path(__file__).resolve().parent.parent
+        src = (root / "daemon" / "verifier.py").read_text()
+        assert src.count("mode=0o700") >= 2, \
+            "the verifier directories are created world readable"
+        trainer = (root / "bin" / "agentvoice-train-verifier").read_text()
+        assert "mkdir -p -m 700" in trainer, \
+            "the recording directories are created world readable"
+        assert 'mkdir -p "$POS" "$NEG"' not in trainer
