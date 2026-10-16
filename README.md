@@ -685,6 +685,48 @@ VIRTUAL_ENV=~/.local/share/agentvoice/venv uv pip install -r requirements-dev.tx
 `CLAUDE.md` has the working rules: what earns a test, why a setting is three
 things rather than one, and how model reloading is reconciled.
 
+### Diagnosing a turn
+
+The journal has the shape of every turn whatever the settings say -- wake
+events, transcription and agent timings, tool markers, lock transitions,
+errors:
+
+```bash
+journalctl --user -u agentvoice -f
+```
+
+What it does **not** have is the words. `logSpeech` is off by default,
+because the journal keeps entries for weeks and a reply is whatever the agent
+read out. Three ways to turn it on when you need it:
+
+```bash
+# the switch, in Agent Voice settings: "Write what is said to the system log"
+omarchy bar set duaneoca.agentvoice logSpeech true --json   # or from a shell
+```
+
+```toml
+# or in ~/.config/agentvoice/agentvoice.toml, if you keep settings in a file
+[ui]
+log_speech = true
+```
+
+`--json` matters: without it the value is written as the string `"true"`
+rather than a boolean. The daemon picks the change up on its next poll -- no
+restart -- and `journalctl` shows "knobs updated" when it has. Turn it back
+off the same way.
+
+A terminal is a fourth way and needs no setting at all: run the daemon in
+the foreground and it prints everything it hears and says, because somebody
+is sitting there reading it.
+
+```bash
+agentvoice stop && ~/.local/share/agentvoice/venv/bin/python \
+  ~/.local/share/agentvoice/app/daemon/wake_listen.py
+```
+
+For the wake word specifically, `agentvoice monitor --ab` scores each
+utterance with and without your verifier and needs none of the above.
+
 ## Layout
 
 ```
