@@ -351,6 +351,18 @@ did you mean by that?" and you get an answer to a question it has never
 seen. The same is true of the ten agents sharing the plain-stdout
 adapter, none of which has been run.
 
+**And nine of those ten still put what you said on a command line.**
+`/proc/<pid>/cmdline` is world readable on an ordinary Linux box, so for as
+long as a turn runs, any other account on the machine can read the sentence
+you spoke. The four backends that have answered live turns here -- Claude
+Code, Codex, Gemini, Antigravity -- hand the prompt over on stdin instead,
+and so does Copilot, the one of the ten that has been shown to accept it.
+The rest cannot be moved without running them: a prompt written to a channel
+a CLI is not reading is a turn that hangs until the watchdog kills it. If
+you share the machine with anyone, prefer a backend from the verified list
+or an endpoint, where the prompt travels in an HTTPS body and never touches
+argv.
+
 Two smaller things that follow from the mechanism. An interrupted
 endpoint turn never enters the history, because the history is written
 when the stream ends -- so the machine forgets its own half of an

@@ -93,6 +93,21 @@ even if nothing malicious is ever hosted.
   its own service. The daemon does not proxy or inspect that, and the README
   says which backends have actually been exercised.
 
+## Known limitations, stated rather than discovered
+
+- **Nine of the ten CLIs on the shared adapter receive the spoken prompt as a
+  command-line argument.** `/proc/<pid>/cmdline` is mode 0444 with no hidepid
+  on an ordinary Linux box, so another local account can read it while the
+  turn runs. Claude Code, Codex, Gemini, Antigravity and Copilot hand it over
+  on stdin; the other nine cannot be moved without running them, because a
+  prompt sent down a channel a CLI does not read is a turn that hangs. Each
+  one closes as somebody runs a real turn against it. On a single-user machine
+  this is nothing; on a shared one, prefer a verified backend or an endpoint.
+- **The protected-file list is names and locations.** A content search and a
+  direct read now get the same answer for the same bytes, which is what the
+  list is for. It will not recognise a `prod-dump.sql` full of passwords, and
+  no amount of pattern matching would.
+
 ## Scope
 
 The daemon, the installer, the control CLI, the permission hook and the
