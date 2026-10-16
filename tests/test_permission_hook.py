@@ -246,3 +246,101 @@ def test_only_a_literal_yes_is_an_allow(monkeypatch):
                 time.sleep(0.02)
         threading.Thread(target=scribble, daemon=True).start()
         assert hook.decide("Bash", {"command": "ls"})[0] == "deny", body
+
+
+# --- a search is judged by what it returns, not by what it was handed -------
+
+class TestContentSearch:
+    """Reported against cba1abf by a marketplace reviewer, and correct:
+
+    `_paths_in` judges a tool by its arguments. For a read that is the file,
+    so the check works. For a search the arguments are a pattern and a
+    directory while the *output* is whatever lies beneath -- so reading
+    credentials.json asked, and grepping the folder it sits in did not, for
+    the same bytes.
+    """
+
+    @staticmethod
+    def _repo(tmp_path, files: dict, ignore: str = "") -> str:
+        import subprocess as sp
+        for name, body in files.items():
+            f = tmp_path / name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+        if ignore:
+            (tmp_path / ".gitignore").write_text(ignore)
+        sp.run(["git", "init", "-q", str(tmp_path)], check=False,
+               capture_output=True)
+        return str(tmp_path)
+
+    def test_grepping_a_folder_asks_when_it_holds_a_credential(
+            self, tmp_path, monkeypatch):
+        root = self._repo(tmp_path, {"app.py": "x=1\n",
+                                     "credentials.json": "token\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "_ask",
+                            lambda t, i, note="": ("deny", note))
+        decision, note = hook.decide("Grep", {"pattern": "token", "path": root})
+        assert decision != "allow"
+        assert "credentials.json" in note, \
+            "the prompt must name the file, or it cannot be judged"
+
+    def test_a_clean_tree_is_still_silent(self, tmp_path, monkeypatch):
+        """The guard has to cost nothing in the ordinary case, or people
+        learn to click through the one that matters."""
+        root = self._repo(tmp_path, {"app.py": "x=1\n", "README.md": "hi\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        assert hook.decide("Grep", {"pattern": "x", "path": root})[0] == "allow"
+
+    def test_an_ignored_secret_does_not_prompt(self, tmp_path, monkeypatch):
+        """rg honours .gitignore, so an ignored .env cannot come back in
+        results. Asking about it would be a prompt about nothing."""
+        root = self._repo(tmp_path, {"app.py": "x=1\n", ".env": "TOKEN=abc\n"},
+                          ignore=".env\n")
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        assert hook.decide("Grep", {"pattern": "x", "path": root})[0] == "allow"
+
+    def test_trusted_still_skips_it(self, tmp_path, monkeypatch):
+        """Which is what trusted means, and matches the direct read."""
+        root = self._repo(tmp_path, {"credentials.json": "token\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("trusted", None))
+        assert hook.decide("Grep", {"pattern": "token", "path": root})[0] == "allow"
+
+    def test_a_tree_it_cannot_enumerate_is_asked_about(self, monkeypatch):
+        """Fail closed. "Could not tell" is not "nothing there"."""
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "_searchable", lambda root: None)
+        monkeypatch.setattr(hook, "_ask",
+                            lambda t, i, note="": ("deny", note))
+        decision, note = hook.decide("Grep", {"pattern": "x", "path": "/"})
+        assert decision != "allow"
+        assert "too large" in note
+
+    def test_glob_is_deliberately_not_covered(self, tmp_path, monkeypatch):
+        """It returns paths, not contents. That credentials.json exists is a
+        far smaller thing than what is inside it, and prompting on every file
+        listing would be the fatigue this is trying to avoid."""
+        root = self._repo(tmp_path, {"credentials.json": "token\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        assert hook.decide("Glob", {"pattern": "**/*", "path": root})[0] == "allow"
+        assert "Glob" not in hook.CONTENT_SEARCH
+
+    def test_naming_the_file_by_argument_still_wins(self, tmp_path,
+                                                    monkeypatch):
+        """A Grep pointed straight at a credential was already caught by the
+        argument check, and must not be made cheaper by the new path."""
+        root = self._repo(tmp_path, {"credentials.json": "token\n"})
+        monkeypatch.setattr(hook, "_settings", lambda: ("ask", None))
+        monkeypatch.setattr(hook, "TIMEOUT", 0.3)
+        decision, _ = hook.decide(
+            "Grep", {"pattern": "token", "path": f"{root}/credentials.json"})
+        assert decision != "allow"
+
+    def test_the_pre_search_is_bounded(self):
+        """It runs inside a hook that blocks the tool, so an enormous tree
+        must end in a decision rather than in waiting."""
+        src = (ROOT / "daemon" / "permission_hook.py").read_text()
+        body = src[src.index("def _searchable("):]
+        body = body[:body.index("\ndef ")]
+        assert "timeout=" in body
+        assert "SEARCH_FILE_CAP" in body

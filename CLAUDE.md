@@ -97,7 +97,7 @@ reloads a model on every poll. Miss the third and the fix waits for something
 unrelated to be touched, which is how "switching engines and back" became
 folklore for "make it notice".
 
-## Four ways this fails open, and the rules that close them
+## Five ways this fails open, and the rules that close them
 
 Each of these was a real path from "somebody said something near the
 microphone" to "something ran". They are listed because every one of them is
@@ -124,6 +124,20 @@ could write it unasked could promote itself to "trusted". And inside a real
 project, anything that *makes something else run* still asks:
 `.claude/settings.json`, `.mcp.json`, `.envrc`, `.git/hooks/*`, a `.joblib`.
 `NEVER_SILENT` is that list.
+
+**A tool is judged by what it returns, not by what it was handed.**
+`_paths_in` reads a tool's *arguments*, which describes a read exactly -- the
+argument is the file -- and describes a search not at all: `Grep`'s arguments
+are a pattern and a directory while its output is whatever lies beneath one.
+So reading `credentials.json` asked and grepping the folder it sits in did
+not, for the same bytes. Found by a marketplace reviewer against cba1abf,
+after the adversarial review and 569 tests had both missed it. `CONTENT_SEARCH`
+is the list of tools that hand back file contents they were never asked for by
+name, and for those the check runs over what `rg --files` says the search
+would actually read -- which applies .gitignore, so an ignored `.env` that
+could never appear in results does not produce a prompt about nothing. Glob is
+deliberately not on that list: it returns paths, and that a file exists is a
+smaller thing than what is in it.
 
 **A transcript and a model reply are untrusted input to the UI.** Any `Text`
 showing one needs `textFormat: Text.PlainText`: `AutoText` renders anything

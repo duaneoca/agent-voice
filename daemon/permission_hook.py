@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -210,6 +211,63 @@ def _is_secret(path: str) -> bool:
     return p.name.startswith(".env")
 
 
+#: Tools that return the *contents* of files they were never asked for by
+#: name. Glob is deliberately absent: it returns paths, and that
+#: `credentials.json` exists is a far smaller thing than what is inside it.
+CONTENT_SEARCH = {"Grep"}
+
+#: Caps on the pre-search. A repository with a million files must not hold
+#: the hook open, and a search that cannot be enumerated inside them is
+#: answered by asking rather than by assuming it is clean.
+SEARCH_FILE_CAP = 20_000
+SEARCH_TIMEOUT_S = 5.0
+
+
+def _searchable(root: str) -> list[str] | None:
+    """Every file a content search under `root` would actually read.
+
+    `rg --files` rather than a walk, because it applies the same ignore
+    rules the search itself will: a `.env` listed in .gitignore cannot come
+    back in results, so asking about it would be a prompt about nothing --
+    and a guard that fires when it need not is how people learn to click
+    through guards that matter.
+
+    None when the question cannot be answered inside the caps. The caller
+    asks in that case; "could not tell" is not "nothing there".
+    """
+    try:
+        proc = subprocess.run(
+            ["rg", "--files", "--no-messages", root],
+            capture_output=True, text=True, timeout=SEARCH_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # rg exits 1 for "no files", which is a real answer, and 2 for trouble.
+    if proc.returncode not in (0, 1):
+        return None
+    files = proc.stdout.splitlines()
+    if len(files) > SEARCH_FILE_CAP:
+        return None
+    return files
+
+
+def _search_would_read(tool_input: dict) -> list[str] | None:
+    """Protected files a content search would return the contents of.
+
+    The hole this closes: `_paths_in` judges a tool by its *arguments*, which
+    works for a read -- the argument is the file -- and not at all for a
+    search, whose arguments are a pattern and a directory while its output is
+    whatever lies beneath. So reading credentials.json asked, and grepping
+    the folder it sits in did not, for the same bytes. Reported against
+    cba1abf by a marketplace reviewer.
+    """
+    root = tool_input.get("path")
+    root = str(root) if isinstance(root, str) and root else os.getcwd()
+    files = _searchable(root)
+    if files is None:
+        return None
+    return [f for f in files if _is_secret(f)]
+
+
 def decide(tool_name: str, tool_input: dict) -> tuple[str, str]:
     """Return (decision, reason). decision is 'allow' or 'deny'."""
     if tool_name in NO_EFFECT:
@@ -220,13 +278,29 @@ def decide(tool_name: str, tool_input: dict) -> tuple[str, str]:
     # "trusted" below skips it, which is what "trusted" means.
     if tool_name in READ_ONLY:
         secrets = [p for p in _paths_in(tool_input) if _is_secret(p)]
+        note = f"this reads {secrets[0]}" if secrets else ""
+
+        # A search is judged by what it would return, not by what it was
+        # handed. Only asked once the arguments themselves have come back
+        # clean, so the common case costs nothing extra.
+        if not secrets and tool_name in CONTENT_SEARCH:
+            found = _search_would_read(tool_input)
+            if found is None:
+                secrets = ["?"]
+                note = ("this searches a tree too large to check for "
+                        "credentials")
+            elif found:
+                secrets = found
+                note = (f"this search would read {found[0]}"
+                        + (f" and {len(found) - 1} more"
+                           if len(found) > 1 else ""))
+
         if not secrets:
             return "allow", ""
         level, _ = _settings()
         if level == "trusted":
             return "allow", ""
-        return _ask(tool_name, tool_input,
-                    note=f"this reads {secrets[0]}")
+        return _ask(tool_name, tool_input, note=note)
 
     level, root = _settings()
     if level == "trusted":
