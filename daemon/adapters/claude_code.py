@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Iterator
 
 from .base import (
-    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, feed, installed,
+    stop_tree,
 )
 
 #: Every tool. The hook's `matcher` is also the limit of what the permission
@@ -92,8 +93,11 @@ class ClaudeCode(Adapter):
         return installed("claude")
 
     def _argv(self, text: str, session_id: str | None) -> list[str]:
+        # `-p` with no value: the prompt arrives on stdin instead, because
+        # argv is world readable through /proc. Verified against the real CLI
+        # rather than read off --help.
         argv = [
-            "claude", "-p", text,
+            "claude", "-p",
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose",                      # stream-json requires it
@@ -119,12 +123,14 @@ class ClaudeCode(Adapter):
         # that matters is not in the environment on this machine anyway --
         # endpoint_key() prefers the login keyring.
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdout=subprocess.PIPE,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, bufsize=1,
                                     start_new_session=True)
         except OSError as e:
             yield Chunk(error=f"could not start claude: {e}")
             return
+        feed(proc, text)
 
         # Drained in the background from here on: stderr is a 64KB pipe
         # and it is not read until stdout ends, so a chatty CLI fills it,

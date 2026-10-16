@@ -97,7 +97,7 @@ reloads a model on every poll. Miss the third and the fix waits for something
 unrelated to be touched, which is how "switching engines and back" became
 folklore for "make it notice".
 
-## Five ways this fails open, and the rules that close them
+## Six ways this fails open, and the rules that close them
 
 Each of these was a real path from "somebody said something near the
 microphone" to "something ran". They are listed because every one of them is
@@ -138,6 +138,20 @@ would actually read -- which applies .gitignore, so an ignored `.env` that
 could never appear in results does not produce a prompt about nothing. Glob is
 deliberately not on that list: it returns paths, and that a file exists is a
 smaller thing than what is in it.
+
+**Spoken text must not travel in argv.** `/proc/<pid>/cmdline` is mode 0444
+with no hidepid on an ordinary Linux box, so anything passed as a command-line
+argument is readable by every local account for as long as the process lives.
+For a daemon whose input is whatever somebody said out loud, that is their
+speech. Four adapters did it; `base.feed()` now hands the prompt over on stdin
+and closes it, which is also what tells a CLI the prompt has ended. Per CLI
+rather than in general, because a prompt written to a channel a CLI does not
+read is a turn that hangs until the watchdog kills it: `claude -p` and `codex
+exec` take it bare, `gemini` needs an empty `-p ""`, `agy` needs the
+stream-json protocol because its `-p` eats the following flag, and of the ten
+on the shared adapter only `copilot` has been shown to accept it. The others
+still expose the prompt, which is written down rather than decided. The
+endpoint adapter never had this: an HTTPS body is not argv.
 
 **A transcript and a model reply are untrusted input to the UI.** Any `Text`
 showing one needs `textFormat: Text.PlainText`: `AutoText` renders anything

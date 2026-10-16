@@ -97,6 +97,29 @@ class Drain:
         return "".join(self._parts).strip()
 
 
+def feed(proc, prompt: str) -> None:
+    """Hand `prompt` to a child on stdin, then close it.
+
+    Spoken text used to go in argv, where /proc/<pid>/cmdline is world
+    readable on an ordinary Linux box -- no hidepid, mode 0444 -- so anyone
+    with a local account could read what was said aloud for as long as the
+    turn ran. Reported against aaf7adf by a marketplace reviewer.
+
+    A single write is safe without a thread: a spoken turn is a sentence or
+    two, far inside the 64KB a pipe buffers, so this cannot block waiting for
+    a child that is not reading yet. Closing is what tells the CLI the prompt
+    has ended; without it they wait for EOF forever.
+    """
+    try:
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+    except (OSError, ValueError, AttributeError):
+        # The child died between spawn and write. The caller is already
+        # reading its output and will report the exit; raising a second
+        # error here would describe the symptom rather than the cause.
+        pass
+
+
 class Watchdog:
     """Kills a subprocess that has gone quiet for too long.
 

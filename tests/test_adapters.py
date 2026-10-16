@@ -117,8 +117,27 @@ class TestPermissionPosture:
         assert all(f in a.BYPASS_FLAGS for f in remaining)
 
     @pytest.mark.parametrize("agent", sorted(CLI_TEMPLATES))
-    def test_every_template_carries_the_prompt(self, agent):
-        assert "{prompt}" in CLI_TEMPLATES[agent][0]
+    def test_every_template_delivers_the_prompt_one_way_or_the_other(self, agent):
+        """Either the template substitutes it into argv, or the CLI reads it
+        from stdin and the adapter feeds it there. A template with neither is
+        a turn with no question in it."""
+        template = CLI_TEMPLATES[agent][0]
+        source = (Path(__file__).resolve().parent.parent / "daemon"
+                  / "adapters" / "cli_agent.py").read_text()
+        if "{prompt}" in template:
+            return
+        # No {prompt}: the adapter must be the thing that supplies it, and it
+        # decides that from this exact test.
+        assert 'on_stdin = "{prompt}" not in self.template' in source
+        assert "feed(proc, prompt)" in source
+
+    def test_a_stdin_template_is_marked_verified(self):
+        """Sending a prompt down a channel a CLI does not read is a turn that
+        hangs until the watchdog kills it, so stdin is never a guess: every
+        template without {prompt} has had a real turn run against it."""
+        for agent, (template, verified) in CLI_TEMPLATES.items():
+            if "{prompt}" not in template:
+                assert verified, f"{agent} uses stdin but is not marked verified"
 
 
 class TestRegistry:
@@ -632,3 +651,74 @@ class TestRemembers:
             assert yields_id == remembers, (
                 f"{module} says remembers={remembers} but "
                 f"{'does not yield' if remembers else 'yields'} a session id")
+
+
+class TestThePromptStaysOutOfArgv:
+    """`/proc/<pid>/cmdline` is world readable on an ordinary Linux box --
+    mode 0444, no hidepid -- so a prompt passed as a command-line argument can
+    be read by any local account for as long as the turn runs. For a daemon
+    whose input is whatever somebody says out loud, that is their speech.
+
+    Reported against aaf7adf by a marketplace reviewer, who named Claude Code;
+    four adapters had it. Each fix was confirmed by a live turn with a random
+    token in the prompt and a thread scanning every /proc/*/cmdline for it --
+    and the first run of that test found the token in the *test harness's* own
+    bash command line, which is why the token is now generated inside the
+    process rather than written into a script by a heredoc.
+    """
+
+    ADAPTERS = ("claude_code", "codex", "gemini", "antigravity")
+
+    @pytest.mark.parametrize("name", ADAPTERS)
+    def test_the_adapter_hands_the_prompt_over_on_stdin(self, name):
+        src = (Path(__file__).resolve().parent.parent / "daemon" / "adapters"
+               / f"{name}.py").read_text()
+        assert "feed(proc" in src, f"{name} does not write the prompt to stdin"
+        assert "stdin=subprocess.PIPE" in src, \
+            f"{name} spawns without a stdin pipe to write to"
+        assert "stdin=subprocess.DEVNULL" not in src, \
+            f"{name} still closes stdin, so a fed prompt goes nowhere"
+
+    @pytest.mark.parametrize("name", ADAPTERS)
+    def test_the_prompt_is_not_also_an_argument(self, name):
+        """The whole point. A prompt on stdin AND in argv fixes nothing."""
+        src = (Path(__file__).resolve().parent.parent / "daemon" / "adapters"
+               / f"{name}.py").read_text()
+        for leak in ('"-p", text', '"-p", prompt', "argv.append(prompt)"):
+            assert leak not in src, f"{name} still puts the prompt in argv: {leak}"
+
+    def test_feed_closes_stdin(self):
+        """Closing is what tells a CLI the prompt has ended; without it they
+        wait for EOF forever, which the watchdog then reports as a hang."""
+        from adapters.base import feed
+
+        class FakeStdin:
+            def __init__(self): self.written, self.closed = "", False
+            def write(self, s): self.written += s
+            def close(self): self.closed = True
+
+        class FakeProc:
+            def __init__(self): self.stdin = FakeStdin()
+
+        proc = FakeProc()
+        feed(proc, "say this")
+        assert proc.stdin.written == "say this"
+        assert proc.stdin.closed
+
+    def test_feed_survives_a_child_that_died_before_the_write(self):
+        """Raising here would describe the symptom rather than the cause --
+        the caller is already reading the child's output and will report the
+        real exit."""
+        from adapters.base import feed
+
+        class Dead:
+            stdin = None
+
+        feed(Dead(), "anything")        # must not raise
+
+    def test_the_endpoint_adapter_was_never_affected(self):
+        """Worth pinning, because it is the reason this finding did not touch
+        Groq, OpenAI, Grok, Ollama or the rest: an HTTPS body is not argv."""
+        src = (Path(__file__).resolve().parent.parent / "daemon" / "adapters"
+               / "openai_compat.py").read_text()
+        assert "subprocess" not in src

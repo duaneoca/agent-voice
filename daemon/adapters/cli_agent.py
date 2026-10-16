@@ -27,17 +27,33 @@ import threading
 from typing import Iterator
 
 from .base import (
-    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, feed, installed,
+    stop_tree,
 )
 
 #: agent id -> (argv template, verified?). "{prompt}" is substituted.
 #: Confirmed non-interactive by omarchy-agent's own table:
 #:   crush -- `crush run "<prompt>"` never prompts.
 #: Everything else is the CLI's documented headless form, untested here.
+#:
+#: A template with no "{prompt}" is one whose CLI takes the prompt on stdin,
+#: which keeps spoken text out of argv -- /proc/<pid>/cmdline is world
+#: readable on an ordinary Linux box, so anything passed as an argument can
+#: be read by any local account while the turn runs. Opt-in per CLI and not
+#: assumed: a prompt written to a channel the CLI is not reading is a turn
+#: that hangs until the watchdog kills it. Of these ten, only copilot
+#: documents piped stdin and only copilot has been shown to accept it, so the
+#: other nine still expose the prompt in argv. That is a known limitation
+#: rather than a decision, and each one closes as somebody runs a real turn
+#: against it.
 TEMPLATES: dict[str, tuple[str, bool]] = {
     "crush":        ("crush run {prompt}", True),
     "opencode":     ("opencode run --auto {prompt}", False),
-    "copilot":      ("copilot --allow-all -p {prompt}", False),
+    # No {prompt}: copilot reads it from piped stdin, which its --help
+    # documents ("combine with -i, -p, or piped stdin") and a real turn
+    # confirms -- it is the only one of these ten that does. The rest still
+    # pass the prompt in argv; see the note above TEMPLATES.
+    "copilot":      ("copilot --allow-all", True),
     "grok":         ("grok --permission-mode bypassPermissions -p {prompt}", False),
     "cursor-agent": ("cursor-agent --yolo --trust -p {prompt}", False),
     "muse":         ("muse --approval-mode never -p {prompt}", False),
@@ -91,13 +107,24 @@ class CliAgent(Adapter):
             parts = [p for p in parts if p not in self.BYPASS_FLAGS]
         argv = [prompt if part == "{prompt}" else part.replace("{prompt}", prompt)
                 for part in parts]
+        # A template with no {prompt} means "this CLI reads it on stdin",
+        # which keeps spoken text out of argv -- world readable through
+        # /proc/<pid>/cmdline on an ordinary Linux box. Opt-in per CLI rather
+        # than assumed for all ten: a prompt sent down a channel a CLI is not
+        # reading is a turn that hangs until the watchdog kills it, and most
+        # of these have never answered a turn here to prove either way.
+        on_stdin = "{prompt}" not in self.template
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
+            proc = subprocess.Popen(argv, cwd=self.cwd, start_new_session=True,
+                                    stdin=(subprocess.PIPE if on_stdin
+                                           else subprocess.DEVNULL),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
             yield Chunk(error=f"could not start {self.binary}: {e}")
             return
+        if on_stdin:
+            feed(proc, prompt)
 
         # Drained in the background from here on: stderr is a 64KB pipe
         # and it is not read until stdout ends, so a chatty CLI fills it,

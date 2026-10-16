@@ -57,7 +57,8 @@ from pathlib import Path
 from typing import Iterator
 
 from .base import (
-    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, feed, installed,
+    stop_tree,
 )
 
 
@@ -250,7 +251,11 @@ class Gemini(Adapter):
 
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
-        argv = ["gemini", "-p", prompt, "--approval-mode", self.approval_mode]
+        # An empty `-p` forces headless mode and the prompt arrives on stdin,
+        # which --help describes as "appended to input on stdin (if any)" and
+        # a real turn confirms. Out of argv, where /proc exposes it to any
+        # local account.
+        argv = ["gemini", "-p", "", "--approval-mode", self.approval_mode]
         if self.model:
             argv += ["-m", self.model]
 
@@ -264,12 +269,14 @@ class Gemini(Adapter):
         # untrusted folder is reported by why_unavailable() before a turn
         # starts, and by the exit-55 branch below if one starts anyway.
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.PIPE,
+                                    start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
             yield Chunk(error=f"could not start gemini: {e}")
             return
+        feed(proc, prompt)
 
         # Drained in the background from here on: stderr is a 64KB pipe
         # and it is not read until stdout ends, so a chatty CLI fills it,

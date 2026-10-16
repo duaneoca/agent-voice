@@ -42,7 +42,8 @@ import threading
 from typing import Iterator
 
 from .base import (
-    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, feed, installed,
+    stop_tree,
 )
 
 
@@ -90,9 +91,29 @@ class Antigravity(Adapter):
             return "trusted — never asks, not confined to the project"
         return "read-only — agy plans but does not act"
 
-    def _argv(self, text: str, session_id: str | None) -> list[str]:
+    def prompt_line(self, text: str) -> str:
+        """The turn, as one NDJSON message for `--input-format stream-json`.
+
+        agy is the one CLI here whose `-p` will not read a prompt from stdin:
+        with no value it prints help, and it swallows the next flag as its
+        prompt if given one. Its only path that keeps spoken text out of argv
+        -- where /proc makes it world readable -- is the stream protocol, so
+        that is what this uses. The schema was found by asking: `{"event":
+        "user"}` answers "missing the message field", and the message is
+        Claude-shaped.
+        """
         prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
-        argv = ["agy", "-p", prompt, "--output-format", "json",
+        return json.dumps({"event": "user",
+                           "message": {"role": "user",
+                                       "content": [{"type": "text",
+                                                    "text": prompt}]}}) + "\n"
+
+    def _argv(self, text: str, session_id: str | None) -> list[str]:
+        # `-p=` with an empty attached value, because `-p` followed by a flag
+        # takes that flag as the prompt and says so.
+        argv = ["agy", "-p=",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
                 # The workspace is the project the user chose; without this the
                 # agent's idea of "here" is wherever the daemon happens to be.
                 "--add-dir", self.cwd,
@@ -125,12 +146,14 @@ class Antigravity(Adapter):
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         argv = self._argv(text, session_id)
         try:
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.PIPE,
+                                    start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
             yield Chunk(error=f"could not start agy: {e}")
             return
+        feed(proc, self.prompt_line(text))
 
         # Drained in the background from here on: stderr is a 64KB pipe
         # and it is not read until stdout ends, so a chatty CLI fills it,
@@ -156,7 +179,17 @@ class Antigravity(Adapter):
                     candidate = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(candidate, dict) and "status" in candidate:
+                if not isinstance(candidate, dict):
+                    continue
+                # stream-json wraps the envelope: {"event":"result","result":
+                # {...}}. The inner object carries the same status, response
+                # and conversation_id the flat `json` output did, so
+                # unwrapping is the whole change the protocol switch needed.
+                if candidate.get("event") == "result":
+                    inner = candidate.get("result")
+                    if isinstance(inner, dict):
+                        payload = inner
+                elif "status" in candidate:
                     payload = candidate
             proc.wait()
             if dog.fired:

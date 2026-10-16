@@ -35,7 +35,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .base import (
-    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, installed, stop_tree,
+    Adapter, Chunk, Drain, SPOKEN_STYLE, Watchdog, feed, installed,
+    stop_tree,
 )
 
 # Keys that have carried assistant text in this family of protocols. Checked
@@ -112,8 +113,9 @@ class Codex(Adapter):
             argv += ["-m", self.model]
         if self.full_auto:
             argv.append("--approve-for-me")
-        prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
-        argv.append(prompt)
+        # The prompt is NOT appended: it goes to stdin, because argv is world
+        # readable through /proc/<pid>/cmdline. `codex exec` with no trailing
+        # prompt reads one from stdin -- verified against the real CLI.
         return argv
 
     def why_unavailable(self) -> str:
@@ -123,15 +125,21 @@ class Codex(Adapter):
 
     def send(self, text: str, session_id: str | None = None) -> Iterator[Chunk]:
         argv = self._argv(text, session_id)
+        prompt = f"{SPOKEN_STYLE}\n\n{text}" if self.spoken else text
         try:
-            # stdin must be closed: `codex exec` otherwise waits on it
-            # ("Reading additional input from stdin...") and never returns.
-            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.DEVNULL, start_new_session=True,
+            # stdin carries the prompt and is then closed. Closing was always
+            # required -- `codex exec` otherwise waits on it ("Reading
+            # additional input from stdin...") and never returns -- and the
+            # prompt now rides the same channel rather than argv, which any
+            # local account can read out of /proc.
+            proc = subprocess.Popen(argv, cwd=self.cwd, stdin=subprocess.PIPE,
+                                    start_new_session=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, bufsize=1)
         except OSError as e:
             yield Chunk(error=f"could not start codex: {e}")
             return
+        feed(proc, prompt)
 
         # Drained in the background from here on: stderr is a 64KB pipe
         # and it is not read until stdout ends, so a chatty CLI fills it,
