@@ -348,3 +348,62 @@ def test_muting_is_reachable_from_the_panel_and_guarded_once():
         "the bar icon and the panel icon should share the one path"
     assert "micToggle.running = true" not in panel[panel.index("onPressed:"):], \
         "the bar's right click must not reach the Process directly any more"
+
+
+# --- what reaches the journal ----------------------------------------------
+
+def test_a_terminal_always_shows_the_words_and_the_journal_does_not():
+    """A terminal is ephemeral and somebody is looking at it -- that is the
+    interface. The journal keeps entries for weeks, so logging replies means
+    keeping a transcript of everything the agent read out until it rotates."""
+    import wake_listen
+    assert wake_listen.speech_is_logged(True) is True, "opt-in must win"
+
+    import io
+    import sys as _sys
+    real = _sys.stdout
+    try:
+        _sys.stdout = io.StringIO()          # not a tty
+        assert wake_listen.speech_is_logged(False) is False
+        assert wake_listen.speech_is_logged(True) is True
+    finally:
+        _sys.stdout = real
+
+
+def test_every_line_carrying_speech_is_gated():
+    """The reply sentences, the live partial, and the rejected wake -- which
+    quotes what was said. Missing one leaves the words in the journal while
+    the setting claims otherwise."""
+    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
+    for marker in ('{CYA}{safe_for_terminal(sentence)}',
+                   '{safe_for_terminal(partial)[:100]}',
+                   '(rejected \\"{safe_for_terminal(text)}\\"'):
+        at = daemon.index(marker)
+        before = daemon[max(0, at - 320):at]
+        assert "speech_is_logged" in before, \
+            f"this line is not gated: {marker}"
+
+
+def test_the_structural_lines_are_never_gated():
+    """Timings, wake events, tool markers, lock transitions. Nearly every bug
+    in this project was found from those rather than from the words, so the
+    setting must not reach them."""
+    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
+    for line in ('first token', 'microphone closed',
+                 "mic {'engaged' if self.enabled else 'released'}",
+                 'whisper {size} ready'):
+        at = daemon.index(line)
+        before = daemon[max(0, at - 240):at]
+        assert "speech_is_logged" not in before, \
+            f"a diagnostic line got caught by the speech gate: {line}"
+
+
+def test_the_setting_exists_in_all_three_places():
+    import json as _json
+    manifest = _json.loads((ROOT / "manifest.json").read_text())
+    assert "logSpeech" in {k["key"] for k in manifest["barWidget"]["schema"]}
+    assert manifest["barWidget"]["defaults"]["logSpeech"] is False, \
+        "it has to be off by default or it is not a privacy setting"
+    import runtime
+    assert runtime.DEFAULTS["logSpeech"] is False
+    assert '"logSpeech"' in (ROOT / "Settings.qml").read_text()

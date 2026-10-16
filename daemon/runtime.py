@@ -54,6 +54,7 @@ DEFAULTS = {
     "endpointIsAgent": False,
     "conversationMode": True,
     "yieldToRecorders": True,
+    "logSpeech": False,
     "followUpMs": 7000,
     "voice": "lessac-medium",
 }
@@ -92,6 +93,7 @@ TOML_ALIASES = {
     "endpointIsAgent": ("agent", "endpoint_is_agent"),
     "conversationMode": ("wake", "conversation_mode"),
     "yieldToRecorders": ("wake", "yield_to_recorders"),
+    "logSpeech": ("ui", "log_speech"),
     "followUpMs": ("timing", "follow_up_ms"),
 }
 

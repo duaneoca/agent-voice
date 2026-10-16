@@ -143,6 +143,7 @@ Item {
 
   readonly property bool conversation: setting("conversationMode", true)
   readonly property bool yieldToRecorders: setting("yieldToRecorders", true)
+  readonly property bool logSpeech: setting("logSpeech", false)
   // Published by the daemon, because what a level means depends on what the
   // running agent can honour and only the daemon knows that.
   property string vAgent: ""
@@ -726,6 +727,23 @@ Item {
                 onClicked: root.persist("yieldToRecorders",
                                         root.yieldToRecorders ? "false" : "true",
                                         true)
+              }
+
+              Toggle {
+                width: parent.width
+                label: "Write what is said to the system log"
+                description: "Off by default. The journal keeps entries for " +
+                             "weeks, so logging replies leaves a transcript " +
+                             "of everything the agent read out -- file " +
+                             "contents, key names -- sitting there until it " +
+                             "rotates. Timings, wake events and errors are " +
+                             "always logged; this is only the words. Turn it " +
+                             "on to diagnose something."
+                checked: root.logSpeech
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.persist("logSpeech",
+                                        root.logSpeech ? "false" : "true", true)
               }
 
               // Left on rather than switched off for a backend that forgets:

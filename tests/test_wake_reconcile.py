@@ -51,9 +51,20 @@ def _pipeline_with(monkeypatch, threshold_pct: int):
     }
 
     class Cfg(dict):
-        def get_str(self, k): return str(self[k])
-        def get_int(self, k): return int(self[k])
-        def get_bool(self, k): return bool(self[k])
+        """Falls back to the real defaults for anything not named above.
+
+        It used to raise KeyError, so adding any setting that Pipeline.apply
+        reads broke six unrelated tests -- which says nothing about the
+        setting and wastes the run.
+        """
+
+        def _v(self, k):
+            from runtime import DEFAULTS
+            return self[k] if k in self else DEFAULTS[k]
+
+        def get_str(self, k): return str(self._v(k))
+        def get_int(self, k): return int(self._v(k))
+        def get_bool(self, k): return bool(self._v(k))
 
     return pipe, Cfg(cfg)
 

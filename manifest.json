@@ -53,7 +53,8 @@
       "hud": true,
       "hudLingerMs": 2000,
       "useVerifier": true,
-      "yieldToRecorders": true
+      "yieldToRecorders": true,
+      "logSpeech": false
     },
     "schema": [
       {
@@ -225,6 +226,13 @@
         "label": "Step aside when another app records",
         "defaultValue": true,
         "description": "Stop listening while anything else is using the microphone -- a dictation tool, a call, a recorder -- and start again when it finishes. Without this, saying the wake phrase while dictating somewhere else makes the agent answer out loud into whatever you are dictating. Your own mute is untouched either way."
+      },
+      {
+        "key": "logSpeech",
+        "type": "bool",
+        "label": "Write what is said to the system log",
+        "defaultValue": false,
+        "description": "Off by default. The journal keeps entries for weeks, so logging replies means a transcript of what the agent told you -- file contents, key names, anything it read -- sits there until it rotates. Timings, wake events and errors are always logged; this is only the words. Turn it on when diagnosing something, and a terminal still shows them either way."
       },
       {
         "key": "followUpMs",

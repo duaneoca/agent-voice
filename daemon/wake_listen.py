@@ -258,6 +258,7 @@ class Pipeline:
             self._load_whisper(wanted)
 
         self._partials = cfg.get_str("livePartials")
+        self._log_speech = cfg.get_bool("logSpeech")
         self.conversation = cfg.get_bool("conversationMode")
         self.follow_up_ms = cfg.get_int("followUpMs")
         # 600ms of continuous speech-level audio before a partial may wake
@@ -470,8 +471,12 @@ class Pipeline:
             if self._loud_frames < self.min_loud_frames:
                 return False
         elif conf < self.wake_confidence:
-            print(f"  {DIM}(rejected \"{safe_for_terminal(text)}\" — confidence {conf:.2f}"
-                  f" < {self.wake_confidence:.2f}){OFF}")
+            if speech_is_logged(getattr(self, "_log_speech", False)):
+                print(f"  {DIM}(rejected \"{safe_for_terminal(text)}\" — confidence "
+                      f"{conf:.2f} < {self.wake_confidence:.2f}){OFF}")
+            else:
+                print(f"  {DIM}(rejected — confidence {conf:.2f} < "
+                      f"{self.wake_confidence:.2f}){OFF}")
             self._reset_wake()
             self._loud_frames = 0
             return False
@@ -590,6 +595,23 @@ def other_recorders(our_pid: int) -> list[str] | None:
         others.append(str(props.get("application.name")
                           or props.get("node.name") or "something"))
     return others
+
+
+def speech_is_logged(enabled: bool) -> bool:
+    """Whether the words themselves may be printed.
+
+    A terminal is ephemeral and somebody is looking at it, so a foreground
+    run always shows what it heard and what it answered -- that is the
+    interface. The journal is neither: it keeps entries for weeks, which
+    makes "log the replies" mean "keep a transcript of everything the agent
+    read out, including file contents and key names, until it rotates".
+
+    Off by default for that reason, and the structural lines -- wake events,
+    timings, tool markers, errors, lock transitions -- are never gated by
+    it. Nearly every bug in this project was found from those rather than
+    from the words.
+    """
+    return enabled or sys.stdout.isatty()
 
 
 def session_locked() -> bool | None:
@@ -1229,7 +1251,8 @@ class Daemon:
                 # what the agent had written by the time it was stopped.
                 if self._interrupt.is_set():
                     break
-                print(f"  {CYA}{safe_for_terminal(sentence)}{OFF}", flush=True)
+                if speech_is_logged(self.cfg.get_bool("logSpeech")):
+                    print(f"  {CYA}{safe_for_terminal(sentence)}{OFF}", flush=True)
                 reply_parts.append(sentence)
                 # Published per sentence rather than once at the end. The answer
                 # used to reach the state file only after the last word was
@@ -1426,8 +1449,9 @@ class Daemon:
                     last_voice = time.time()
                 if partial and partial != shown_partial:
                     shown_partial = partial
-                    print(f"\r  {DIM}{safe_for_terminal(partial)[:100]}{OFF}{' ' * 20}",
-                          end="", flush=True)
+                    if speech_is_logged(self.cfg.get_bool("logSpeech")):
+                        print(f"\r  {DIM}{safe_for_terminal(partial)[:100]}{OFF}"
+                              f"{' ' * 20}", end="", flush=True)
                     # Published, not merely printed. "Live transcript while
                     # you speak" costs 114MB and went to stdout alone, which
                     # under systemd means the journal -- so the one setting
