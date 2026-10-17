@@ -407,3 +407,27 @@ def test_the_setting_exists_in_all_three_places():
     import runtime
     assert runtime.DEFAULTS["logSpeech"] is False
     assert '"logSpeech"' in (ROOT / "Settings.qml").read_text()
+
+
+def test_a_whole_turn_runs_with_the_words_withheld(daemon, capsys, monkeypatch):
+    """The gate sits inside the reply loop, so getting it wrong does not log
+    less -- it raises mid-turn and the answer never arrives. Driven rather
+    than grepped for exactly that reason.
+    """
+    from adapters.base import Chunk
+
+    class Agent:
+        def send(self, text, session_id=None):
+            yield Chunk(text="Hello there. ")
+            yield Chunk(text="Second sentence here.")
+
+        def cancel(self):
+            pass
+
+    daemon.agent = Agent()
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    daemon.answer("say something", {"transcript": "say something"})
+
+    out = capsys.readouterr().out
+    assert "Hello there" not in out, "the reply reached a log that keeps it"
+    assert daemon.speaker.said, "the turn has to still happen, not just go quiet"
