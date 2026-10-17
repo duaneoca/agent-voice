@@ -256,3 +256,46 @@ def endpoint_key(host: str = "") -> str:
             line = line.split("=", 1)[1].strip()
         return line.strip("'\"")
     return ""
+
+
+def build_id(app: Path | None = None) -> str:
+    """Which build of the daemon this is, as one short line.
+
+    Nothing recorded this, and that cost a round of testing. A downgrade is
+    reachable: the panel's install offer runs `install.sh` out of the plugin
+    directory, which is a clone of the published repository, so clicking it
+    on a machine whose daemon was installed from a newer checkout silently
+    replaces the daemon with an older one. Four fixes went back that way --
+    including the speech gate, so `logSpeech` was being honoured by code that
+    did not have it, and the setting appeared broken while behaving exactly
+    as that older build was written to behave.
+
+    Diagnosing that meant diffing the installed files against every recent
+    commit. Printed in the banner from now on, so the journal says which
+    build produced the lines underneath it.
+
+    `install.sh` writes VERSION next to the daemon. A checkout has no such
+    file, so git is asked instead, and failing both this says so rather than
+    inventing a number -- an invented version is worse than none, because it
+    is the thing you would check first and believe.
+
+    `app` is a parameter so the three answers can be driven in a test rather
+    than reasoned about.
+    """
+    app = Path(__file__).resolve().parent.parent if app is None else app
+    stamp = app / "VERSION"
+    try:
+        line = stamp.read_text().strip().splitlines()[0].strip()
+        if line:
+            return line
+    except (OSError, IndexError):
+        pass
+    try:
+        out = subprocess.run(["git", "-C", str(app), "describe",
+                              "--always", "--dirty"],
+                             capture_output=True, text=True, timeout=3)
+        if out.returncode == 0 and out.stdout.strip():
+            return f"checkout {out.stdout.strip()}"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "unrecorded"

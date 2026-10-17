@@ -638,12 +638,40 @@ elif [[ $DEV == 1 ]]; then
   ln -s "$ROOT" "$APP"
   ok "Linked $APP -> $ROOT (development)"
 else
+  # What is being replaced, read before it is deleted. A downgrade is
+  # reachable and was silent: the panel's install offer runs install.sh out
+  # of the plugin directory, which is a clone of the published repository, so
+  # clicking it on a machine whose daemon came from a newer checkout puts the
+  # older daemon back. That happened during testing and cost a round of it --
+  # four fixes went backwards, including the speech gate, so `logSpeech` was
+  # being honoured by code that did not have it and the setting looked broken
+  # while behaving exactly as that older build was written to behave.
+  #
+  # Not refused, because installing over a newer build is legitimate: going
+  # back to the published version is how you undo a bad checkout. Reported
+  # instead, in both directions, so it cannot happen without being said.
+  PREV_BUILD="$(head -1 "$APP/VERSION" 2>/dev/null || true)"
   rm -rf "$APP"
   mkdir -p "$APP"
   cp -r "$ROOT/daemon" "$ROOT/bin" "$ROOT/desktop" "$APP/"
   cp "$ROOT/install.sh" "$ROOT/requirements.txt" \
      "$ROOT/requirements-openwakeword.txt" "$ROOT/models.lock" "$APP/"
+
+  # The stamp the daemon reads back for its banner, so the journal says which
+  # build wrote the lines underneath it.
+  NEW_BUILD="$(jq -r '.version // empty' "$ROOT/manifest.json" 2>/dev/null || true)"
+  NEW_BUILD="${NEW_BUILD:-unversioned}"
+  if GIT_DESC="$(git -C "$ROOT" describe --always --dirty 2>/dev/null)"; then
+    NEW_BUILD="$NEW_BUILD ($GIT_DESC)"
+  fi
+  printf '%s\n' "$NEW_BUILD" > "$APP/VERSION"
+
   ok "Installed the daemon into $APP"
+  if [[ -n $PREV_BUILD && $PREV_BUILD != "$NEW_BUILD" ]]; then
+    ok "Build $NEW_BUILD, replacing $PREV_BUILD"
+  else
+    ok "Build $NEW_BUILD"
+  fi
 fi
 
 # --- commands on PATH ------------------------------------------------------

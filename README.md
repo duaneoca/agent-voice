@@ -695,6 +695,20 @@ errors:
 journalctl --user -u agentvoice -f
 ```
 
+The first line of each start says which build wrote the rest:
+
+```
+knobs: shell.json[duaneoca.agentvoice] · build 0.2.0 (3f9a1c2)
+```
+
+Worth checking before anything else, because the daemon and the bar widget
+are installed separately and can therefore disagree. The widget arrives with
+`omarchy plugin add` and updates with `omarchy plugin update`; the daemon is
+whatever `install.sh` last copied, and the panel's install offer runs the one
+in the plugin directory. So installing from a checkout and then clicking that
+offer puts the published daemon back, and a line missing its `build` field is
+a daemon from before this was recorded.
+
 What it does **not** have is the words. `logSpeech` is off by default,
 because the journal keeps entries for weeks and a reply is whatever the agent
 read out. Three ways to turn it on when you need it:

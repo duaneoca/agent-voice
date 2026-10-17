@@ -49,7 +49,7 @@ from speech_text import (  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
 from paths import (  # noqa: E402
-    endpoint_key, project_dir, vocab_file, vosk_model,
+    build_id, endpoint_key, project_dir, vocab_file, vosk_model,
 )
 
 #: `blocksize` is in frames, not bytes: 3200 frames at 16kHz is 200ms, not
@@ -1693,7 +1693,7 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = Config()
-    print(f"  {DIM}knobs: {cfg.source}{OFF}")
+    print(f"  {DIM}knobs: {cfg.source} · build {build_id()}{OFF}")
     pipe = Pipeline(cfg, args.whisper)
 
     speaker = None
