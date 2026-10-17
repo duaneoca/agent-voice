@@ -55,6 +55,38 @@ A pass there means the pieces are on disk afterwards, not that the exit status
 was 0 -- an installer that returns 0 having done nothing is the same false green
 as a skipped suite.
 
+## Testing on a runner that has nothing installed
+
+```bash
+python3 -m venv /tmp/ci && /tmp/ci/bin/pip install -q -r requirements-dev.txt
+AGENTVOICE_STRICT=1 AGENTVOICE_PYTHON=/tmp/ci/bin/python ./bin/agentvoice-check
+```
+
+That is the `check` job: pytest and nothing else, because the daemon imports
+numpy, piper and onnxruntime lazily, inside the functions that use them, so
+the suite runs in seconds without a machine-learning wheel. The development
+machine has all of them, which makes it the wrong place to find out whether a
+new test can run anywhere else. Three red builds have come from this -- a
+test that skipped on every runner, a search that prompted because ripgrep was
+absent, and three driven tests that needed numpy for `frame_db`.
+
+The matching rule: **a test that cannot run on the bare runner must either
+not need the dependency, or be honest that it is skipping.** Which of the two
+depends on what the test is for. `importorskip` is right for the numeric
+code -- test_barge and the verifier negatives measure numpy's own output, and
+there is nothing to check without it. It was wrong for the frame loop, whose
+whole purpose is to execute the path a parser cannot see: skipping it on CI
+would have left the one check that cannot be fooled running only on a laptop.
+So the RMS is reproduced in the standard library there and asserted equal to
+`frame_db` wherever numpy exists, which the `full` job guarantees is
+somewhere.
+
+The second job, `full`, installs the real stack and sets
+`AGENTVOICE_NO_SKIPS=1`, because on a runner with everything available a skip
+is a test that was meant to run and did not. Both jobs have to pass, and they
+fail for opposite reasons: `check` fails if a test needs a wheel, `full` fails
+if a test ducks out.
+
 ## Settings are three things, not one
 
 A new setting is not done until all three exist, and the check script enforces

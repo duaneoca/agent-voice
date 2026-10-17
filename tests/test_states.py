@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 DAEMON = (ROOT / "daemon" / "wake_listen.py").read_text()
 PANEL = (ROOT / "Panel.qml").read_text()
@@ -505,6 +507,51 @@ def test_a_failing_agent_does_not_quote_the_prompt_into_the_log(
         "the failure itself must still be visible -- that is the diagnostic"
 
 
+def _rms_db(pcm: bytes) -> float:
+    """`wake_listen.frame_db`, in the standard library.
+
+    The frame loop measures every frame, and `frame_db` is numpy. CI installs
+    no heavy dependencies, so driving the loop meant either numpy on the
+    runner or this -- and the established answer here, `importorskip`, would
+    have skipped the one test that cannot be fooled on the one machine where
+    nobody is watching. A leak path that is only executable on a developer's
+    laptop is most of the way back to not being executable.
+
+    So the arithmetic is reproduced rather than mocked out, and
+    `test_the_stand_in_matches_the_real_measurement` asserts the two agree
+    wherever numpy is present. They differ by 6.5e-7 dB at worst, from
+    numpy accumulating in float32 and this in float64.
+    """
+    import array
+    import math
+
+    x = array.array("h")
+    x.frombytes(pcm)
+    if not len(x):
+        return -99.0
+    mean = sum(float(v) * v for v in x) / len(x)
+    return float(20.0 * math.log10(math.sqrt(mean) / 32768.0 + 1e-9))
+
+
+def test_the_stand_in_matches_the_real_measurement():
+    """Otherwise the loop is driven over a different measurement than it uses,
+    and the endpointing a test exercises is not the endpointing that ships."""
+    np = pytest.importorskip("numpy", reason="the runner carries pytest only")
+
+    import random
+
+    import wake_listen
+
+    random.seed(1)
+    cases = [b"\x00\x40" * 3200, b"\x00\x00" * 3200, b"",
+             bytes(random.randrange(256) for _ in range(6400)),
+             (1234).to_bytes(2, "little", signed=True) * 3200]
+    for pcm in cases:
+        assert abs(_rms_db(pcm) - wake_listen.frame_db(pcm)) < 1e-5, \
+            f"the stand-in has drifted from frame_db on {len(pcm)} bytes"
+    assert np is not None
+
+
 def _drive_one_turn(daemon, monkeypatch, said, *, logs=False):
     """Run the real frame loop over a scripted utterance.
 
@@ -524,6 +571,8 @@ def _drive_one_turn(daemon, monkeypatch, said, *, logs=False):
     import time as _time
 
     import pytest as _pytest
+
+    import wake_listen
 
     # 3200 int16 samples, which is what blocksize=CHUNK delivers: one 200ms
     # frame. 0x4000 is about -6 dBFS, comfortably over the gate; zeros land
@@ -622,6 +671,7 @@ def _drive_one_turn(daemon, monkeypatch, said, *, logs=False):
     daemon.speaker.name = "stub-voice"
     daemon.enabled, daemon.locked, daemon.yielded = True, False, False
     daemon.cfg._values["logSpeech"] = logs
+    monkeypatch.setattr(wake_listen, "frame_db", _rms_db)
     for name in ("refresh", "reconcile_lock", "reconcile_yield"):
         monkeypatch.setattr(daemon, name, lambda *a, **k: None)
     monkeypatch.setattr(daemon, "answer",
