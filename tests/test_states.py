@@ -674,6 +674,58 @@ def test_the_frame_loop_prints_the_words_when_asked_to(
     assert SAID in out, "turning it on did not turn it on"
 
 
+def test_nothing_in_the_journal_is_hidden_behind_a_carriage_return(
+        daemon, capsys, monkeypatch):
+    """Reported from a real turn: with `logSpeech` off, `3.2s audio, whisper
+    294ms` was rendered by journalctl as "[149B blob data]" and the timings
+    were gone -- so turning the privacy setting on hid the diagnostics. The
+    cause is that the erase sequence which redraws a live partial on a
+    terminal is, in a journal, just a prefix on the next line.
+
+    Both settings, because the withheld path is the one that broke: with the
+    transcript printed, the carriage return went onto that line instead and
+    the timings below it were fine, which is why one turn looked correct and
+    the other did not.
+    """
+    for logs in (False, True):
+        _drive_one_turn(daemon, monkeypatch, "how old am I", logs=logs)
+        streams = capsys.readouterr()
+        both = streams.out + streams.err
+        assert "\r" not in both, \
+            f"logSpeech={logs}: journalctl renders this record as blob data"
+        # And the line that was being swallowed is on its own, intact:
+        # a record starting with the audio length, not appended to anything.
+        plain = [re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+                 for line in both.splitlines()]
+        assert any(re.match(r"^\d+\.\ds audio, whisper 12ms$", line)
+                   for line in plain), \
+            f"logSpeech={logs}: the timings are not a record of their own: {plain}"
+
+
+def test_a_terminal_still_gets_its_redraw():
+    """The fix must not be "stop redrawing", or the live partial scrolls one
+    line per word instead of updating in place."""
+    import io
+    import sys as _sys
+
+    import wake_listen
+
+    real = _sys.stdout
+    try:
+        class Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        _sys.stdout = Tty()
+        assert wake_listen.cursor_home() == "\r"
+        assert wake_listen.cursor_home(120) == "\r" + " " * 120 + "\r"
+        _sys.stdout = io.StringIO()          # not a tty
+        assert wake_listen.cursor_home() == ""
+        assert wake_listen.cursor_home(120) == ""
+    finally:
+        _sys.stdout = real
+
+
 def test_the_words_still_reach_the_panel_with_logging_off(daemon, monkeypatch):
     """`logSpeech` is about the journal, not about the readout. The HUD has
     to draw what you said and what came back, so the words go to the state

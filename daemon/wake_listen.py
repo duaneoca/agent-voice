@@ -372,7 +372,7 @@ class Pipeline:
                                      compute_type="int8", cpu_threads=4)
         self._whisper_size = size
         n = len(self._vocab.split(",")) if self._vocab else 0
-        print(f"\r  {DIM}whisper {size} ready"
+        print(f"{cursor_home()}  {DIM}whisper {size} ready"
               f"{f', {n} vocab terms' if n else ''}{OFF}{' ' * 24}")
 
     def vosk_model_lazy(self):
@@ -595,6 +595,32 @@ def other_recorders(our_pid: int) -> list[str] | None:
         others.append(str(props.get("application.name")
                           or props.get("node.name") or "something"))
     return others
+
+
+def cursor_home(clear: int = 0) -> str:
+    """The in-place redraw sequence, on a terminal and nowhere else.
+
+    A live partial is drawn over itself as you speak, so the line that
+    replaces it returns the cursor and paints across whatever was longer.
+    None of that is true of a journal: systemd stores the carriage return
+    literally and journalctl renders the whole record as "[149B blob data]".
+
+    Which hid the exact lines that must never be hidden. Found from a real
+    turn: with `logSpeech` off the completed transcript is not printed, so
+    the lone carriage return that erased the partial merged into the next
+    line and took `3.2s audio, whisper 294ms` -- the timings -- into the
+    blob with it. Turning the privacy setting on made the diagnostics
+    disappear, and `(nothing heard)`, `(too short, discarded)` and
+    `whisper ready` were being swallowed the same way whatever it was set
+    to. The words are a setting; the structural lines are not, and being
+    unreadable in the default renderer is a way of being hidden.
+
+    `clear` is how wide a field to blank first, for a line that may be
+    shorter than what it replaces.
+    """
+    if not sys.stdout.isatty():
+        return ""
+    return f"\r{' ' * clear}\r" if clear else "\r"
 
 
 def speech_is_logged(enabled: bool) -> bool:
@@ -1489,7 +1515,8 @@ class Daemon:
                 if partial and partial != shown_partial:
                     shown_partial = partial
                     if speech_is_logged(self.cfg.get_bool("logSpeech")):
-                        print(f"\r  {DIM}{safe_for_terminal(partial)[:100]}{OFF}"
+                        print(f"{cursor_home()}  "
+                              f"{DIM}{safe_for_terminal(partial)[:100]}{OFF}"
                               f"{' ' * 20}", end="", flush=True)
                     # Published, not merely printed. "Live transcript while
                     # you speak" costs 114MB and went to stdout alone, which
@@ -1512,7 +1539,8 @@ class Daemon:
                     # Holding the key says "I am about to speak", so the
                     # lead-in timer does not run until it comes back up.
                     if ptt_done if ptt else elapsed_ms > active_lead_in:
-                        print(f"\r  {DIM}(nothing heard){OFF}{' ' * 40}")
+                        print(f"{cursor_home()}  {DIM}(nothing heard){OFF}"
+                              f"{' ' * 40}")
                         phase = "wake"
                         ptt = ptt_done = False
                         self._publish(**last)
@@ -1527,13 +1555,15 @@ class Daemon:
                         and elapsed_ms < self.pipe.max_utterance_ms:
                     continue
                 if elapsed_ms >= self.pipe.max_utterance_ms:
-                    print(f"\r  {YEL}(hit max_utterance_ms){OFF}{' ' * 30}")
+                    print(f"{cursor_home()}  {YEL}(hit max_utterance_ms){OFF}"
+                          f"{' ' * 30}")
                 ptt = ptt_done = False
 
                 audio_ms = len(buf) / 32.0
                 follow_up = False
                 if audio_ms < self.pipe.min_utterance_ms:
-                    print(f"\r  {DIM}(too short, discarded){OFF}{' ' * 40}")
+                    print(f"{cursor_home()}  {DIM}(too short, discarded){OFF}"
+                          f"{' ' * 40}")
                 else:
                     # Its own state. This phase and the agent's turn both
                     # published "thinking", and the panel labelled that
@@ -1551,10 +1581,14 @@ class Daemon:
                     # journal for leaked speech found none. Both the finding
                     # and the verification were wrong in the same direction.
                     if speech_is_logged(self.cfg.get_bool("logSpeech")):
-                        print(f"\r{' ' * 120}\r  "
+                        print(f"{cursor_home(120)}  "
                               f"{BLD}{safe_for_terminal(text) or '(nothing)'}{OFF}")
                     else:
-                        print(f"\r{' ' * 120}\r", end="")
+                        # Nothing at all in a journal. A lone carriage return
+                        # there is not an erase, it is a prefix on the next
+                        # line -- which is how the timings below ended up
+                        # inside "[149B blob data]".
+                        print(cursor_home(120), end="")
                     print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
                           f"whisper {ms:.0f}ms{OFF}")
                     last = {**_empty_turn(), "transcript": text,
@@ -1636,9 +1670,10 @@ def run_simulated(pipe: Pipeline, speaker: Speaker | None, wav: Path,
         if cap is not None and not cap.AcceptWaveform(pcm[off:off + step]):
             p = json.loads(cap.PartialResult()).get("partial", "")
             if p:
-                print(f"\r  {DIM}{p[:100]}{OFF}", end="", flush=True)
+                print(f"{cursor_home()}  {DIM}{p[:100]}{OFF}",
+                      end="", flush=True)
     text, ms = pipe.transcribe(pcm)
-    print(f"\r{' ' * 120}\r  {BLD}{safe_for_terminal(text)}{OFF}")
+    print(f"{cursor_home(120)}  {BLD}{safe_for_terminal(text)}{OFF}")
     print(f"  {DIM}whisper {ms:.0f}ms{OFF}")
     if text and daemon is not None:
         daemon.answer(text, {"transcript": text, "ms": round(ms), "audio_s": 0.0})
