@@ -691,6 +691,7 @@ class Daemon:
         #: the microphone back *on* for somebody who had deliberately muted it.
         self.yielded = False
         self._yielded_to = ""
+        self._last_session_poll = 0.0
         #: How long an explicitly announced lock outranks the poll, for the
         #: moment between the lock key being pressed and the compositor
         #: admitting to a lock.
@@ -853,6 +854,42 @@ class Daemon:
                   f"{OFF}", flush=True)
             self._yielded_to = ""
         self._publish()
+
+    def apply_lock_command(self, cmd: str | None) -> bool:
+        """Apply an explicit `agentvoice lock`/`unlock`. True if it was one."""
+        if cmd not in ("lock", "unlock"):
+            return False
+        self.locked = cmd == "lock"
+        if self.locked:
+            self._lock_hold_until = time.time() + LOCK_HOLD_S
+            self.silence()
+        else:
+            self._lock_hold_until = 0.0
+            self._interrupt.clear()
+        print(f"\n  {YEL if self.locked else CYA}screen "
+              f"{'locked' if self.locked else 'unlocked'} "
+              f"(told, not polled){OFF}", flush=True)
+        self._publish()
+        return True
+
+    def poll_session(self) -> None:
+        """Notice a lock from wherever the daemon happens to be.
+
+        The loop polled this at its top, which is the one place the daemon is
+        *not* when it matters: `answer()` blocks for the whole agent turn and
+        the whole of speech playback -- 22 to 45 seconds in this machine's
+        journal -- so locking the screen mid-reply left it reading a private
+        answer aloud to an empty room until the reply ended. Reported against
+        1d59790 by a marketplace reviewer.
+
+        Called from the loop and from inside the reply, rate limited so a
+        subprocess is not spawned per sentence.
+        """
+        if time.time() - self._last_session_poll < 1.0:
+            return
+        self._last_session_poll = time.time()
+        if not self.apply_lock_command(self.take_command()):
+            self.reconcile_lock()
 
     def reconcile_agent(self) -> None:
         """Rebuild the agent when the project or permission level changes.
@@ -1249,7 +1286,12 @@ class Daemon:
                 # Checked before the sentence is recorded, so the transcript
                 # in the panel is what was actually said out loud rather than
                 # what the agent had written by the time it was stopped.
-                if self._interrupt.is_set():
+                # Between sentences, because this is the only place the
+                # daemon looks while a reply is being read out. Without it a
+                # screen locked mid-answer kept hearing the rest of it.
+                self.poll_session()
+                if self._interrupt.is_set() or not self.listening:
+                    self.silence()
                     break
                 if speech_is_logged(self.cfg.get_bool("logSpeech")):
                     print(f"  {CYA}{safe_for_terminal(sentence)}{OFF}", flush=True)
@@ -1277,7 +1319,15 @@ class Daemon:
             # asked for silence.
             self.deafen(tail_ms)
         elif error:
-            print(f"  {YEL}agent error: {safe_for_terminal(error)}{OFF}")
+            # The fact of the error is always logged; its text is speech-
+            # adjacent, because a CLI that rejects a prompt often quotes it
+            # back. Found by the syntax-tree audit after I had decided by
+            # hand that this one was fine.
+            if speech_is_logged(self.cfg.get_bool("logSpeech")):
+                print(f"  {YEL}agent error: {safe_for_terminal(error)}{OFF}")
+            else:
+                print(f"  {YEL}agent error (text withheld — logSpeech is "
+                      f"off){OFF}")
             # Inside a try of its own: this is the apology for a turn that
             # already went wrong, and the speaker is one of the things that
             # can be wrong. A PortAudio failure here was caught above as an
@@ -1331,20 +1381,9 @@ class Daemon:
                 pcm = frames.get()
 
                 cmd = self.take_command()
-                if cmd in ("lock", "unlock"):
-                    # An explicit transition, for a compositor hook or a
-                    # keybind that would rather not wait for the poll.
-                    self.locked = cmd == "lock"
-                    if self.locked:
-                        self._lock_hold_until = time.time() + LOCK_HOLD_S
-                        self.silence()
-                    else:
-                        self._lock_hold_until = 0.0
-                        self._interrupt.clear()
-                    print(f"\n  {YEL if self.locked else CYA}screen "
-                          f"{'locked' if self.locked else 'unlocked'} "
-                          f"(told, not polled){OFF}", flush=True)
-                    self._publish()
+                # One implementation, shared with the reply loop, so a lock
+                # means the same thing wherever the daemon happens to be.
+                if self.apply_lock_command(cmd):
                     continue
                 if cmd == "talk" and self.listening:
                     phase, buf, cap = "capture", b"", self.pipe.new_capture()
@@ -1503,8 +1542,19 @@ class Daemon:
                     # people actually wait through.
                     self.state.publish("transcribing", **last)
                     text, ms = self.pipe.transcribe(buf)
-                    print(f"\r{' ' * 120}\r  "
-                          f"{BLD}{safe_for_terminal(text) or '(nothing)'}{OFF}")
+                    # Gated like every other line carrying speech. It was not,
+                    # and the audit that was supposed to find them all used a
+                    # grep that matched only the first physical line of a
+                    # wrapped print -- which here holds a carriage return and
+                    # 120 spaces, and nothing else. journalctl then rendered
+                    # the result as "[214B blob data]", so checking the
+                    # journal for leaked speech found none. Both the finding
+                    # and the verification were wrong in the same direction.
+                    if speech_is_logged(self.cfg.get_bool("logSpeech")):
+                        print(f"\r{' ' * 120}\r  "
+                              f"{BLD}{safe_for_terminal(text) or '(nothing)'}{OFF}")
+                    else:
+                        print(f"\r{' ' * 120}\r", end="")
                     print(f"  {DIM}{audio_ms / 1000:.1f}s audio, "
                           f"whisper {ms:.0f}ms{OFF}")
                     last = {**_empty_turn(), "transcript": text,

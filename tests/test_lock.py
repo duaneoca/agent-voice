@@ -305,3 +305,58 @@ class TestTheGateIsWhereItMatters:
             assert (proc.stdout.strip() == "yes") is expect_yes, proc.stdout
             assert (proc.returncode == 0) is expect_yes, \
                 f"{state!r} exited {proc.returncode}: the status is the answer"
+
+
+class TestALockReachesAReplyInProgress:
+    """The loop polled the lock at its top -- the one place the daemon is not
+    when it matters. `answer()` blocks for the whole agent turn and the whole
+    of speech playback, 22 to 45 seconds in this machine's journal, so locking
+    the screen mid-reply left it reading a private answer aloud to an empty
+    room until the reply ended. Reported against 1d59790 by a reviewer.
+    """
+
+    def test_the_reply_loop_polls_the_session(self):
+        src = (ROOT / "daemon" / "wake_listen.py").read_text()
+        body = src[src.index("    def answer("):]
+        body = body[:body.index("\n    def ")]
+        assert "self.poll_session()" in body, \
+            "a reply cannot notice a lock that only the main loop looks for"
+        loop = body[body.index("for sentence in sentences("):]
+        assert loop.index("self.poll_session()") < loop.index("self.speak("), \
+            "it has to look before it speaks the next sentence, not after"
+
+    def test_a_lock_stops_the_reply(self, daemon, monkeypatch):
+        """Driven: the speaker is told to stop and the remaining sentences are
+        never said."""
+        from adapters.base import Chunk
+
+        said = []
+
+        class Agent:
+            def send(self, text, session_id=None):
+                for n in range(6):
+                    yield Chunk(text=f"Sentence number {n}. ")
+
+            def cancel(self):
+                pass
+
+        def speak(sentence, tail_ms=0):
+            said.append(sentence)
+            if len(said) == 2:               # the screen locks mid-reply
+                daemon.locked = True
+
+        daemon.agent = Agent()
+        monkeypatch.setattr(daemon, "speak", speak)
+        monkeypatch.setattr(daemon, "poll_session", lambda: None)
+        daemon.answer("say six things", {"transcript": "say six things"})
+
+        assert len(said) == 2, f"it kept speaking after the lock: {said}"
+        assert daemon.speaker.cancelled, "silence() was never called"
+
+    def test_one_implementation_of_an_explicit_lock(self):
+        """The loop had its own copy. Two copies of "what a lock means" is how
+        they drift -- and the reply path needs the same one."""
+        src = (ROOT / "daemon" / "wake_listen.py").read_text()
+        assert src.count("_lock_hold_until = time.time() + LOCK_HOLD_S") == 1
+        assert "def apply_lock_command" in src
+        assert "if self.apply_lock_command(cmd):" in src

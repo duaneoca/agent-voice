@@ -370,18 +370,43 @@ def test_a_terminal_always_shows_the_words_and_the_journal_does_not():
         _sys.stdout = real
 
 
-def test_every_line_carrying_speech_is_gated():
-    """The reply sentences, the live partial, and the rejected wake -- which
-    quotes what was said. Missing one leaves the words in the journal while
-    the setting claims otherwise."""
-    daemon = (ROOT / "daemon" / "wake_listen.py").read_text()
-    for marker in ('{CYA}{safe_for_terminal(sentence)}',
-                   '{safe_for_terminal(partial)[:100]}',
-                   '(rejected \\"{safe_for_terminal(text)}\\"'):
-        at = daemon.index(marker)
-        before = daemon[max(0, at - 320):at]
-        assert "speech_is_logged" in before, \
-            f"this line is not gated: {marker}"
+def test_every_print_carrying_speech_is_gated():
+    """Parsed, not grepped, and that is the whole point.
+
+    The grep this replaces matched the first physical line of each `print(`
+    and looked for content on that same line. One of those prints wraps, and
+    its first line holds a carriage return and 120 spaces and nothing else --
+    so the completed transcript went to stdout unconditionally, the audit
+    reported it clean, and journalctl rendered the result as "[214B blob
+    data]" so looking in the journal for leaked speech found none either. A
+    marketplace reviewer found it by reading the file.
+
+    A syntax tree sees a call as one node however it is wrapped.
+    """
+    import ast
+
+    src = (ROOT / "daemon" / "wake_listen.py").read_text()
+    tree = ast.parse(src)
+    # run_simulated is a bench entry point whose whole job is to print a
+    # replayed turn to whoever ran it.
+    bench_from = src.count("\n", 0, src.index("def run_simulated")) + 1
+
+    offenders = []
+
+    def walk(node, parents):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "print" and node.lineno < bench_from):
+            seg = ast.get_source_segment(src, node) or ""
+            if "safe_for_terminal" in seg and not any(
+                    isinstance(p, ast.If) and "speech_is_logged" in ast.dump(p.test)
+                    for p in parents):
+                offenders.append((node.lineno, seg.split("\n")[0].strip()[:60]))
+        for child in ast.iter_child_nodes(node):
+            walk(child, [node] + parents)
+
+    walk(tree, [])
+    assert not offenders, \
+        "these prints put speech on stdout with no gate: " + repr(offenders)
 
 
 def test_the_structural_lines_are_never_gated():
