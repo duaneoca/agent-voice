@@ -382,6 +382,13 @@ def test_every_print_carrying_speech_is_gated():
     marketplace reviewer found it by reading the file.
 
     A syntax tree sees a call as one node however it is wrapped.
+
+    What counts as "carrying speech" is every identifier the call reads,
+    at any depth, rather than a substring of its source. The first version
+    of this test looked for `safe_for_terminal` in the text of the print,
+    which made it a check on one rule that only fired when a second rule
+    was already being kept: a print interpolating a raw transcript would
+    have satisfied the audit by being wrong in two ways instead of one.
     """
     import ast
 
@@ -391,16 +398,28 @@ def test_every_print_carrying_speech_is_gated():
     # replayed turn to whoever ran it.
     bench_from = src.count("\n", 0, src.index("def run_simulated")) + 1
 
+    # Names that hold something somebody said or something an agent replied.
+    # Deliberately not "line" or "msg": `say_once` prints diagnostics under
+    # those, and the structural lines must never be gated -- see the test
+    # below. A name outside this set is the way past this check, which is why
+    # the driven tests exist as well as this one.
+    SPEECH = {"text", "sentence", "partial", "transcript", "reply", "prompt",
+              "utterance", "error", "answer", "words", "safe_for_terminal"}
+
     offenders = []
 
     def walk(node, parents):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "print" and node.lineno < bench_from):
+            reads = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            reads |= {n.attr for n in ast.walk(node)
+                      if isinstance(n, ast.Attribute)}
             seg = ast.get_source_segment(src, node) or ""
-            if "safe_for_terminal" in seg and not any(
+            if reads & SPEECH and not any(
                     isinstance(p, ast.If) and "speech_is_logged" in ast.dump(p.test)
                     for p in parents):
-                offenders.append((node.lineno, seg.split("\n")[0].strip()[:60]))
+                offenders.append((node.lineno, sorted(reads & SPEECH),
+                                  seg.split("\n")[0].strip()[:60]))
         for child in ast.iter_child_nodes(node):
             walk(child, [node] + parents)
 
@@ -456,3 +475,55 @@ def test_a_whole_turn_runs_with_the_words_withheld(daemon, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "Hello there" not in out, "the reply reached a log that keeps it"
     assert daemon.speaker.said, "the turn has to still happen, not just go quiet"
+
+
+def test_a_failing_agent_does_not_quote_the_prompt_into_the_log(
+        daemon, capsys, monkeypatch):
+    """The error text is not ours. A CLI that rejects its input usually
+    quotes that input back -- "unrecognized arguments: how much did I spend
+    on" -- so the agent-error line carries speech as surely as the reply
+    does, and it was the fourth ungated print in this file. Found by the
+    widened audit above, after being read by hand and judged safe.
+    """
+    class Agent:
+        name = "stub"
+
+        def send(self, text, session_id=None):
+            raise RuntimeError(f"unrecognized arguments: {text}")
+
+        def cancel(self):
+            pass
+
+    daemon.agent = Agent()
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    daemon.answer("the thing I said out loud", {"transcript": "x"})
+
+    out = capsys.readouterr().out
+    assert "the thing I said out loud" not in out, \
+        "an agent error carried the prompt into the journal"
+    assert "agent error" in out, \
+        "the failure itself must still be visible -- that is the diagnostic"
+
+
+def test_the_words_still_reach_the_panel_with_logging_off(daemon, monkeypatch):
+    """`logSpeech` is about the journal, not about the readout. The HUD has
+    to draw what you said and what came back, so the words go to the state
+    file whatever the setting says -- 0600, in tmpfs, replaced by the next
+    publish. Asserted so that "stop logging speech" is never implemented by
+    starving the thing on screen.
+    """
+    from adapters.base import Chunk
+
+    class Agent:
+        def send(self, text, session_id=None):
+            yield Chunk(text="The answer is four. ")
+
+        def cancel(self):
+            pass
+
+    daemon.agent = Agent()
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+    daemon.answer("how many", {"transcript": "how many"})
+
+    assert "four" in str(daemon.state._last.get("reply", "")), \
+        "the panel lost the reply along with the log line"

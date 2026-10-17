@@ -37,6 +37,41 @@ def answer_after(delay: float, allow: bool, reason: str = ""):
     return t
 
 
+def test_the_question_on_disk_is_not_readable_by_anyone_else():
+    """The request holds the whole tool call -- for a write, the entire file
+    content -- and it sat at the umask default, protected only by the
+    directory. Two things are asserted because `mkdir(mode=...)` is ignored
+    when the directory already exists, so an older or looser one stayed
+    looser forever.
+    """
+    import stat as _stat
+
+    seen = {}
+    hook.PENDING.mkdir(parents=True, exist_ok=True)
+    hook.PENDING.chmod(0o777)
+
+    def answer():
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            for req in hook.PENDING.glob("*.request"):
+                seen["file"] = _stat.S_IMODE(req.stat().st_mode)
+                seen["dir"] = _stat.S_IMODE(hook.PENDING.stat().st_mode)
+                (hook.PENDING / f"{req.stem}.response").write_text(
+                    json.dumps({"allow": True}))
+                return
+            time.sleep(0.02)
+
+    t = threading.Thread(target=answer, daemon=True)
+    t.start()
+    hook._ask("Write", {"file_path": "/tmp/x", "content": "a secret"})
+    t.join(5)
+
+    assert seen.get("file") == 0o600, \
+        f"the tool call was readable by other local accounts: {seen}"
+    assert seen.get("dir") == 0o700, \
+        "a directory that already existed kept its looser mode"
+
+
 @pytest.fixture(autouse=True)
 def clean_pending():
     hook.PENDING.mkdir(parents=True, exist_ok=True)

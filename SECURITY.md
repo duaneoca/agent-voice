@@ -104,6 +104,17 @@ even if nothing malicious is ever hosted.
   logging off does not make a voice turn unrecorded; it stops *this* project
   adding a second copy to a log that keeps entries for weeks. The backend's
   retention is the backend's to configure.
+- **What you said and what came back are in a file while the readout is on
+  screen.** The panel cannot draw a transcript it was never given, so the
+  live partial, the final transcript and the first 400 characters of the
+  reply go to `$XDG_RUNTIME_DIR/agentvoice/state` whatever `logSpeech` says.
+  That file is mode 0600 inside a 0700 directory, it lives in tmpfs so it
+  never reaches a disk, each publish replaces the last one, and returning to
+  `listening` clears the text. `logSpeech` is a statement about the journal,
+  which keeps entries for weeks; it is not a claim that the words exist
+  nowhere. The same is true of the permission request the overlay reads: it
+  holds the entire tool call, which for a write is the whole file content,
+  and it is unlinked when the question is answered.
 - **The journal still carries the shape of every turn.** Timings, wake
   events, tool markers, lock transitions and errors are logged whatever
   `logSpeech` says, because nearly every bug here was found from those rather

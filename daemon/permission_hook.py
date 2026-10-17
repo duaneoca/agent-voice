@@ -389,6 +389,10 @@ def _ask(tool_name: str, tool_input: dict, note: str = "") -> tuple[str, str]:
     # response is the word "yes". Neither is anyone else's business, and a
     # response another local user could write would be a free allow.
     PENDING.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        PENDING.chmod(0o700)      # mkdir's mode is ignored if it exists
+    except OSError:
+        pass
     request_id = uuid.uuid4().hex[:12]
     request = PENDING / f"{request_id}.request"
     response = PENDING / f"{request_id}.response"
@@ -406,7 +410,13 @@ def _ask(tool_name: str, tool_input: dict, note: str = "") -> tuple[str, str]:
     shown, cut = summary[:400], max(0, len(summary) - 400)
     if cut:
         shown += f"… (+{cut} more characters, {summary.count(chr(10)) + 1} lines)"
-    request.write_text(json.dumps({
+    # Written to a temporary name and chmod'd before it is given the one the
+    # overlay watches, so it is never briefly readable under its real name --
+    # the same order the state file uses. `input` is the whole tool call, which
+    # for a write is the entire file content, so the directory mode is not the
+    # only thing standing in front of it.
+    staged = PENDING / f"{request_id}.staging"
+    staged.write_text(json.dumps({
         "id": request_id,
         "tool": tool_name,
         "summary": shown,
@@ -417,6 +427,8 @@ def _ask(tool_name: str, tool_input: dict, note: str = "") -> tuple[str, str]:
         "asked_at": time.time(),
         "timeout": TIMEOUT,
     }))
+    staged.chmod(0o600)
+    staged.replace(request)
 
     # Put it on screen. The overlay reads the request file itself, so the
     # payload only has to say which one. Failure here is not fatal: the
@@ -448,6 +460,9 @@ def _ask(tool_name: str, tool_input: dict, note: str = "") -> tuple[str, str]:
             time.sleep(0.1)
         return "deny", f"Nobody answered within {TIMEOUT:.0f} seconds."
     finally:
+        # staged is normally gone -- replace() consumed it -- but a chmod that
+        # raised would otherwise leave the whole tool call on disk unowned.
+        staged.unlink(missing_ok=True)
         request.unlink(missing_ok=True)
         response.unlink(missing_ok=True)
 
