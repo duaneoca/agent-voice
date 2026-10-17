@@ -269,6 +269,45 @@ nobody refreshes rots into a worse state than a range.
 the lock, how often, and what tells you it has gone stale -- and only then
 add the lock. A lockfile without that routine is a snapshot of one afternoon.
 
+## A check that reads the code is not a check that the code ran
+
+`logSpeech` is off by default, so the words somebody said are not written to
+the journal -- the journal keeps entries for weeks, and "log the replies"
+means keeping a transcript of everything the agent read out, including file
+contents and key names. The structural lines are never gated: timings, wake
+events, tool markers, lock transitions, errors. Nearly every bug here was
+found from those rather than from the words.
+
+The way that was *verified* is the part worth writing down, because it failed
+twice in the same direction. The audit grepped for `print(` and looked for
+content on that line; the completed-transcript print wraps, and its first
+physical line holds a carriage return and 120 spaces and nothing else. Then
+journalctl renders a line containing a `\r` as `[214B blob data]`, so reading
+the journal for leaked speech also found none. Two independent checks, both
+clean, and the transcript had been going to the journal the whole time. A
+reviewer found it by opening the file.
+
+So, in order of how much they are worth:
+
+- **run it and look at the output.** The frame loop is driven in
+  `test_states.py` by putting a fake `sounddevice` in `sys.modules` -- the
+  import is inside `run()` -- whose stream delivers frames from its own
+  thread the way PortAudio does. Real frame sizes, real `frame_db`, real
+  endpointing. It reads *both* streams, because systemd journals stderr too.
+- **parse it, never grep it.** The audit is an AST walk and matches on every
+  identifier a `print` reads, at any depth. Matching on the presence of
+  `safe_for_terminal` in the source was worse than it looked: it only fired
+  when a second rule was already being kept, so a print interpolating a raw
+  transcript would have passed by being wrong twice.
+- **mutate it.** A test that has never failed is a guess. Reintroduce the
+  leak and watch the test go red -- all three of the gate's mutations are
+  caught, and the identifier-based audit catches one the substring version
+  passed.
+
+And when checking the journal by hand, `journalctl -o json`: the default
+renderer hides exactly the lines most likely to carry speech, because a
+progress line rewrites itself with a carriage return.
+
 ## Claims in the README and in commits
 
 Measure before asserting. `bench/FINDINGS.md` records what was measured, on

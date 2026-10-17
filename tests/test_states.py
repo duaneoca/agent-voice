@@ -505,6 +505,175 @@ def test_a_failing_agent_does_not_quote_the_prompt_into_the_log(
         "the failure itself must still be visible -- that is the diagnostic"
 
 
+def _drive_one_turn(daemon, monkeypatch, said, *, logs=False):
+    """Run the real frame loop over a scripted utterance.
+
+    The loop is the one place the gate could not be driven, so it was the one
+    place a leak survived two audits. What stood in the way was
+    `sd.RawInputStream`, and that import is inside `run()` -- so a module in
+    `sys.modules` replaces it, and the fake stream delivers frames by calling
+    the callback from its own thread, which is what PortAudio does.
+
+    Nothing else about the loop is faked: the levels go through the real
+    `frame_db`, the endpointing is the real energy arithmetic, and the frames
+    are the real size. Returns everything printed.
+    """
+    import json as _json
+    import sys as _sys
+    import threading
+    import time as _time
+
+    import pytest as _pytest
+
+    # 3200 int16 samples, which is what blocksize=CHUNK delivers: one 200ms
+    # frame. 0x4000 is about -6 dBFS, comfortably over the gate; zeros land
+    # at -99 and end the utterance.
+    loud = b"\x00\x40" * 3200
+    quiet = b"\x00\x00" * 3200
+
+    class Capture:
+        """Vosk-shaped: a partial while it accepts, never a final."""
+
+        def AcceptWaveform(self, pcm):
+            return False
+
+        def PartialResult(self):
+            return _json.dumps({"partial": said.split()[0] + " ..."})
+
+    class Pipe:
+        phrase = "hey claude"
+        lead_in_ms, trailing_ms = 5000, 0
+        max_utterance_ms, min_utterance_ms = 10_000, 100
+        threshold_db = -40.0
+        detection_threshold = 0.9
+        conversation = False
+        follow_up_ms = 3000
+
+        def __init__(self):
+            self.woke = False
+
+        def feed_wake(self, pcm, level):
+            if self.woke:                    # once, on the first frame
+                return False
+            self.woke = True
+            return True
+
+        def new_capture(self):
+            return Capture()
+
+        def transcribe(self, buf):
+            return said, 12.0
+
+    class Stream:
+        def __init__(self, **kw):
+            self.cb = kw["callback"]
+
+        def __enter__(self):
+            def feed():
+                # Two loud frames wake it and fill the buffer, then silence
+                # endpoints the utterance. Silence continues after that so a
+                # loop which failed to endpoint keeps being fed and reaches
+                # the watchdog's replacement rather than blocking forever.
+                for frame in (loud, loud):
+                    self.cb(frame, len(frame) // 2, None, None)
+                    _time.sleep(0.01)
+                while True:
+                    self.cb(quiet, len(quiet) // 2, None, None)
+                    _time.sleep(0.01)
+            threading.Thread(target=feed, daemon=True).start()
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class Done(Exception):
+        """The turn reached the agent, which is as far as this needs to go."""
+
+    class NeverEndpointed(Exception):
+        """The loop stopped finishing utterances."""
+
+    def watchdog():
+        """Fail rather than hang.
+
+        `frames.get()` blocks with no timeout, which is right for a daemon and
+        wrong for a test: a loop that stopped endpointing would wedge a CI run
+        instead of failing it. The queue is a plain `queue.Queue`, so replacing
+        `get` on the instance is enough for the *next* call -- and the first
+        version of this only did that, which fixed nothing, because the loop
+        was already blocked inside the call that was there before. The frames
+        have to keep arriving for the replacement to ever be reached, which is
+        why the feeder below does not stop.
+        """
+        _time.sleep(5)
+        q = getattr(daemon, "_frames", None)
+        if q is not None:
+            q.get = lambda *a, **k: (_ for _ in ()).throw(
+                NeverEndpointed("the loop never reached the transcript"))
+
+    fake_sd = type(_sys)("sounddevice")
+    fake_sd.RawInputStream = lambda **kw: Stream(**kw)
+    monkeypatch.setitem(_sys.modules, "sounddevice", fake_sd)
+
+    daemon.pipe = Pipe()
+    # banner() names the agent. Set here rather than on the shared fake, so
+    # the tests that assert on an agent without one keep their meaning.
+    daemon.agent.name = "stub"
+    daemon.agent.posture = lambda level: f"{level} here"
+    daemon.speaker.name = "stub-voice"
+    daemon.enabled, daemon.locked, daemon.yielded = True, False, False
+    daemon.cfg._values["logSpeech"] = logs
+    for name in ("refresh", "reconcile_lock", "reconcile_yield"):
+        monkeypatch.setattr(daemon, name, lambda *a, **k: None)
+    monkeypatch.setattr(daemon, "answer",
+                        lambda *a, **k: (_ for _ in ()).throw(Done()))
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False, raising=False)
+
+    threading.Thread(target=watchdog, daemon=True).start()
+    with _pytest.raises(Done):
+        daemon.run(device=None)
+
+
+def test_the_frame_loop_withholds_the_words_it_transcribed(
+        daemon, capsys, monkeypatch):
+    """The leak itself, driven.
+
+    `wake_listen.py:1554` printed every completed transcript with no gate.
+    Two checks said otherwise: the audit matched only the first physical line
+    of that wrapped print, which holds a carriage return and 120 spaces, and
+    journalctl rendered the result as "[214B blob data]" so looking in the
+    journal found nothing either. A reviewer found it by reading the file.
+
+    So this does not read the file. It runs the loop over an utterance and
+    looks at what came out, which is the only check of the three that could
+    not have been fooled.
+    """
+    SAID = "my account number is four eight one five"
+    _drive_one_turn(daemon, monkeypatch, SAID)
+
+    # Both streams. systemd journals stderr too, so a leak that moved there
+    # would pass a check that only read stdout -- and `print(..., file=
+    # sys.stderr)` is one keyword away from every line in that loop.
+    streams = capsys.readouterr()
+    out = streams.out + streams.err
+    assert SAID not in out, "the completed transcript reached the journal"
+    assert "my ..." not in out, "the live partial reached the journal"
+    # The structural half of the same line has to survive, or the gate has
+    # been implemented by going quiet about the turn altogether.
+    assert "whisper 12ms" in out, "the timings went with the words"
+
+
+def test_the_frame_loop_prints_the_words_when_asked_to(
+        daemon, capsys, monkeypatch):
+    """The other direction, which is the half that makes it a setting rather
+    than a removal: `logSpeech` on puts the transcript back."""
+    SAID = "what is the weather tomorrow"
+    _drive_one_turn(daemon, monkeypatch, SAID, logs=True)
+
+    streams = capsys.readouterr()
+    out = streams.out + streams.err
+    assert SAID in out, "turning it on did not turn it on"
+
+
 def test_the_words_still_reach_the_panel_with_logging_off(daemon, monkeypatch):
     """`logSpeech` is about the journal, not about the readout. The HUD has
     to draw what you said and what came back, so the words go to the state
