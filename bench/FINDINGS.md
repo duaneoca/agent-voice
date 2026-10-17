@@ -554,3 +554,42 @@ this threshold and this verifier, did not get in, and the owner did. The
 cheapest way to earn the stronger claim is to keep the next stranger's attempts
 as wavs and replay them with the verifier disabled -- which is what
 `bench/record.py` is for, and which costs the stranger nothing extra.
+
+## 18. Nine backends removed rather than shipped leaking
+
+Measured 2026-10-16, after a marketplace reviewer declined to accept the
+argv disclosure as documented-and-known.
+
+Every agent on the shared CLI template passed the spoken prompt as a
+command-line argument, where `/proc/<pid>/cmdline` is mode 0444 on an
+ordinary Linux box. Moving them to stdin needed knowing which of them reads
+a prompt there. Asked directly, with a prompt piped in:
+
+| CLI | what it did |
+|---|---|
+| crush | crashed |
+| opencode | opened an interactive TUI |
+| hermes | opened an interactive TUI |
+| grok | `Not signed in` |
+| cursor-agent | `Authentication required` |
+| muse | `workspace trust ... is undecided` |
+| omp | `No default model selected` |
+| pi | `No API key found` |
+| openclaw | not installed -- a mise stub, per §7 of the README's risks |
+| **copilot** | **ran the turn** |
+
+So only copilot could be shown to accept a prompt on stdin, which matches
+the only one whose `--help` documents piped stdin. The other nine could not
+be moved without guessing, and a prompt written to a channel a CLI is not
+reading is a turn that hangs until the watchdog kills it.
+
+They were removed. None had ever answered a live turn -- the README had
+called them untested since they were added -- so the cost is a shorter list
+rather than lost capability, and the standing rule is now explicit: a backend
+earns its place with one real turn proving where its prompt goes, or it is
+not offered.
+
+Worth noting what this says about `--help` as evidence. Nine CLIs documented
+a headless `-p` form and every one of those forms was real; what no help page
+mentioned was whether the same prompt could arrive privately. The flag was
+never the question.

@@ -2,7 +2,7 @@
 
 Omarchy already answers "which agent" -- one line in
 ~/.config/omarchy/defaults/agent, set by `omarchy default agent <name>`, and
-thirteen agents are spelled there. Reading it means switching agents at the
+every agent Omarchy knows is spelled there. Reading it means switching agents at the
 desktop level switches the voice too, with nothing to configure twice.
 """
 from __future__ import annotations
@@ -127,7 +127,11 @@ def supported() -> dict[str, str]:
     out = {"claude": "observed", "codex": "observed", "gemini": "observed",
            "agy": "observed", "endpoint": "observed (wire format is public)"}
     for agent, (_, verified) in CLI_TEMPLATES.items():
-        out.setdefault(agent, "text stream" if verified else "UNVERIFIED")
+        # The shared-template agents that were never run are gone -- see the
+        # note above TEMPLATES -- so "verified" here now means the same thing
+        # it means above: a real turn was watched.
+        out.setdefault(agent, "observed (shared text stream)" if verified
+                       else "UNVERIFIED")
     return out
 
 

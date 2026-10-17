@@ -37,7 +37,8 @@ class TestSentences:
 
 class TestColdStubDetection:
     """Omarchy puts a mise stub on PATH for every agent it knows, so
-    `which` finds all thirteen on a machine with none installed."""
+    `which` finds every agent Omarchy knows on a machine with none
+    installed."""
 
     def make_stub(self, tmp_path, name, body):
         p = tmp_path / name
@@ -76,7 +77,7 @@ class TestPermissionPosture:
         assert ClaudeCode().guards_permissions is True
         assert Codex().guards_permissions is False
         assert Gemini().guards_permissions is False
-        assert CliAgent("grok").guards_permissions is False
+        assert CliAgent("copilot").guards_permissions is False
 
     def test_claude_adds_the_hook_when_asked_to(self):
         assert "--settings" in ClaudeCode(ask_permission=True)._argv("x", None)
@@ -147,16 +148,22 @@ class TestRegistry:
     def test_an_unknown_agent_loads_nothing(self):
         assert load("not-an-agent") is None
 
-    def test_verification_status_is_recorded(self):
-        # Honesty about which protocols were observed and which inferred.
-        # The four with their own modules have each answered a live turn;
-        # nothing on the shared CLI template has.
+    def test_nothing_unverified_is_offered(self):
+        """It used to be honesty about which protocols were inferred. It is
+        now a floor: nine shared-template agents were removed rather than
+        shipped with the spoken prompt in argv, because nothing could be
+        moved to stdin without running it and none of them would run far
+        enough to say. Everything offered has answered a real turn."""
         s = supported()
         for observed in ("claude", "codex", "gemini", "agy"):
             assert s[observed].startswith("observed"), (observed, s[observed])
-        assert "UNVERIFIED" in s["grok"]
-        for agent in CLI_TEMPLATES:
-            assert not s[agent].startswith("observed"), agent
+        for agent, status in s.items():
+            assert "UNVERIFIED" not in status, \
+                f"{agent} is offered without a turn having been watched"
+        for agent, (template, verified) in CLI_TEMPLATES.items():
+            assert verified, f"{agent} is on the template list unverified"
+            assert "{prompt}" not in template, \
+                f"{agent} would put the spoken prompt in argv"
 
 
 class TestGeminiAuthDetection:

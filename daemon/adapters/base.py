@@ -179,7 +179,8 @@ def installed(binary: str) -> bool:
         mise use -g "crush" || exit 1
         exec mise x "crush" -- "crush" "$@"
 
-    So `which` finds all thirteen on a machine with none of them installed,
+    So `which` finds every agent Omarchy knows -- its list, not this
+    project's -- on a machine with none of them installed,
     and invoking one kicks off a minute-long install. Omarchy's own
     `omarchy-cmd-present` is just `command -v` and has the same blind spot --
     which is why `omarchy-default-agent` pointedly does not use it for Hermes.

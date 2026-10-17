@@ -149,8 +149,11 @@ rather than in general, because a prompt written to a channel a CLI does not
 read is a turn that hangs until the watchdog kills it: `claude -p` and `codex
 exec` take it bare, `gemini` needs an empty `-p ""`, `agy` needs the
 stream-json protocol because its `-p` eats the following flag, and of the ten
-on the shared adapter only `copilot` has been shown to accept it. The others
-still expose the prompt, which is written down rather than decided. The
+once on the shared adapter only `copilot` could be shown to accept it. The
+other nine were removed rather than shipped leaking, because none would run
+far enough to say where its prompt goes and a prompt sent down a channel a
+CLI is not reading hangs the turn. That is the standing rule for this table:
+a backend earns its place with one real turn, or it is not offered. The
 endpoint adapter never had this: an HTTPS body is not argv.
 
 **A transcript and a model reply are untrusted input to the UI.** Any `Text`
@@ -275,7 +278,7 @@ Voxtype-transcription architecture and the "31% of one core" figure were both
 wrong, and both are now written down as corrections with the reasoning.
 
 Say which backends have actually answered a turn. Claude Code, Codex,
-Gemini and Antigravity have; the nine on the shared CLI adapter have not. Watching a single
+Gemini, Antigravity and Copilot have, and nothing else is offered. Watching a single
 live turn falsified three things Gemini's adapter believed -- where the CLI
 records its auth, that a headless run needs no trusted folder, and that
 everything on stdout was speech -- and nothing in Codex's. Flags read off

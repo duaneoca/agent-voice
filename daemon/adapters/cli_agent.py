@@ -32,6 +32,22 @@ from .base import (
 )
 
 #: agent id -> (argv template, verified?). "{prompt}" is substituted.
+#:
+#: There were ten. Nine are gone, and the reason is worth keeping: a
+#: marketplace reviewer pointed out that every one of them put the spoken
+#: prompt in argv, where /proc makes it readable by any other local account,
+#: and documenting that was rightly not accepted as fixing it. Moving them to
+#: stdin needed knowing which of them read a prompt there -- and asking each
+#: binary gave no answer: crush crashed, opencode and hermes dropped into an
+#: interactive TUI, grok, cursor-agent, muse, omp and pi all stopped at auth
+#: or configuration first, and openclaw turned out to be a mise stub rather
+#: than an install. A prompt written to a channel a CLI is not reading is a
+#: turn that hangs until the watchdog kills it, so the choice was between
+#: guessing on nine backends and offering none of them.
+#:
+#: None had ever answered a live turn; the README called them untested for a
+#: year. Adding one back is this table plus one real turn proving where its
+#: prompt goes, which is the same bar the four first-class adapters met.
 #: Confirmed non-interactive by omarchy-agent's own table:
 #:   crush -- `crush run "<prompt>"` never prompts.
 #: Everything else is the CLI's documented headless form, untested here.
@@ -47,22 +63,9 @@ from .base import (
 #: rather than a decision, and each one closes as somebody runs a real turn
 #: against it.
 TEMPLATES: dict[str, tuple[str, bool]] = {
-    "crush":        ("crush run {prompt}", True),
-    "opencode":     ("opencode run --auto {prompt}", False),
-    # No {prompt}: copilot reads it from piped stdin, which its --help
-    # documents ("combine with -i, -p, or piped stdin") and a real turn
-    # confirms -- it is the only one of these ten that does. The rest still
-    # pass the prompt in argv; see the note above TEMPLATES.
+    # Copilot alone, and only because it was run: `--help` documents piped
+    # stdin and a real turn confirmed it. No {prompt}, so the adapter feeds it.
     "copilot":      ("copilot --allow-all", True),
-    "grok":         ("grok --permission-mode bypassPermissions -p {prompt}", False),
-    "cursor-agent": ("cursor-agent --yolo --trust -p {prompt}", False),
-    "muse":         ("muse --approval-mode never -p {prompt}", False),
-    "omp":          ("omp --auto-approve -p {prompt}", False),
-    "pi":           ("pi {prompt}", False),
-    # Hermes has an HTTP API and hermes-satellite already talks to it; prefer
-    # OpenAICompatible for it. This is the CLI fallback.
-    "hermes":       ("hermes chat --yolo --query={prompt}", False),
-    "openclaw":     ("openclaw run --message {prompt}", False),
 }
 
 

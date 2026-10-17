@@ -310,7 +310,7 @@ talk to are not the ones that decide how capable it is:
 | xAI Grok | endpoint | yes | no | 3.2-4.6s |
 | Ollama, LM Studio, vLLM | endpoint | yes | no | 7.6s on a LAN 4B |
 | **Gemini** | CLI | **no** | yes | — |
-| the ten on the shared CLI adapter | CLI | **no** | yes | untested |
+| Copilot | CLI, piped stdin | **no** | yes | — |
 
 **Two of these act here, and one acts somewhere else.** Claude Code,
 Codex, Antigravity and Gemini are started by this daemon, in a directory
@@ -348,20 +348,20 @@ That last row is the one to know about, because it fails quietly.
 Conversation mode still opens its window after a Gemini reply, still
 listens, still answers -- and every turn starts from nothing. Ask "what
 did you mean by that?" and you get an answer to a question it has never
-seen. The same is true of the ten agents sharing the plain-stdout
-adapter, none of which has been run.
+seen. The same is true of Copilot, which shares the plain-stdout adapter.
 
-**And nine of those ten still put what you said on a command line.**
-`/proc/<pid>/cmdline` is world readable on an ordinary Linux box, so for as
-long as a turn runs, any other account on the machine can read the sentence
-you spoke. The four backends that have answered live turns here -- Claude
-Code, Codex, Gemini, Antigravity -- hand the prompt over on stdin instead,
-and so does Copilot, the one of the ten that has been shown to accept it.
-The rest cannot be moved without running them: a prompt written to a channel
-a CLI is not reading is a turn that hangs until the watchdog kills it. If
-you share the machine with anyone, prefer a backend from the verified list
-or an endpoint, where the prompt travels in an HTTPS body and never touches
-argv.
+**There used to be ten on that adapter.** Nine were removed in October 2026
+rather than shipped: every one of them passed the spoken prompt as a
+command-line argument, where `/proc/<pid>/cmdline` makes it readable by any
+other local account for as long as the turn runs. Moving them to stdin meant
+knowing which of them reads a prompt there, and asking each binary gave no
+answer -- two dropped into an interactive interface, one crashed, five
+stopped at authentication or configuration first, and one turned out to be a
+stub rather than an install. A prompt written to a channel a CLI is not
+reading is a turn that hangs, so the choice was between guessing on nine
+backends and offering none of them. None had ever answered a live turn. Every
+backend listed above hands the prompt over privately: on stdin for the CLIs,
+in an HTTPS body for the endpoints.
 
 Two smaller things that follow from the mechanism. An interrupted
 endpoint turn never enters the history, because the history is written
@@ -559,10 +559,10 @@ It is not nothing on a 4GB machine, and principle 5 says that matters.
    grant: in headless mode `allow` is ignored, so a hook there can
    restrict and never permit.
 6. **Not every backend remembers the last thing you said.** Gemini and
-   the ten on the shared CLI adapter start from nothing on every turn,
+   Copilot on the shared CLI adapter starts from nothing on every turn,
    and conversation mode gives no sign of it -- see *Backend adapters*.
 7. **Cold stubs look installed.** Omarchy puts a mise stub on PATH for
-   every agent it knows, so `command -v` finds all thirteen on a machine
+   every agent it knows, so `command -v` finds every one of them on a machine
    with none of them. Invoking one triggers a minute-long install.
    Adapters check for a real install, not just a name on PATH.
 
