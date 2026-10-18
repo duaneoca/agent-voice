@@ -146,6 +146,38 @@ Panel {
     micToggle.running = true
   }
 
+  //: Whether there is a turn to stop. The three states in which the daemon is
+  //: either listening to you, working, or talking -- which is exactly when a
+  //: stop means something. `_on_interrupt` in the daemon checks the same list
+  //: and does nothing outside it, so a control shown at any other moment
+  //: would be a button that silently does nothing.
+  readonly property bool vTurnRunning: serviceActive
+                                       && (vState === "speaking"
+                                           || vState === "thinking"
+                                           || vState === "transcribing")
+
+  // Stop whatever is happening: the reply being spoken, the agent's turn, and
+  // every process the agent started -- `agentvoice interrupt` reaches the
+  // process group, not just the CLI.
+  //
+  // Two ways in, so one guard: the panel's STOP and a left click on the bar
+  // icon. The second exists because that is what somebody actually did -- "it
+  // was rambling on, I clicked the icon, and it didn't work" -- since a left
+  // click opened the panel and nothing else.
+  function stopTurn() {
+    if (!voice.engineInstalled) {
+      voice.note = "The voice engine is not installed yet."
+      if (!voice.opened) voice.open()
+      return
+    }
+    // Nothing to stop. Deliberately silent rather than a note: the daemon
+    // treats an interrupt outside a turn as a no-op for the same reason, so
+    // a stray click cannot leave things in a state nobody asked for.
+    if (!voice.vTurnRunning) return
+    voice.note = ""
+    interrupt.running = true
+  }
+
   function toggleService() {
     if (!voice.engineInstalled) {
       // Nothing to toggle, and the panel is where that is explained -- it
@@ -324,7 +356,12 @@ Panel {
     text: voice.icon
     fontFamily: voice.bar ? voice.bar.fontFamily : Style.font.family
     foreground: voice.barIconColor
-    tooltipText: voice.opened ? "" : "Agent Voice — " + voice.stateLabel
+    // During a turn the click does something else, so it says so. A control
+    // whose behaviour changes with state and does not mention it is how
+    // "I clicked it and nothing happened" starts.
+    tooltipText: voice.opened ? ""
+                 : voice.vTurnRunning ? "Agent Voice — click to stop"
+                 : "Agent Voice — " + voice.stateLabel
     // WidgetButton emits pressed(buttonCode); there is no onClicked.
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) {
@@ -332,6 +369,13 @@ Panel {
         else voice.toggleService()
       } else if (buttonCode === Qt.MiddleButton) {
         voice.toggleService()
+      } else if (voice.vTurnRunning) {
+        // The reflex this is here for: it is talking, you click it, it stops.
+        // Opening a panel to find a button is the wrong thing to ask of
+        // somebody who wants it to stop now. The panel is still a click away
+        // the moment the turn ends, which is when its readout is worth
+        // reading anyway.
+        voice.stopTurn()
       } else {
         voice.toggle()
       }
@@ -603,22 +647,59 @@ Panel {
       }
 
       // Barge-in cannot work acoustically here -- the microphone sits beside
-      // the speaker -- so stopping a reply is an explicit act. This is the
-      // discoverable half of it; Super+Ctrl+Space is the fast half.
-      Text {
-        visible: voice.vState === "speaking" || voice.vState === "thinking"
-                 || voice.vState === "transcribing"
-        text: "\uf04d   stop"
-        color: stopHover.containsMouse ? voice.fg : voice.dim
-        font.family: voice.fontFamily
-        font.pixelSize: Style.font.caption
+      // the speaker -- so stopping is an explicit act, and this is where
+      // somebody looks for it.
+      //
+      // It used to be the word "stop" in the panel's dimmed caption colour,
+      // on the left with everything else, which made the most important
+      // control in the interface look like a footnote. Reported from use, in
+      // the words that matter: "if I asked the agent to do something very
+      // destructive by accident I might panic, and I don't feel like I have a
+      // stop button." The capability was there -- it kills the agent's whole
+      // process group, not just the talking -- and nothing about the way it
+      // was drawn said so.
+      //
+      // Right-aligned, because that is where an action sits when the rest of
+      // the panel is a readout; `urgent` because it is the theme's own alarm
+      // colour and the one thing here that is not a status; and an octagon
+      // from the same Material Design set as the bar icon, so it renders
+      // wherever those do rather than relying on a second icon font.
+      Item {
+        width: parent.width
+        height: stopRow.implicitHeight
+        visible: voice.vTurnRunning
+
+        Row {
+          id: stopRow
+          anchors.right: parent.right
+          spacing: Style.space(6)
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "\u{f06d7}"
+            color: voice.urgent
+            font.family: voice.fontFamily
+            font.pixelSize: Math.round(Style.font.body * 1.35)
+          }
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "STOP"
+            color: voice.urgent
+            font.family: voice.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+        }
+
+        // Only as wide as the control. Anchored to the row rather than
+        // filling the Item, because a full-width hit area means a stray
+        // click anywhere on that line kills the turn.
         MouseArea {
-          id: stopHover
-          anchors.fill: parent
+          anchors.fill: stopRow
           anchors.margins: -Style.space(6)
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: interrupt.running = true
+          onClicked: voice.stopTurn()
         }
       }
 

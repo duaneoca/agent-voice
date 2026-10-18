@@ -904,6 +904,28 @@ class Daemon:
         self._publish()
         return True
 
+    def arm_follow_up(self) -> bool:
+        """Whether to keep listening after the turn without the wake word.
+
+        Not after a stop. Pressing stop and then being listened to for seven
+        seconds is the opposite of what the button says: somebody who reaches
+        for it wants the thing to stop paying attention, and an open follow-up
+        window means the next thing they say -- very likely about what just
+        went wrong, possibly to somebody else in the room -- starts another
+        turn with no wake word and no speaker verifier. Reported from use:
+        "when I hit stop on the panel it stopped the current task, then
+        immediately went back to listening for the next turn."
+
+        `_interrupt` is also set by `silence()`, so a lock, a mute and the
+        microphone being lent to another application each close the window
+        too, which is what all three of them mean.
+
+        A method rather than an expression in the loop so that it can be
+        driven directly, and so the next person to add a reason for stopping
+        has one place to put it.
+        """
+        return self.pipe.conversation and not self._interrupt.is_set()
+
     def poll_session(self) -> None:
         """Notice a lock from wherever the daemon happens to be.
 
@@ -1741,7 +1763,7 @@ class Daemon:
                         # conversation mode itself, and the permission level
                         # are all settings, which is where that trade-off
                         # belongs.
-                        follow_up = self.pipe.conversation
+                        follow_up = self.arm_follow_up()
                     else:
                         follow_up = False
                     print()

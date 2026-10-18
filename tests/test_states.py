@@ -798,3 +798,62 @@ def test_the_words_still_reach_the_panel_with_logging_off(daemon, monkeypatch):
 
     assert "four" in str(daemon.state._last.get("reply", "")), \
         "the panel lost the reply along with the log line"
+
+
+# --- the stop control -------------------------------------------------------
+
+def test_the_stop_is_the_loudest_thing_in_the_panel():
+    """Reported in the words that matter: "if I asked the agent to do
+    something very destructive by accident I might panic, and I don't feel
+    like I have a stop button." The capability was always there -- it kills
+    the agent's process group, not just the talking -- and it was drawn as
+    the word "stop" in the dimmed caption colour, on the left, among the
+    readouts. Nothing about that said what it was for.
+    """
+    panel = _uncommented(PANEL)
+
+    at = panel.index("STOP")
+    block = panel[max(0, at - 1200):at + 400]
+    assert "voice.urgent" in block, \
+        "the stop is drawn in a status colour like everything around it"
+    assert "anchors.right: parent.right" in block, \
+        "it is still inline on the left with the readouts"
+    assert "\\u{f06d7}" in panel, \
+        "no stop sign -- the octagon is from the same Material Design set " \
+        "as the bar icon, so it renders wherever those do"
+
+
+def test_the_stop_has_one_guard_and_two_ways_in():
+    """The panel's STOP and a left click on the bar icon, because clicking the
+    icon is what somebody actually reached for while it was talking. Same rule
+    as toggleMic and toggleService: the guard belongs in the function every
+    entry point passes through."""
+    panel = _uncommented(PANEL)
+    assert "function stopTurn()" in panel
+
+    fn = panel[panel.index("function stopTurn()"):]
+    fn = fn[:fn.index("\n  }")]
+    assert "engineInstalled" in fn, "the same refusal as the other controls"
+    assert "vTurnRunning" in fn, "nothing to stop outside a turn"
+
+    assert panel.count("voice.stopTurn()") >= 2, \
+        "the panel control and the bar icon should share the one path"
+    # The bar icon must not reach the Process behind the function's back, and
+    # must actually be wired to the turn state. Counting call sites was not
+    # enough: disabling the condition left the call in place and the first
+    # version of this test passed.
+    press = panel[panel.index("onPressed: function(buttonCode)"):]
+    press = press[:press.index("\n    }")]
+    assert "interrupt.running" not in press, \
+        "the bar click bypasses the guard the way the old right click did"
+    assert "voice.stopTurn()" in press, "a left click cannot stop anything"
+    assert "voice.vTurnRunning" in press, \
+        "the left click does not depend on there being a turn, so it either " \
+        "never stops or it never opens the panel"
+
+
+def test_a_click_that_changes_meaning_says_so():
+    """A control whose behaviour depends on state and does not mention it is
+    how "I clicked it and nothing happened" starts -- which is the report
+    this came from."""
+    assert "click to stop" in PANEL

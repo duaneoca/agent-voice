@@ -546,3 +546,48 @@ class TestALockReachesTheAgentsOwnTurn:
         assert inside_two == inside_one, "nesting started a second watcher"
         assert daemon._watchers == 0, "the count did not unwind"
         assert after == before, "the watcher thread was leaked"
+
+
+class TestStopMeansStopListeningToo:
+    """Reported from use: "when I hit stop on the panel, it stopped the
+    current task, then immediately went back to listening for the next turn.
+    I want it to stop listening for the next turn and go back to listening
+    for the wake word."
+
+    The follow-up window uses neither the wake word nor the speaker verifier,
+    so leaving it armed after a stop means the next thing said in the room
+    starts a turn -- and what somebody says just after reaching for a stop
+    button is the most likely thing in the world to be about what just went
+    wrong, said to somebody else.
+    """
+
+    def test_an_interrupt_closes_the_follow_up_window(self, daemon):
+        daemon.pipe = type("P", (), {"conversation": True})()
+
+        assert daemon.arm_follow_up() is True, "conversation mode is on"
+        daemon._interrupt.set()
+        assert daemon.arm_follow_up() is False, \
+            "a stop left it listening for the next sentence"
+
+    def test_a_lock_a_mute_and_a_yield_close_it_as_well(self, daemon):
+        """All three go through `silence()`, which sets the same flag -- and
+        all three mean "stop paying attention" just as much as the button."""
+        daemon.pipe = type("P", (), {"conversation": True})()
+        daemon.speaker = None
+        daemon.agent = None
+
+        daemon.silence()
+        assert daemon.arm_follow_up() is False
+
+    def test_conversation_mode_off_is_still_off(self, daemon):
+        daemon.pipe = type("P", (), {"conversation": False})()
+        assert daemon.arm_follow_up() is False
+
+    def test_the_run_loop_asks_rather_than_deciding_for_itself(self):
+        """So that a reason added to `arm_follow_up` reaches the loop, and the
+        loop cannot grow a second opinion about it."""
+        src = (ROOT / "daemon" / "wake_listen.py").read_text()
+        body = src[src.index("    def run(self, device"):]
+        assert "self.arm_follow_up()" in body
+        assert "follow_up = self.pipe.conversation" not in body, \
+            "the loop decided this inline again"
