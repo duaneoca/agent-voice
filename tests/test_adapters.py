@@ -729,3 +729,67 @@ class TestThePromptStaysOutOfArgv:
         src = (Path(__file__).resolve().parent.parent / "daemon" / "adapters"
                / "openai_compat.py").read_text()
         assert "subprocess" not in src
+
+
+class TestNoSpokenPromptInArgv:
+    """What somebody said out loud must not travel in a command line.
+
+    `/proc/<pid>/cmdline` is mode 0444 with no hidepid on an ordinary Linux
+    box, so an argument is readable by every local account for as long as the
+    process lives. Reported twice by a marketplace reviewer: first against
+    `claude -p` at 1546f9d, then against the nine shared-template backends at
+    9e0404a. Both were fixed, and *neither fix had a test*: the suite checked
+    that the template table carries no `{prompt}`, which says nothing about
+    the four adapters that build their own argv.
+
+    So this is the assertion that was missing, over every backend that spawns
+    a process. The two that do not are the endpoint adapter, whose prompt is
+    an HTTPS body, and the shared template table, covered above.
+    """
+
+    SENTINEL = "SENTINEL-a-private-spoken-request"
+
+    def _argv_for(self, name):
+        """However that adapter builds its command line."""
+        if name == "claude":
+            from adapters.claude_code import ClaudeCode
+            return ClaudeCode(ask_permission=True)._argv(self.SENTINEL, None)
+        if name == "codex":
+            from adapters.codex import Codex
+            return Codex(ask_permission=True)._argv(self.SENTINEL, None)
+        if name == "agy":
+            from adapters.antigravity import Antigravity
+            return Antigravity(ask_permission=True)._argv(self.SENTINEL, None)
+        raise AssertionError(name)
+
+    @pytest.mark.parametrize("name", ["claude", "codex", "agy"])
+    def test_the_prompt_is_not_an_argument(self, name):
+        argv = self._argv_for(name)
+        leaked = [a for a in argv if self.SENTINEL in str(a)]
+        assert not leaked, \
+            f"{name} puts what was said out loud in /proc/<pid>/cmdline: {leaked}"
+
+    def test_gemini_builds_its_argv_with_an_empty_prompt_flag(self):
+        """Gemini has no `_argv`; its command line is assembled inline. It
+        needs `-p ""` present and empty -- the flag is what puts the CLI in
+        non-interactive mode, and the prompt arrives on stdin."""
+        root = Path(__file__).resolve().parent.parent
+        src = (root / "daemon" / "adapters" / "gemini.py").read_text()
+        at = src.index('argv = ["gemini", "-p", ""')
+        assert at > 0, "gemini's argv no longer passes an empty -p"
+        line = src[at:src.index("\n", at)]
+        assert "prompt" not in line and "text" not in line, \
+            f"gemini may be interpolating the prompt into argv: {line}"
+
+    def test_every_spawning_adapter_is_covered_here(self):
+        """So that a new backend cannot be added without this test noticing.
+        The list is the adapters that call Popen; the endpoint adapter sends
+        an HTTPS body and has nothing in argv to leak."""
+        root = Path(__file__).resolve().parent.parent
+        adapters = root / "daemon" / "adapters"
+        spawns = {p.stem for p in adapters.glob("*.py")
+                  if "subprocess.Popen(" in p.read_text()}
+        known = {"claude_code", "codex", "gemini", "antigravity", "cli_agent"}
+        assert spawns == known, (
+            f"a backend that spawns a process is not covered by this test: "
+            f"{spawns ^ known}")
