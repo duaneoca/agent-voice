@@ -69,12 +69,34 @@ def cfg_factory():
 # can follow.
 
 class FakeSpeaker:
+    """Stands in for Piper, including the part that matters for a lock.
+
+    `say()` consults `watch` between audio chunks, the way the real one does
+    between the buffers it writes to PortAudio -- so a test can lock the
+    session partway through a sentence and see where the audio stopped. The
+    first version of this recorded the text and ignored `watch` entirely,
+    which is why a reviewer found the gap rather than the suite: with the
+    watch never called, a watch that was never passed looked the same.
+
+    `chunks` is how many pieces a sentence is delivered in, and `played`
+    counts the ones that actually went out.
+    """
+
+    chunks = 10
+
     def __init__(self):
         self.said = []
         self.cancelled = 0
+        self.played = 0
+        self.stopped_early = False
 
     def say(self, text, watch=None):
         self.said.append(text)
+        for _ in range(self.chunks):
+            if watch is not None and watch():
+                self.stopped_early = True
+                return
+            self.played += 1
 
     def cancel(self):
         self.cancelled += 1

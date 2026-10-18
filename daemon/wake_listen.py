@@ -1227,14 +1227,80 @@ class Daemon:
             print(f"  {DIM}(dropped {dropped * CHUNK_MS}ms of echo){OFF}")
 
     def speak(self, text: str, tail_ms: int) -> None:
-        """Say something, then make sure we did not hear ourselves say it."""
+        """Say something, then make sure we did not hear ourselves say it.
+
+        The watch is unconditional, which is the whole point of it. Barge-in
+        used to be the only reason to look between audio chunks, so with
+        `bargeIn` off -- the default, and measured: where the microphone sits
+        beside the speaker every gate that hears the user also fires on our
+        own output -- `Speaker.say()` was handed None and nothing could stop a
+        sentence once it had started. Polling before the call, which is what
+        the first version of this fix did, moved the exposure from the whole
+        reply down to one sentence rather than closing it: a lock landing two
+        words into "Later this week you have the house cleaners Monday
+        morning, Band Night Wednesday at eight, ..." still read the rest of it
+        out to a locked room. Reported against 98697f5 by a marketplace
+        reviewer, who also pointed out that the no-agent echo path reaches
+        here without passing the between-sentence poll at all -- which this
+        covers, because the guard is now in the one place both paths go
+        through.
+        """
         if not self.speaker or self._interrupt.is_set():
             return
-        watch = self._barge_watch()
+        # Before the first chunk rather than after it, and here rather than at
+        # the call sites, because this function is what every path that makes
+        # a noise goes through -- the reply loop, the echo path, and anything
+        # added later that nobody remembers to guard. Cheap enough at this
+        # point: nothing is playing yet, so a 9ms spawn cannot underrun
+        # anything, and poll_session() rate limits itself to once a second.
+        self.poll_session()
+        if not self.listening:
+            self.silence()
+            return
+        barge = self._barge_watch()
+        stop = threading.Event()
+        poller = threading.Thread(target=self._poll_session_until, args=(stop,),
+                                  daemon=True)
+        poller.start()
         try:
-            self.speaker.say(speech_safe(text), watch=watch)
+            self.speaker.say(speech_safe(text), watch=self._watch(barge))
         finally:
+            stop.set()
+            poller.join(timeout=2.0)
             self.deafen(tail_ms)
+
+    def _watch(self, barge):
+        """What `Speaker.say()` checks between audio chunks.
+
+        In-memory only. `reconcile_lock()` spawns
+        `omarchy-hyprland-session-locked`, measured at 9.2ms median on this
+        machine, and the playback loop writes chunks to PortAudio just in
+        time -- so a check that cost that much would be heard as a stutter in
+        every reply, which is a poor trade for noticing a lock 250ms sooner.
+        The spawning happens on the thread `speak()` starts; this only reads
+        the flags it sets.
+        """
+        def watch() -> bool:
+            if self._interrupt.is_set() or not self.listening:
+                return True
+            return bool(barge is not None and barge())
+
+        return watch
+
+    def _poll_session_until(self, stop: threading.Event) -> None:
+        """Keep looking for a lock while the speaker owns the loop.
+
+        `poll_session()` is rate limited to a second of its own accord, so
+        this asks more often than that on purpose: the wait is what makes the
+        thread stop promptly when the sentence ends, not the poll interval.
+        """
+        while not stop.wait(0.25):
+            try:
+                self.poll_session()
+            except Exception:
+                # A reply that keeps playing is better than a daemon that
+                # dies mid-sentence; the main loop polls this too.
+                pass
 
     def _barge_watch(self):
         """A callable Speaker checks between chunks, or None when off.

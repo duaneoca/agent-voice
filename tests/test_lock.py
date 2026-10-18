@@ -360,3 +360,108 @@ class TestALockReachesAReplyInProgress:
         assert src.count("_lock_hold_until = time.time() + LOCK_HOLD_S") == 1
         assert "def apply_lock_command" in src
         assert "if self.apply_lock_command(cmd):" in src
+
+
+class TestALockReachesTheSentenceBeingSpoken:
+    """The second half of the same finding, reported against 98697f5.
+
+    Polling between sentences moved the exposure from the whole reply down to
+    one sentence; it did not close it. `speak()` is synchronous for as long as
+    the audio lasts, and `_barge_watch()` returned None whenever `bargeIn` was
+    off -- which is the default, and measured: where the microphone sits
+    beside the speaker, a gate that hears the user fires on our own output
+    too. So nothing could stop a sentence once it had started, and a lock two
+    words into a long one read the rest of it out to a locked room.
+    """
+
+    def _speaker(self, daemon, lock_after=None):
+        played = []
+
+        class Speaker:
+            name = "stub"
+
+            def __init__(self):
+                self.cancelled = 0
+
+            def say(self, text, watch=None):
+                for i in range(10):
+                    if watch is not None and watch():
+                        return
+                    played.append(i)
+                    if lock_after is not None and i == lock_after:
+                        daemon.locked = True        # the screen locks mid-sentence
+
+            def cancel(self):
+                self.cancelled += 1
+
+        daemon.speaker = Speaker()
+        daemon.enabled, daemon.locked = True, False
+        return played
+
+    def test_a_lock_stops_the_audio_mid_sentence(self, daemon, monkeypatch):
+        monkeypatch.setattr(daemon, "poll_session", lambda: None)
+        played = self._speaker(daemon, lock_after=2)
+
+        daemon.speak("a sentence long enough to matter", 0)
+
+        assert len(played) == 3, \
+            f"the rest of the sentence was read to a locked room: {played}"
+
+    def test_the_watch_is_there_with_barge_in_off(self, daemon, monkeypatch):
+        """The regression precisely: barge-in was the only reason to look
+        between chunks, so turning it off removed the only means of stopping."""
+        monkeypatch.setattr(daemon, "poll_session", lambda: None)
+        daemon.cfg._values["bargeIn"] = False
+        assert daemon._barge_watch() is None, "barge-in is off for this test"
+
+        watch = daemon._watch(None)
+        assert callable(watch), "nothing could interrupt a sentence"
+        daemon.enabled, daemon.locked = True, False
+        assert watch() is False, "it must not stop an unlocked session"
+        daemon.locked = True
+        assert watch() is True, "a locked session has to stop the audio"
+
+    def test_the_echo_path_is_guarded_by_the_same_function(self, daemon,
+                                                           monkeypatch):
+        """With no agent configured the reply is the transcript read back, and
+        it reaches the speaker without passing the between-sentence poll at
+        all. The guard is in `speak()` for that reason: one function every
+        path that makes a noise goes through."""
+        monkeypatch.setattr(daemon, "poll_session", lambda: None)
+        played = self._speaker(daemon)
+        daemon.agent = None
+        daemon.locked = True                        # already locked
+
+        daemon.answer("say this back to me", {"transcript": "x"})
+
+        assert played == [], f"it spoke into a locked room: {played}"
+        assert daemon.speaker.cancelled, "silence() was never called"
+
+    def test_the_lock_is_polled_while_a_sentence_plays(self, daemon,
+                                                       monkeypatch):
+        """The compositor check is a 9ms process spawn, so it runs on a thread
+        rather than between audio chunks -- but it does have to run, or only
+        `agentvoice lock` could reach a sentence and a real screen lock could
+        not."""
+        import time as _time
+
+        polls = []
+        monkeypatch.setattr(daemon, "poll_session", lambda: polls.append(1))
+
+        class Slow:
+            name = "stub"
+            cancelled = 0
+
+            def say(self, text, watch=None):
+                _time.sleep(0.8)                    # a sentence of audio
+
+            def cancel(self):
+                pass
+
+        daemon.speaker = Slow()
+        daemon.enabled, daemon.locked = True, False
+        daemon.speak("a long sentence", 0)
+
+        # One before the first chunk, then the thread every 250ms.
+        assert len(polls) >= 3, \
+            f"nothing looked for a lock while the audio played: {len(polls)}"
