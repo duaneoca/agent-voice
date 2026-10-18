@@ -27,6 +27,7 @@ daemon/agentvoice.toml. Both are re-read between utterances.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import queue
@@ -738,6 +739,11 @@ class Daemon:
         # an interrupt is an explicit act -- a keybind, or the Stop button.
         self._interrupt = threading.Event()
         self._barge = None
+        #: Depth of `_watching_session()`, which is entered for the whole of a
+        #: turn and again inside `speak()`.
+        self._watchers = 0
+        self._watch_stop = None
+        self._watch_thread = None
         #: Last line printed under each key, so the reconcilers can report a
         #: state rather than repeat it. They run on the idle poll, every
         #: couple of seconds, and the ones that cannot succeed -- no agent
@@ -1258,15 +1264,10 @@ class Daemon:
             self.silence()
             return
         barge = self._barge_watch()
-        stop = threading.Event()
-        poller = threading.Thread(target=self._poll_session_until, args=(stop,),
-                                  daemon=True)
-        poller.start()
         try:
-            self.speaker.say(speech_safe(text), watch=self._watch(barge))
+            with self._watching_session():
+                self.speaker.say(speech_safe(text), watch=self._watch(barge))
         finally:
-            stop.set()
-            poller.join(timeout=2.0)
             self.deafen(tail_ms)
 
     def _watch(self, barge):
@@ -1287,6 +1288,38 @@ class Daemon:
 
         return watch
 
+    @contextlib.contextmanager
+    def _watching_session(self):
+        """Keep looking for a lock while the run loop cannot.
+
+        The loop polls the session every two seconds and `answer()` blocks it
+        for the whole turn: 31 seconds in this machine's journal, of which the
+        first six were before a word was spoken. Speech was safe once the
+        check between sentences existed -- nothing was read aloud -- but the
+        *agent* went on working behind a locked screen for as long as the
+        thinking phase lasted, running whatever tools the permission level
+        allowed. `silence()` cancels the agent, so it is enough to notice.
+
+        Reentrant by counting, because `speak()` wants this too: the no-agent
+        echo path reaches the speaker without passing through the rest of
+        `answer()`, and nesting must not start a second thread.
+        """
+        self._watchers += 1
+        if self._watchers == 1:
+            self._watch_stop = threading.Event()
+            self._watch_thread = threading.Thread(
+                target=self._poll_session_until, args=(self._watch_stop,),
+                daemon=True)
+            self._watch_thread.start()
+        try:
+            yield
+        finally:
+            self._watchers -= 1
+            if self._watchers == 0:
+                self._watch_stop.set()
+                self._watch_thread.join(timeout=2.0)
+                self._watch_stop = self._watch_thread = None
+
     def _poll_session_until(self, stop: threading.Event) -> None:
         """Keep looking for a lock while the speaker owns the loop.
 
@@ -1297,9 +1330,17 @@ class Daemon:
         while not stop.wait(0.25):
             try:
                 self.poll_session()
+                # The microphone being lent out is reconciled here as well as
+                # in the run loop, and for the same reason the lock is: the
+                # loop is not running. Somebody who starts dictating into
+                # another application while a reply is being read out is
+                # exactly the case this setting exists for -- it was their
+                # reason for asking for it -- and without this the reply
+                # talked over them until it finished, then stepped aside.
+                self.reconcile_yield()
             except Exception:
                 # A reply that keeps playing is better than a daemon that
-                # dies mid-sentence; the main loop polls this too.
+                # dies mid-sentence; the run loop polls both of these too.
                 pass
 
     def _barge_watch(self):
@@ -1374,34 +1415,37 @@ class Daemon:
                 yield chunk
 
         try:
-            for sentence in sentences(tap(self.agent.send(text, self.session_id))):
-                # Checked before the sentence is recorded, so the transcript
-                # in the panel is what was actually said out loud rather than
-                # what the agent had written by the time it was stopped.
-                # Between sentences, because this is the only place the
-                # daemon looks while a reply is being read out. Without it a
-                # screen locked mid-answer kept hearing the rest of it.
-                self.poll_session()
-                if self._interrupt.is_set() or not self.listening:
-                    self.silence()
-                    break
-                if speech_is_logged(self.cfg.get_bool("logSpeech")):
-                    print(f"  {CYA}{safe_for_terminal(sentence)}{OFF}", flush=True)
-                reply_parts.append(sentence)
-                # Published per sentence rather than once at the end. The answer
-                # used to reach the state file only after the last word was
-                # spoken, which is the moment the readout starts counting down
-                # to close -- so it was on screen for the linger and nothing
-                # more. Publishing here puts the text up as that sentence
-                # begins, because speak() below blocks until it has been said.
-                last["reply"] = " ".join(reply_parts)[:400]
-                if self.speaker and self.listening:
-                    self.state.publish("speaking", **last)
-                    self.speak(sentence, tail_ms)
-                else:
-                    # No voice: the text is the entire answer, so it matters
-                    # more here, not less. Keep whatever state we are in.
-                    self.state.publish(self.state.current, **last)
+            with self._watching_session():
+                for sentence in sentences(tap(self.agent.send(text, self.session_id))):
+                    # Checked before the sentence is recorded, so the transcript
+                    # in the panel is what was actually said out loud rather than
+                    # what the agent had written by the time it was stopped.
+                    # One of three places that look, now. This one decides
+                    # whether the *next* sentence is spoken at all; the watch
+                    # inside Speaker.say stops the one already playing, and the
+                    # thread this block runs under notices a lock during the
+                    # agent's own turn, before any sentence exists.
+                    self.poll_session()
+                    if self._interrupt.is_set() or not self.listening:
+                        self.silence()
+                        break
+                    if speech_is_logged(self.cfg.get_bool("logSpeech")):
+                        print(f"  {CYA}{safe_for_terminal(sentence)}{OFF}", flush=True)
+                    reply_parts.append(sentence)
+                    # Published per sentence rather than once at the end. The answer
+                    # used to reach the state file only after the last word was
+                    # spoken, which is the moment the readout starts counting down
+                    # to close -- so it was on screen for the linger and nothing
+                    # more. Publishing here puts the text up as that sentence
+                    # begins, because speak() below blocks until it has been said.
+                    last["reply"] = " ".join(reply_parts)[:400]
+                    if self.speaker and self.listening:
+                        self.state.publish("speaking", **last)
+                        self.speak(sentence, tail_ms)
+                    else:
+                        # No voice: the text is the entire answer, so it matters
+                        # more here, not less. Keep whatever state we are in.
+                        self.state.publish(self.state.current, **last)
         except Exception as e:                  # a broken agent must not end the loop
             error = f"{type(e).__name__}: {e}"
 

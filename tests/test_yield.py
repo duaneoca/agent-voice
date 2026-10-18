@@ -221,3 +221,54 @@ class TestTheSetting:
         panel = (ROOT / "Panel.qml").read_text()
         assert "ANOTHER APP IS RECORDING" in panel
         assert "Listening again as soon as it stops." in panel
+
+
+class TestAnotherAppStartingMidReply:
+    """The case the setting was asked for: "I was about to talk to you and I
+    have to remember to mute the agent voice first, otherwise it might
+    respond." If the other application starts recording while a reply is
+    already being read out, stepping aside after the reply has finished is
+    too late -- it talked over them for the whole of it.
+
+    `reconcile_yield()` was only called from the run loop, which `answer()`
+    blocks for the whole turn.
+    """
+
+    def test_the_reply_stops_when_another_app_starts_recording(self, daemon,
+                                                               monkeypatch):
+        import time as _time
+
+        import wake_listen
+
+        t0 = _time.perf_counter()
+        # Another application appears a quarter of a second in.
+        monkeypatch.setattr(
+            wake_listen, "other_recorders",
+            lambda pid: ["Zoom"] if _time.perf_counter() - t0 > 0.25 else [])
+        monkeypatch.setattr(wake_listen, "session_locked", lambda: False)
+        daemon.cfg._values["yieldToRecorders"] = True
+        daemon.enabled, daemon.locked, daemon.yielded = True, False, False
+
+        spoken = []
+
+        class Speaker:
+            name = "stub"
+            cancelled = 0
+
+            def say(self, text, watch=None):
+                for _ in range(40):              # 2s of audio, in slices
+                    if watch is not None and watch():
+                        return
+                    spoken.append(1)
+                    _time.sleep(0.05)
+
+            def cancel(self):
+                pass
+
+        daemon.speaker = Speaker()
+        daemon.agent = None                      # echo path: straight to speech
+        daemon.answer("read this back to me at length", {"transcript": "x"})
+
+        assert daemon.yielded, "it never noticed the other application"
+        assert len(spoken) < 40, \
+            f"it talked over the other application for the whole reply: {len(spoken)}"

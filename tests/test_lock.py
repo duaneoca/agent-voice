@@ -465,3 +465,84 @@ class TestALockReachesTheSentenceBeingSpoken:
         # One before the first chunk, then the thread every 250ms.
         assert len(polls) >= 3, \
             f"nothing looked for a lock while the audio played: {len(polls)}"
+
+
+class TestALockReachesTheAgentsOwnTurn:
+    """The third place a lock had to reach, after the reply loop and the
+    sentence: the agent's turn before any sentence exists.
+
+    `answer()` blocks the run loop for the whole turn -- 31 seconds in this
+    machine's journal, of which the first six were before a word was spoken.
+    Speech was safe once the between-sentence check existed, because nothing
+    reached the speaker. The agent was not: it went on running whatever tools
+    the permission level allowed, behind a locked screen, for as long as the
+    thinking phase lasted.
+    """
+
+    def test_a_lock_while_thinking_cancels_the_agent(self, daemon, monkeypatch):
+        import time as _time
+
+        from adapters.base import Chunk
+
+        class Agent:
+            """A CLI that thinks for a while before its first word, and dies
+            when cancelled -- which is what a cancel has to achieve here. The
+            flag records *when* it was cancelled, because a cancel that only
+            lands after the first sentence arrives is the between-sentence
+            check doing the work and proves nothing about this."""
+
+            name = "stub"
+
+            def __init__(self):
+                self.cancelled = 0
+                self.cancelled_while_thinking = False
+
+            def send(self, text, session_id=None):
+                for _ in range(40):              # 2s of thinking, in steps
+                    _time.sleep(0.05)
+                    if self.cancelled:
+                        self.cancelled_while_thinking = True
+                        return                   # the CLI is gone
+                yield Chunk(text="Something private. ")
+
+            def cancel(self):
+                self.cancelled += 1
+
+        agent = Agent()
+        daemon.agent = agent
+        daemon.enabled, daemon.locked = True, False
+
+        # Stubbed at the compositor, not at poll_session: the real chain is
+        # watcher -> poll_session -> reconcile_lock -> silence -> agent.cancel,
+        # and a fake that merely sets `locked` would skip the three steps in
+        # the middle. The first version of this test did that and passed with
+        # the watcher removed, which is how it came to be written this way.
+        import wake_listen
+
+        t0 = _time.perf_counter()
+        monkeypatch.setattr(wake_listen, "session_locked",
+                            lambda: _time.perf_counter() - t0 > 0.25)
+        daemon._last_session_poll = 0.0          # no rate limit on the first look
+        daemon.answer("something private", {"transcript": "x"})
+
+        assert agent.cancelled_while_thinking, \
+            "the agent kept working behind a locked screen for the whole turn"
+        assert not daemon.speaker.said, "it spoke into a locked room"
+
+    def test_the_watcher_does_not_start_a_thread_per_nesting(self, daemon):
+        """`speak()` enters it too, for the echo path. Two threads polling the
+        compositor twice as often is waste, and leaking one per sentence is
+        worse than waste."""
+        import threading
+
+        before = threading.active_count()
+        with daemon._watching_session():
+            inside_one = threading.active_count()
+            with daemon._watching_session():
+                inside_two = threading.active_count()
+        after = threading.active_count()
+
+        assert inside_one == before + 1, "no watcher was started"
+        assert inside_two == inside_one, "nesting started a second watcher"
+        assert daemon._watchers == 0, "the count did not unwind"
+        assert after == before, "the watcher thread was leaked"

@@ -306,6 +306,24 @@ class StateFile:
             pass
 
 
+#: How much audio is handed to PortAudio in one blocking write.
+#:
+#: Piper returns an entire sentence as a single chunk -- 10.53 seconds of
+#: audio in one 464KB buffer, measured on lessac-medium with the sentence
+#: that exposed this -- and `out.write()` of that blocks until nearly all of
+#: it has played. `_stop` was checked only before a chunk and `watch` only
+#: after one, so a sentence could not be interrupted once begun, and *every*
+#: way of stopping speech went through one of those two: a locked screen, a
+#: mute, another application taking the microphone, the Stop button, the
+#: interrupt keybind, and barge-in. Measured before this change: cancel() one
+#: second in, and it kept talking for 10.29 seconds.
+#:
+#: 50ms is one slice of ~1100 samples at 22050Hz. Small enough that a stop is
+#: inaudible as a delay, large enough that the write loop is not the thing
+#: using the CPU.
+SLICE_MS = 50
+
+
 class Speaker:
     """Piper, loaded once and reused. 22ms to first audio, 22x realtime.
 
@@ -400,6 +418,7 @@ class Speaker:
 
         self._stop.clear()
         total = 0.0
+        slice_n = max(1, int(self._rate * SLICE_MS / 1000))
         with sd.OutputStream(samplerate=self._rate, channels=1,
                              dtype="int16") as out:
             for sentence in self.sentences(text):
@@ -409,9 +428,20 @@ class Speaker:
                     if self._stop.is_set():
                         break
                     pcm = np.frombuffer(chunk.audio_int16_bytes, dtype=np.int16)
-                    out.write(pcm)
-                    total += len(pcm) / self._rate
-                    if watch is not None and watch():
-                        self._stop.set()
-                        break
+                    # Sliced, because Piper hands back a whole sentence as one
+                    # chunk and a blocking write of that cannot be interrupted.
+                    for at in range(0, len(pcm), slice_n):
+                        if self._stop.is_set():
+                            break
+                        out.write(pcm[at:at + slice_n])
+                        total += len(pcm[at:at + slice_n]) / self._rate
+                        if watch is not None and watch():
+                            self._stop.set()
+                            break
+            if self._stop.is_set():
+                # What has been written is already inside PortAudio's buffer
+                # and would go on playing after this returns. abort() drops it;
+                # stop() and close() drain it, which is the wrong direction for
+                # every caller that asked us to be quiet.
+                out.abort()
         return total
