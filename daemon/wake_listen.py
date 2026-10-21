@@ -50,7 +50,8 @@ from speech_text import (  # noqa: E402
 from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
 
 from paths import (  # noqa: E402
-    build_id, endpoint_key, project_dir, vocab_file, vosk_model,
+    build_id, endpoint_key, harden_private_trees, project_dir, vocab_file,
+    vosk_model,
 )
 
 #: `blocksize` is in frames, not bytes: 3200 frames at 16kHz is 200ms, not
@@ -1826,6 +1827,17 @@ def main() -> int:
 
     cfg = Config()
     print(f"  {DIM}knobs: {cfg.source} · build {build_id()}{OFF}")
+
+    # Writing new files with the right mode does nothing for the ones already
+    # there. Somebody who trained a verifier while these directories were
+    # 0755 still has those recordings and that model readable by every local
+    # account, and an upgrade that quietly fixed only new files would leave
+    # the old ones exposed and say nothing. Said out loud, because a silent
+    # repair cannot be told from no repair.
+    repaired = harden_private_trees()
+    if repaired:
+        print(f"  {YEL}tightened {len(repaired)} voice recording(s) or "
+              f"model(s) that other local accounts could read{OFF}")
     pipe = Pipeline(cfg, args.whisper)
 
     speaker = None

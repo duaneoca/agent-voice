@@ -444,6 +444,11 @@ fi
 # next time Arch bumps it.
 say "Creating the environment (CPython $PYTHON_VERSION, managed by uv)…"
 mkdir -p "$DATA" "$MODELS" "$DATA/verifiers" "$DATA/wakewords"
+# These hold recordings of somebody's voice and a model fitted to it, and a
+# plain mkdir takes the user's umask -- 0755 by default on most distributions.
+# Creating them loosely here is also what defeated the mode= on the Python
+# side, since mkdir ignores it when the directory already exists.
+chmod 700 "$DATA/verifiers" "$DATA/wakewords"
 [[ -d $VENV ]] || uv venv --python "$PYTHON_VERSION" "$VENV" >/dev/null
 
 say "Installing dependencies…"

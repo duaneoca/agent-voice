@@ -307,3 +307,74 @@ def build_id(app: Path | None = None) -> str:
     except (OSError, subprocess.SubprocessError):
         pass
     return "unrecorded"
+
+
+#: Directories holding a recording of somebody's voice or a model fitted to
+#: it. Listed rather than discovered, because a repair pass that walks
+#: whatever it finds under DATA_DIR would also chmod the venv and the models.
+PRIVATE_TREES = ("verifiers", "verifier-training", "wakewords")
+
+
+def private_dir(path: Path) -> Path:
+    """Make a directory only this account can enter, and return it.
+
+    `mkdir(mode=0o700)` is not enough on its own: the mode is **ignored when
+    the directory already exists**, which it does whenever `install.sh`
+    pre-created it with a plain `mkdir -p` under the user's umask. Three
+    places in this project needed exactly this and each hand-rolled it; two
+    got the chmod and `verifier.py` did not, which is the gap a marketplace
+    reviewer reported against 72df974. One function now, so a fourth caller
+    cannot get it wrong.
+    """
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        # A directory somebody else owns is not ours to repair, and failing
+        # to tighten it must not stop the thing that wanted to write there.
+        pass
+    return path
+
+
+def private_file(path: Path) -> Path:
+    """Make a file only this account can read, and return it.
+
+    Needed because the thing that writes it may not be ours: openWakeWord's
+    verifier writer uses a plain `open(..., "wb")`, so the personal speaker
+    model landed at 0644 under the default umask. A file written by a library
+    is still our file to protect.
+    """
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+def harden_private_trees() -> list[str]:
+    """Tighten anything already on disk, and say what was repaired.
+
+    `mkdir` and `chmod` at the point of writing only protect data written
+    afterwards. Somebody who trained a verifier under a 0755 home still has
+    those recordings and that model readable, and an upgrade that silently
+    fixed only new files would leave the old ones exposed while reporting
+    nothing. Reported against 72df974 along with the writers themselves.
+
+    Returns the paths it changed so the caller can say so out loud; a repair
+    nobody is told about is indistinguishable from no repair.
+    """
+    fixed: list[str] = []
+    for name in PRIVATE_TREES:
+        root = DATA_DIR / name
+        if not root.is_dir():
+            continue
+        for item in [root, *root.rglob("*")]:
+            try:
+                mode = item.stat().st_mode & 0o777
+                want = 0o700 if item.is_dir() else 0o600
+                if mode & 0o077:
+                    item.chmod(want)
+                    fixed.append(str(item))
+            except OSError:
+                continue
+    return fixed

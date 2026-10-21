@@ -11,6 +11,12 @@ CLIPS=25
 CLIP_SECONDS=2.0
 STATE="${XDG_DATA_HOME:-$HOME/.local/share}/agentvoice"
 WORK="$STATE/verifier-training"
+
+# `mkdir -p -m 700` does not touch a directory that already exists -- verified:
+# an existing 0755 directory stays 0755. That is the same mistake the Python
+# side had, and it matters here because these hold recordings of somebody's
+# voice. Reported against 72df974 by a marketplace reviewer.
+private_dir() { mkdir -p "$@" && chmod 700 "$@"; }
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 
 # Omarchy floats this terminal at 875x600 -- roughly 90 columns by 30 rows --
@@ -288,7 +294,7 @@ fetch_speaker() {
   if curl -fsSL --proto '=https' -o "$tmp/$file" "$base/$file" &&
      curl -fsSL --proto '=https' -o "$tmp/$file.json" "$base/$file.json" &&
      lock_ok "$tmp/$file" "$file" && lock_ok "$tmp/$file.json" "$file.json"; then
-    mkdir -p -m 700 "$dir"
+    private_dir "$dir"
     mv "$tmp/$file" "$tmp/$file.json" "$dir/"
     rm -rf "$tmp"
     return 0
@@ -305,7 +311,7 @@ SPOKEN="${MODEL//_/ }"
 
 POS="$WORK/$MODEL/positives"
 NEG="$WORK/$MODEL/negatives"
-mkdir -p -m 700 "$POS" "$NEG"
+private_dir "$POS" "$NEG"
 
 # --- is there already one? -------------------------------------------------
 # Running this a second time used to walk silently past both the existing
@@ -335,7 +341,7 @@ if (( HAVE_POS >= 10 )); then
     # and then said "Nothing was saved". Restored by the cancel trap; removed
     # on the way out of a run that got as far as retraining.
     OLD_POS="$POS.previous.$$"
-    mkdir -p -m 700 "$OLD_POS"
+    private_dir "$OLD_POS"
     mv "$POS"/*.wav "$OLD_POS"/ 2>/dev/null || true
   fi
 fi

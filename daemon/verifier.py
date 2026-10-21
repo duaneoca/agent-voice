@@ -37,6 +37,7 @@ import wave
 from pathlib import Path
 
 from paths import VERIFIERS as VERIFIER_DIR
+from paths import private_dir, private_file
 from paths import WAKEWORDS, piper_voices
 
 RATE = 16_000
@@ -134,16 +135,19 @@ def record_clip(path: Path, seconds: float, device: int | None = None) -> float:
     frames = sd.rec(int(seconds * RATE), samplerate=RATE, channels=1,
                     dtype="int16", device=device)
     sd.wait()
-    # 0o700: these are recordings of somebody's voice and a model fitted to
-    # it. They were 0644 under 0755 directories, readable by any other local
-    # account on a machine whose $HOME is not itself 0700 -- which is a
-    # default, not a guarantee, and several distributions ship 0755.
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # These are recordings of somebody's voice and a model fitted to it. The
+    # comment here used to say exactly that and the code did not achieve it:
+    # `mkdir(mode=0o700)` is ignored when the directory already exists, and
+    # `install.sh` pre-creates this one with a plain `mkdir -p`, so under the
+    # default umask the tree stayed 0755 and `wave.open` wrote 0644 into it.
+    # Knowing the risk and describing it is not the same as closing it.
+    private_dir(path.parent)
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
         handle.setframerate(RATE)
         handle.writeframes(frames.tobytes())
+    private_file(path)
     x = frames.astype(np.float32).ravel()
     rms = float(np.sqrt((x ** 2).mean())) / 32768
     return 20.0 * np.log10(rms + 1e-9)
@@ -164,7 +168,7 @@ def train(model_name: str, positives: Path, negatives: Path,
 
     model_path, key = resolve_model(model_name)
     output = output or (VERIFIER_DIR / f"{key}.joblib")
-    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    private_dir(output.parent)
     # The upstream docstring says these take "the path to a directory". They
     # do not -- the implementation iterates them as lists of file paths, and
     # passing a directory string makes it open the string's first character
@@ -178,6 +182,10 @@ def train(model_name: str, positives: Path, negatives: Path,
             # path-loading produces at runtime.
             model_name=str(model_path),
         )
+        # openWakeWord writes this with a plain `open(..., "wb")`, so under
+        # the default umask the model fitted to somebody's voice lands at
+        # 0644. A file a library wrote is still ours to protect.
+        private_file(output)
     except ValueError as e:
         # Positives only contribute features from frames the base model
         # already scores above 0.5, so a clip it never hears contributes

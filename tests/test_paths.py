@@ -174,12 +174,45 @@ class TestNothingSpokenIsWorldReadable:
     def test_the_verifier_and_its_recordings_are_private(self):
         """Recordings of a voice and a model fitted to it. 0755 was safe only
         on a machine whose $HOME is 0700, which is a default and not a
-        guarantee -- several distributions ship 0755."""
+        guarantee -- several distributions ship 0755.
+
+        This test was part of the problem. It asserted
+        `src.count("mode=0o700") >= 2` and `"mkdir -p -m 700" in trainer` --
+        counting the presence of the two idioms that *do not work*, because
+        neither mkdir applies a mode to a directory that already exists. It
+        therefore passed for the whole time the recordings were readable, and
+        a reviewer found what it was meant to protect. Asserting that a fix
+        is present is not the same as asserting it works.
+
+        The behaviour is driven in test_private_data.py. What is left here is
+        the shape: the helpers are used and the broken idioms are gone.
+        """
         root = Path(__file__).resolve().parent.parent
         src = (root / "daemon" / "verifier.py").read_text()
-        assert src.count("mode=0o700") >= 2, \
-            "the verifier directories are created world readable"
+        assert "private_dir(" in src and "private_file(" in src
+
+        # Parsed, not grepped. The first version of this check matched the
+        # substring "mode=0o700" and failed on a *comment* that explains why
+        # the idiom does not work -- prose about a rule is not a breach of it.
+        import ast
+
+        offenders = [
+            node.lineno for node in ast.walk(ast.parse(src))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute) and node.func.attr == "mkdir"
+            and any(kw.arg == "mode" for kw in node.keywords)
+        ]
+        assert not offenders, (
+            f"a bare mkdir(mode=...) is back at line(s) {offenders}, without "
+            f"the chmod that makes it stick on an existing directory")
         trainer = (root / "bin" / "agentvoice-train-verifier").read_text()
-        assert "mkdir -p -m 700" in trainer, \
+        # Comment lines dropped first, for the same reason the Python side is
+        # parsed: the comment explaining why `mkdir -m` does nothing contains
+        # the string this is looking for, and tripped it twice.
+        commands = "\n".join(line for line in trainer.splitlines()
+                              if not line.strip().startswith("#"))
+        assert "chmod 700" in commands, \
             "the recording directories are created world readable"
-        assert 'mkdir -p "$POS" "$NEG"' not in trainer
+        assert "mkdir -p -m 700" not in commands, \
+            "mkdir -m does nothing to a directory that is already there"
+        assert 'mkdir -p "$POS" "$NEG"' not in commands
