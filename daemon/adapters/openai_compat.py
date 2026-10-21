@@ -34,6 +34,31 @@ MAX_SESSIONS = 16
 #: at which this one does.
 MAX_REPLY_CHARS = 100_000
 
+#: Caps on what an endpoint can make this process hold in memory.
+#:
+#: The daemon is long-lived and idles near 594MB with its models loaded, so
+#: anything the network can grow without bound is an OOM rather than a slow
+#: turn. Three separate ways in, all measured against a hostile local server:
+#:
+#: - one SSE "line" that never ends. `for raw in response` is an unbounded
+#:   readline, so 524 million characters arrived as a single line and took
+#:   the process from 22MB to 1026MB in 0.8 seconds. `MAX_REPLY_CHARS` did
+#:   not help: it is checked after a whole line is decoded and parsed.
+#: - a stream that never stops. The socket timeout is an *idle* timeout, so
+#:   bytes trickling in forever never trip it, and endless well-formed frames
+#:   carrying no content never reach `MAX_REPLY_CHARS` either.
+#: - an error body. `e.read()` buffered 200MB to keep 200 characters of it.
+#:
+#: Reported against 52e0179 by a marketplace reviewer as a static finding;
+#: the numbers above are this project reproducing it.
+#:
+#: 64KiB is far larger than any real SSE frame, which carries a few tokens.
+#: 8MiB of stream is ~80x the longest reply this will speak. 8KiB of error
+#: body is 40x what is kept after truncation.
+MAX_LINE_BYTES = 64 * 1024
+MAX_STREAM_BYTES = 8 * 1024 * 1024
+MAX_ERROR_BYTES = 8 * 1024
+
 #: Sent on every request. Not decoration: see the header block in send().
 USER_AGENT = "agentvoice/0.2 (+https://github.com/duaneoca/agent-voice)"
 
@@ -253,9 +278,26 @@ class OpenAICompatible(Adapter):
         try:
             with _OPENER.open(request, timeout=idle) as response:
                 self._response = response
-                for raw in response:
+                read = 0
+                while True:
                     if self._cancelled:
                         break
+                    # Bounded, because `for raw in response` is readline with
+                    # no limit and a line is whatever the server says it is.
+                    raw = response.readline(MAX_LINE_BYTES + 1)
+                    if not raw:
+                        break
+                    read += len(raw)
+                    if len(raw) > MAX_LINE_BYTES or read > MAX_STREAM_BYTES:
+                        # Not a slow endpoint: a frame larger than any real
+                        # one, or a stream that goes on past any real reply.
+                        # Both are memory rather than speech, and the idle
+                        # timeout cannot see either, because the bytes keep
+                        # coming.
+                        self._forget_turn(sid)
+                        yield Chunk(error=f"{self.base_url} sent more than "
+                                          f"this will read in one reply")
+                        return
                     line = raw.decode("utf-8", "replace").strip()
                     if not line.startswith("data:"):
                         continue
@@ -275,7 +317,9 @@ class OpenAICompatible(Adapter):
                             break
         except urllib.error.HTTPError as e:
             try:
-                detail = e.read().decode("utf-8", "replace")[:200]
+                # Bounded before decoding, not after: the slice to 200 was
+                # applied to whatever had already been pulled into memory.
+                detail = e.read(MAX_ERROR_BYTES).decode("utf-8", "replace")[:200]
             except Exception:
                 detail = ""
             # A refused redirect has no body; its reason is the explanation.

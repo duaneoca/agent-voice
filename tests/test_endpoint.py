@@ -18,6 +18,11 @@ from adapters.openai_compat import OpenAICompatible
 
 RECEIVED: list[dict] = []
 BEHAVIOUR = {"mode": "ok"}
+#: Bytes the hostile handlers managed to deliver before the client stopped
+#: reading. This is the measurement that distinguishes a bounded read from an
+#: unbounded one: both end in the same error chunk, but only one of them
+#: declines to pull the whole attack into memory first.
+DELIVERED = {"bytes": 0}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -39,6 +44,42 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"error":"bad key"}')
             return
+        if BEHAVIOUR["mode"] == "endless_line":
+            # One SSE "line" with no newline, ever.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b"data: ")
+            try:
+                for _ in range(4096):         # 16MB if anybody reads it all
+                    self.wfile.write(b"A" * 4096)
+                    DELIVERED["bytes"] += 4096
+            except Exception:                 # the client hung up, as it should
+                pass
+            return
+        if BEHAVIOUR["mode"] == "endless_frames":
+            # Well formed, complete, and carrying nothing. MAX_REPLY_CHARS
+            # never sees these, because no delta is ever produced.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                for _ in range(2_000_000):
+                    self.wfile.write(b": ping\n")
+                    DELIVERED["bytes"] += 7
+            except Exception:
+                pass
+            return
+        if BEHAVIOUR["mode"] == "huge_error_body":
+            self.send_response(500)
+            self.end_headers()
+            try:
+                for _ in range(4096):         # 16MB of error body
+                    self.wfile.write(b"X" * 4096)
+                    DELIVERED["bytes"] += 4096
+            except Exception:
+                pass
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -57,6 +98,7 @@ class Handler(BaseHTTPRequestHandler):
 def server():
     RECEIVED.clear()
     BEHAVIOUR["mode"] = "ok"
+    DELIVERED["bytes"] = 0
     httpd = HTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}/v1"
@@ -624,3 +666,85 @@ class TestWhereItActs:
     def test_a_cli_backend_does(self):
         from adapters.claude_code import ClaudeCode
         assert ClaudeCode(cwd="/tmp/project").cwd == "/tmp/project"
+
+
+class TestAnEndpointCannotExhaustThisProcess:
+    """The daemon is long-lived and idles near 594MB with its models loaded,
+    so anything an endpoint can grow without bound is an OOM rather than a
+    slow turn. Reported against 52e0179 by a marketplace reviewer as a static
+    finding; reproduced here against a hostile server, which is what turned
+    "could" into numbers: one SSE line that never ended took a bare process
+    from 22MB to 1026MB in 0.8 seconds, and a 200MB error body took it to
+    425MB to keep 200 characters of it.
+
+    Note what did *not* help. `MAX_REPLY_CHARS` is checked after a whole line
+    is decoded and parsed, so it never saw the line. The socket timeout is an
+    *idle* timeout, so bytes arriving steadily never tripped it.
+    """
+
+    def _small_limits(self, monkeypatch):
+        """Shrink the caps rather than send megabytes at a test suite."""
+        from adapters import openai_compat as oc
+
+        monkeypatch.setattr(oc, "MAX_LINE_BYTES", 8 * 1024)
+        monkeypatch.setattr(oc, "MAX_STREAM_BYTES", 64 * 1024)
+        monkeypatch.setattr(oc, "MAX_ERROR_BYTES", 1024)
+
+    def test_a_line_that_never_ends_is_refused(self, server, monkeypatch):
+        self._small_limits(monkeypatch)
+        BEHAVIOUR["mode"] = "endless_line"
+        a = OpenAICompatible(base_url=server, model="m")
+
+        chunks = list(a.send("hi"))
+        errors = [c.error for c in chunks if c.error]
+        assert errors, "it read an unbounded line and said nothing"
+        assert "more than" in errors[0]
+        assert not any(c.text for c in chunks), "it spoke the attack"
+        # The part that matters, and the part the first version of this test
+        # missed: an unbounded readline buffers the whole 16MB and *then*
+        # notices it is too long, which produces exactly the same error. Only
+        # the bytes the server got away with tell the two apart. The slack is
+        # for kernel socket buffers, which absorb a few hundred KB after the
+        # client stops reading.
+        assert DELIVERED["bytes"] < 4 * 1024 * 1024, (
+            f"it swallowed {DELIVERED['bytes'] / 1e6:.1f}MB of a 16MB line "
+            f"before objecting")
+
+    def test_a_stream_that_never_stops_is_refused(self, server, monkeypatch):
+        """Each frame is well formed and carries no content, so neither the
+        line cap nor MAX_REPLY_CHARS applies. The total budget is what ends
+        it."""
+        self._small_limits(monkeypatch)
+        BEHAVIOUR["mode"] = "endless_frames"
+        a = OpenAICompatible(base_url=server, model="m")
+
+        errors = [c.error for c in a.send("hi") if c.error]
+        assert errors, "an endless well-formed stream was read forever"
+        assert "more than" in errors[0]
+        assert DELIVERED["bytes"] < 4 * 1024 * 1024, (
+            f"it read {DELIVERED['bytes'] / 1e6:.1f}MB of ping frames")
+
+    def test_an_error_body_is_bounded_before_it_is_decoded(self, server,
+                                                           monkeypatch):
+        """`e.read()` pulled the whole body in and *then* sliced it to 200
+        characters, which is the wrong order."""
+        self._small_limits(monkeypatch)
+        BEHAVIOUR["mode"] = "huge_error_body"
+        a = OpenAICompatible(base_url=server, model="m")
+
+        errors = [c.error for c in a.send("hi") if c.error]
+        assert errors and errors[0].startswith("HTTP 500")
+        # 200 characters of detail plus the "HTTP 500: " prefix, and no more.
+        assert len(errors[0]) < 260, f"it kept {len(errors[0])} characters"
+        # And it did not pull 16MB in to arrive at those 200 characters --
+        # `e.read()` then `[:200]` is the wrong order and looks the same here
+        # without this line.
+        assert DELIVERED["bytes"] < 4 * 1024 * 1024, (
+            f"it read {DELIVERED['bytes'] / 1e6:.1f}MB of an error body")
+
+    def test_an_ordinary_reply_is_unaffected(self, server):
+        """The caps are far above any real frame, so the normal path must be
+        exactly as it was -- a bound that breaks ordinary use gets removed."""
+        a = OpenAICompatible(base_url=server, model="m")
+        text = "".join(c.text for c in a.send("hi") if c.text)
+        assert text == "A wake word starts the conversation."
