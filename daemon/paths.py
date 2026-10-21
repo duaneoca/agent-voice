@@ -291,7 +291,15 @@ def build_id(app: Path | None = None) -> str:
     except (OSError, IndexError):
         pass
     try:
-        out = subprocess.run(["git", "-C", str(app), "describe",
+        # `--dirty` asks for working-tree status, which consults
+        # core.fsmonitor -- a key the repository's own config can set to a
+        # command git then executes. Normally this runs against our own
+        # checkout, but `install.sh --dev` points $APP at one on disk, and
+        # the rule is cheaper to apply than to reason about per call site.
+        # See the longer note in permission_hook._searchable.
+        out = subprocess.run(["git", "-c", "core.fsmonitor=",
+                              "--no-optional-locks",
+                              "-C", str(app), "describe",
                               "--always", "--dirty"],
                              capture_output=True, text=True, timeout=3)
         if out.returncode == 0 and out.stdout.strip():

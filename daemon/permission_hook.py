@@ -266,7 +266,23 @@ def _searchable(root: str) -> list[str] | None:
     # every search prompted about a credential that is nothing of the kind.
     try:
         proc = subprocess.run(
-            ["git", "-C", root, "ls-files", "--cached", "--others",
+            # `-c core.fsmonitor=`: git reads that key from the repository's
+            # own .git/config and *executes* it. So enumerating a project was
+            # running code the project carried -- as the session user, before
+            # anything was asked, at every level including `ask`. The guard
+            # whose job is deciding whether something may run, running it.
+            #
+            # .git/config is not fetched by `git clone`, but it travels in a
+            # tarball, a zip, or a copied directory, which is what makes an
+            # imported or shared project the case that matters. Reported
+            # against a272d79 by a marketplace reviewer as a static trace;
+            # reproduced here before fixing, and `git describe` in
+            # paths.build_id turned out to have the same shape.
+            #
+            # `--no-optional-locks` because a guard inspecting a repository
+            # has no business writing to its index.
+            ["git", "-c", "core.fsmonitor=", "--no-optional-locks",
+             "-C", root, "ls-files", "--cached", "--others",
              "--exclude-standard", "-z"],
             capture_output=True, text=True, timeout=max(left(), 0.1))
         if proc.returncode == 0:

@@ -426,7 +426,8 @@ class TestContentSearch:
     def test_the_pre_search_is_bounded(self):
         """It runs inside a hook that blocks the tool, so an enormous tree
         must end in a decision rather than in waiting."""
-        src = (ROOT / "daemon" / "permission_hook.py").read_text()
+        src = (Path(__file__).resolve().parent.parent
+               / "daemon" / "permission_hook.py").read_text()
         body = src[src.index("def _searchable("):]
         body = body[:body.index("\ndef ")]
         assert "timeout=" in body
@@ -470,3 +471,76 @@ class TestContentSearch:
                             lambda root: called.append(root) or [])
         assert hook.decide("Grep", {"pattern": "x", "path": "/"})[0] == "allow"
         assert not called, "it enumerated the tree and then allowed anyway"
+
+
+class TestEnumerationDoesNotRunTheProjectsOwnCode:
+    """The guard must not execute what it is inspecting.
+
+    `_searchable` falls back to `git ls-files` when ripgrep is absent -- a
+    fallback that exists because without it every search prompted on a runner
+    with no rg. Git reads `core.fsmonitor` from the repository's own
+    .git/config and *executes* it, so enumerating a project ran code the
+    project carried: as the session user, before anything was asked, at every
+    level including `ask`.
+
+    .git/config is not fetched by `git clone`, but it travels in a tarball, a
+    zip or a copied directory, which is what makes an imported or shared
+    project the case that matters.
+
+    Reported against a272d79 by a marketplace reviewer as a static source
+    trace. Reproduced before fixing: the payload ran.
+    """
+
+    def _repo_with_payload(self, tmp_path):
+        """A project carrying a hostile fsmonitor, as a shared one could."""
+        import stat
+        import subprocess
+
+        repo = tmp_path / "shared-project"
+        repo.mkdir()
+        marker = tmp_path / "EXECUTED"
+        payload = tmp_path / "payload.sh"
+        payload.write_text(f"#!/bin/sh\ntouch {marker}\necho ''\n")
+        payload.chmod(payload.stat().st_mode | stat.S_IEXEC)
+
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        (repo / "a.txt").write_text("hello")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+        # The attacker-controlled half: one line in .git/config.
+        subprocess.run(["git", "config", "core.fsmonitor", str(payload)],
+                       cwd=repo, check=True)
+        return repo, marker
+
+    def _without_ripgrep(self, monkeypatch):
+        """Force the git branch. rg is not probed with shutil.which -- it is
+        simply run, and an OSError is what "not installed" looks like."""
+        real = subprocess.run
+
+        def fake(argv, *a, **kw):
+            if argv and argv[0] == "rg":
+                raise FileNotFoundError("rg")
+            return real(argv, *a, **kw)
+
+        monkeypatch.setattr(hook.subprocess, "run", fake)
+
+    def test_a_hostile_fsmonitor_is_not_executed(self, tmp_path, monkeypatch):
+        repo, marker = self._repo_with_payload(tmp_path)
+        self._without_ripgrep(monkeypatch)
+
+        files = hook._searchable(str(repo))
+
+        assert not marker.exists(), \
+            "enumerating the project executed code the project supplied"
+        # And the fallback still answers, or the fix is a denial of service.
+        assert files is not None, "the git fallback stopped working"
+        assert any(f.endswith("a.txt") for f in files), files
+
+    def test_the_flag_is_on_the_command_itself(self):
+        """Belt and braces: the behavioural test above depends on this
+        process's git honouring the config, and a future git could change
+        which commands consult fsmonitor. The flag is cheap to assert."""
+        src = (ROOT / "daemon" / "permission_hook.py").read_text()
+        at = src.index('"ls-files"')
+        call = src[max(0, at - 400):at]
+        assert '"core.fsmonitor="' in call, \
+            "git enumeration no longer disables repository-configured hooks"
