@@ -455,6 +455,26 @@ the term list; project names and tool names go in it.
 is 22x realtime. espeak-ng is the fallback for machines that cannot
 manage even that; it is robotic and costs 6ms.
 
+**A voice server instead** Set **Voice server** to a read-aloud server
+already running on this machine, and replies are spoken by it rather than
+by Piper: [Kokoro read-aloud](https://github.com/sayed-qutob-work/kokoro-read-aloud)'s
+is `http://127.0.0.1:5111`. The contract is its three endpoints --
+`POST /speak {"text"}`, `POST /stop`, and `GET /now` reporting
+`{"active": true}` while it plays -- and Kokoro read-aloud is the only server
+that has spoken a reply through it. Measured against it on an RTX 4060 Ti:
+first sound 118ms after the request, and a stop silent within 60ms.
+
+Two things change. The server owns the speaker, so a lock, a mute, the
+interrupt and barge-in reach it as a `/stop` from a 50ms poll rather than
+between audio writes -- the same bound Piper gives, by a different route.
+And the reply counts as finished only after 400ms of the server reporting
+silence, because `/now` goes briefly inactive between chunks whenever
+synthesis falls behind playback, and opening the microphone there would hear
+the next sentence. Piper stays behind it: a server that is down or refuses
+the text means the reply is spoken by Piper, not dropped, and the journal
+says so once rather than every turn. The URL must be loopback, because every
+reply goes there as text. `agentvoice calibrate` still measures Piper.
+
 **Wake word** two engines, chosen in settings, because they fail
 differently.
 

@@ -47,7 +47,7 @@ from adapters.base import speech_safe  # noqa: E402
 from speech_text import (  # noqa: E402
     as_prompt, is_stop_command, safe_for_terminal,
 )
-from runtime import RUNTIME_DIR, Config, Speaker, StateFile  # noqa: E402
+from runtime import RUNTIME_DIR, Config, ServerSpeaker, Speaker, StateFile  # noqa: E402
 
 from paths import (  # noqa: E402
     build_id, endpoint_key, project_dir, vocab_file, vosk_model,
@@ -1213,20 +1213,29 @@ class Daemon:
         if not self.cfg.get_bool("speakReplies"):
             self.speaker = None
             return
-        wanted = self.cfg.get_str("voice")
+        voice = self.cfg.get_str("voice")
+        # The Piper voice is part of what a server is asked for, because it is
+        # what speaks when the server does not -- so changing it while a URL
+        # is set must still reach the fallback.
+        url = self.cfg.get_str("voiceUrl").strip()
+        wanted = f"{url} {voice}" if url else voice
         if (self.speaker is not None
                 and self.speaker.requested == wanted
                 and not self.speaker.superseded()):
             return
         try:
-            self.speaker = Speaker(wanted)
+            self.speaker = ServerSpeaker(url, voice) if url else Speaker(voice)
         except Exception as e:
             # Reported once, not every two seconds: no voice on disk at all
             # is a standing condition, and it used to reprint the whole
             # banner with it on every idle poll.
             self.say_once("voice", f"  {YEL}voice {wanted} unavailable: {e}{OFF}")
             return
-        if self.speaker.substituted_for:
+        if getattr(self.speaker, "refused", ""):
+            self.say_once("voice",
+                          f"  {YEL}not using the voice server {url}: "
+                          f"{self.speaker.refused}; speaking with Piper{OFF}")
+        elif self.speaker.substituted_for:
             self.say_once("voice",
                           f"  {YEL}the voice {self.speaker.substituted_for} is not "
                           f"downloaded; speaking as {self.speaker.name}{OFF}")
@@ -1831,7 +1840,11 @@ def main() -> int:
     speaker = None
     if cfg.get_bool("speakReplies") and not args.no_speak:
         try:
-            speaker = Speaker(cfg.get_str("voice"))
+            # The same choice reconcile_voice() makes, or the first poll
+            # would load Piper here only to replace it with the server.
+            url = cfg.get_str("voiceUrl").strip()
+            speaker = (ServerSpeaker(url, cfg.get_str("voice")) if url
+                       else Speaker(cfg.get_str("voice")))
             if speaker.substituted_for:
                 print(f"  {YEL}the voice {speaker.substituted_for} is not "
                       f"downloaded; speaking as {speaker.name}{OFF}")

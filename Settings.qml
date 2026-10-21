@@ -1484,6 +1484,35 @@ Item {
                       root.setting("voice", "lessac-medium"))
                 }
               }
+
+              // A server that plays the audio itself, such as Kokoro
+              // read-aloud. The Piper voice above stays the fallback, which is
+              // why both are shown rather than one replacing the other.
+              TextField {
+                width: parent.width
+                text: root.setting("voiceUrl", "")
+                placeholderText: "voice server, e.g. http://127.0.0.1:5111"
+                foreground: root.foreground
+                font.family: root.fontFamily
+                onEditingFinished: {
+                  if (text !== root.setting("voiceUrl", ""))
+                    root.persist("voiceUrl", text, false)
+                }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                visible: root.setting("voiceUrl", "") !== ""
+                text: "Replies go to that server to be read out, and Piper " +
+                      "speaks whenever it does not answer. It must be on this " +
+                      "machine. Talking over it is noticed every 50ms rather " +
+                      "than between audio chunks, since the server owns the " +
+                      "speaker."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
 
             SettingsGroup {

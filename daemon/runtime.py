@@ -6,13 +6,20 @@ Three small concerns that the wake loop should not have to know about:
               falling back to the local TOML, then to a built-in default.
   StateFile   publishes what the daemon is doing, for the bar to read.
   Speaker     turns text into audio with Piper.
+  ServerSpeaker  hands text to a local read-aloud server that plays it
+              itself, and falls back to Piper when it does not answer.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import threading
+import time
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from paths import RUNTIME_DIR, SHELL_JSON, config_toml, piper_voices
 
@@ -57,6 +64,7 @@ DEFAULTS = {
     "logSpeech": False,
     "followUpMs": 7000,
     "voice": "lessac-medium",
+    "voiceUrl": "",
 }
 
 # The TOML predates the plugin and uses snake_case under sections. Kept working
@@ -445,3 +453,156 @@ class Speaker:
                 # every caller that asked us to be quiet.
                 out.abort()
         return total
+
+
+#: How often ServerSpeaker asks the server whether it is still talking, and
+#: so how long a stop can take to reach it. The same slice Piper writes in,
+#: so every way of being quiet lands as fast on either voice.
+POLL_MS = SLICE_MS
+
+#: How long the server must report silence before the reply counts as over.
+#: Kokoro read-aloud's /now goes inactive 0.3s after a chunk ends and active
+#: again when the next one starts, so a reply that outruns synthesis looks
+#: briefly finished between chunks. Ending there would open the microphone
+#: on our own next sentence.
+QUIET_MS = 400
+
+#: How long to wait for the first sound before deciding nothing is coming --
+#: text with nothing readable in it, or a server that took the request and
+#: then lost it. Generous because the first chunk is synthesised in full
+#: before it plays, and on a CPU that is most of a second.
+START_TIMEOUT_S = 10.0
+
+
+def _loopback(url: str) -> str:
+    """Why `url` may not be spoken to, or "" when it may.
+
+    Loopback only, and that is the point of the check rather than a missing
+    feature: every reply is sent there as text, so a remote URL would turn
+    "local first" into "a transcript of every answer, over the network".
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return "it is not an http:// URL"
+    host = parts.hostname or ""
+    if host == "localhost":
+        return ""
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return ""
+    except ValueError:
+        pass
+    return "it is not on this machine (127.0.0.1 or localhost only)"
+
+
+class ServerSpeaker:
+    """A read-aloud server that is already running, used as the voice.
+
+    The contract is Kokoro read-aloud's, which is the one this was written
+    against and the only one that has spoken a reply through it:
+
+      POST /speak {"text": ...}   start speaking, replacing anything playing
+      POST /stop  {}              be quiet now
+      GET  /now                   {"active": true} while audio is playing
+
+    The server owns the audio device, so `say()` cannot interleave `watch`
+    with writes the way Piper does. It polls instead, every POLL_MS, and a
+    stop is a POST. Piper stays loaded lazily behind it: a server that is
+    down, refuses the request, or is not on this machine means the reply is
+    spoken by Piper rather than not at all.
+    """
+
+    #: Never substituted in the Speaker sense; the fallback says so instead.
+    substituted_for: str = ""
+
+    def __init__(self, url: str, voice: str = "lessac-medium") -> None:
+        self.url = url.rstrip("/")
+        self.voice = voice
+        self.requested = f"{url} {voice}"
+        #: Set once, here: a URL that is refused stays refused until the
+        #: setting changes, and the change constructs a new speaker.
+        self.refused = _loopback(self.url)
+        parts = urlsplit(self.url)
+        self.name = parts.netloc or self.url
+        self._stop = threading.Event()
+        self._piper: Speaker | None = None
+        #: Whether the last reply went to the server. Only a change is worth
+        #: a line in the journal; every reply while it is down is not.
+        self._up = True
+
+    def superseded(self) -> bool:
+        return self._piper is not None and self._piper.superseded()
+
+    def cancel(self) -> None:
+        self._stop.set()
+        if self._piper is not None:
+            self._piper.cancel()
+
+    def _call(self, path: str, body: dict | None = None) -> dict:
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(
+            self.url + path, data=data,
+            headers={"Content-Type": "application/json"} if data else {})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return json.loads(r.read() or b"{}")
+
+    def _quiet(self) -> None:
+        try:
+            self._call("/stop", {})
+        except (OSError, ValueError):
+            pass
+
+    def _fallback(self, text: str, watch, why: str) -> float:
+        if self._up:
+            print(f"  voice server {self.name}: {why}; speaking with Piper",
+                  flush=True)
+            self._up = False
+        if self._piper is None:
+            self._piper = Speaker(self.voice)
+        return self._piper.say(text, watch=watch)
+
+    def say(self, text: str, watch=None) -> float:
+        """Speak through the server and return once it has finished.
+
+        Returns seconds spent speaking, which is wall time here: the server
+        does not say how much audio it rendered.
+        """
+        self._stop.clear()
+        if self.refused:
+            return self._fallback(text, watch, self.refused)
+        try:
+            sent = self._call("/speak", {"text": text})
+        except urllib.error.HTTPError as e:
+            return self._fallback(text, watch, f"refused the text ({e.code})")
+        except (OSError, ValueError) as e:
+            return self._fallback(text, watch, f"not answering ({e})")
+        if not self._up:
+            print(f"  voice server {self.name}: answering again", flush=True)
+            self._up = True
+        if sent.get("atoms") == 0:
+            return 0.0           # nothing readable in it; nothing will play
+
+        started = time.monotonic()
+        heard = False
+        quiet_since = None
+        while True:
+            if self._stop.is_set() or (watch is not None and watch()):
+                self._stop.set()
+                self._quiet()
+                break
+            time.sleep(POLL_MS / 1000)
+            try:
+                active = bool(self._call("/now").get("active"))
+            except (OSError, ValueError):
+                break            # gone mid-reply, so nothing is playing either
+            now = time.monotonic()
+            if active:
+                heard, quiet_since = True, None
+            elif heard:
+                quiet_since = quiet_since or now
+                if now - quiet_since >= QUIET_MS / 1000:
+                    break
+            elif now - started >= START_TIMEOUT_S:
+                self._quiet()
+                break
+        return time.monotonic() - started

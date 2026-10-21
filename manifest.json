@@ -34,6 +34,7 @@
       "model": "tiny.en",
       "speakReplies": true,
       "voice": "lessac-medium",
+      "voiceUrl": "",
       "micThresholdDb": -38,
       "wakeConfidencePct": 70,
       "echoTailMs": 350,
@@ -168,6 +169,13 @@
         ],
         "defaultValue": "lessac-medium",
         "description": "Piper voices, all measured around 22x realtime on this hardware. lessac and amy are female, ryan, joe and hfc_male are male; low is faster and thinner than medium."
+      },
+      {
+        "key": "voiceUrl",
+        "type": "string",
+        "label": "Voice server",
+        "defaultValue": "",
+        "description": "A read-aloud server already running on this machine, used instead of Piper: Kokoro read-aloud's is http://127.0.0.1:5111. It must take POST /speak and /stop and report GET /now. Loopback only, since every reply is sent there. Piper speaks whenever it does not answer. Empty means Piper."
       },
       {
         "key": "echoTailMs",
