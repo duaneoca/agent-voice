@@ -51,17 +51,37 @@ def safe_for_terminal(text: str) -> str:
     return _CONTROL.sub("", str(text))
 
 
-def as_prompt(text: str) -> str:
-    """A transcript, in the shape it can be handed to a CLI as an argument.
+#: A leading dash that is a minus sign rather than a stray mark: one of the
+#: dash characters Whisper emits, immediately followed by a digit.
+_SIGNED = re.compile(r"^[-‐‑‒–—]\d")
 
-    Every backend here passes the transcript in argv -- `claude -p <text>`,
-    `codex exec <text>` -- where a leading hyphen is read as a flag and not
-    as speech. Whisper does produce one: a pause, a dictated dash, or a false
-    start comes back as "- something". The worst case is an unknown-flag
-    error rather than anything running, but it is a turn lost to a character
-    nobody said, and nothing a person says starts with a hyphen.
+
+def as_prompt(text: str) -> str:
+    """A transcript, tidied, without losing anything that was said.
+
+    Whisper puts a leading dash on a pause, a dictated dash or a false start
+    -- "- something" -- and dropping it makes the readout cleaner. That used
+    to matter for more than tidiness: every backend passed the transcript in
+    argv, where a leading hyphen reads as a flag, and this was what stopped a
+    turn being lost to an unknown-flag error.
+
+    It no longer carries that weight. No backend puts the transcript in argv
+    any more -- they feed stdin or an HTTPS body, which
+    `TestNoSpokenPromptInArgv` asserts -- so the strip is now cosmetic, and a
+    cosmetic rule must not change what a person said.
+
+    It was doing exactly that. This docstring used to end "nothing a person
+    says starts with a hyphen", which a user falsified in the obvious way:
+    "-5 degrees" arrived as "5 degrees", so the agent answered about the
+    wrong temperature and nothing in the readout showed the sign had gone.
+    Reported from use.
+
+    So a dash that is a minus sign stays. Ambiguity resolves towards keeping
+    it -- a spurious minus is visible and harmless, a missing one is neither.
     """
     cleaned = _CONTROL.sub("", str(text)).strip()
+    if _SIGNED.match(cleaned):
+        return cleaned
     return cleaned.lstrip("-‐‑‒–— \t").strip()
 _SENTENCE_END = (".", "!", "?", ":", ";", ",")
 

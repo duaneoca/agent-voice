@@ -117,11 +117,13 @@ class TestMakeSpeakable:
 
 
 class TestAsPrompt:
-    """A transcript becomes an argv element, so a leading hyphen is a flag.
+    """A transcript, tidied, without losing anything that was said.
 
-    Whisper emits one for a pause, a dictated dash or a false start. The
-    worst case is an unknown-flag error rather than something running, but
-    it is a turn lost to a character nobody said.
+    Whisper emits a leading dash for a pause, a dictated dash or a false
+    start, and taking it off makes the readout cleaner. It used to do more
+    than that -- the transcript went into argv, where a leading hyphen is a
+    flag -- but no backend passes it that way now, so the strip is cosmetic
+    and must not change meaning.
     """
 
     def test_a_leading_hyphen_comes_off(self):
@@ -142,6 +144,28 @@ class TestAsPrompt:
 
     def test_nothing_but_dashes_is_nothing(self):
         assert as_prompt("---") == ""
+
+    def test_a_minus_sign_is_not_a_stray_dash(self):
+        """Reported from use: "-5 degrees" arrived as "5 degrees", so the
+        agent answered about the wrong temperature and nothing in the readout
+        showed the sign had gone. The docstring here used to assert that
+        nothing a person says starts with a hyphen; saying a negative number
+        out loud is the obvious counterexample."""
+        assert as_prompt("-5 degrees") == "-5 degrees"
+        assert as_prompt("-5 to 10 tomorrow") == "-5 to 10 tomorrow"
+        assert as_prompt("-3 dB gain") == "-3 dB gain"
+        assert as_prompt("-5") == "-5"
+
+    def test_a_typographic_minus_is_kept_as_well(self):
+        """Whisper emits en and em dashes as readily as hyphens, and they
+        are the same sign to a listener."""
+        assert as_prompt("–40 overnight") == "–40 overnight"
+
+    def test_a_false_start_still_comes_off_in_front_of_a_word(self):
+        """The cosmetic rule survives: it is only suspended where the dash
+        carries meaning, which is immediately before a digit."""
+        assert as_prompt("- five degrees") == "five degrees"
+        assert as_prompt("- 5 degrees") == "5 degrees"
 
 
 class TestStopCommand:
